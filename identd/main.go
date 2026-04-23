@@ -35,6 +35,7 @@ var defaultReceiverDataDirs = []string{
 type Config struct {
 	Addr                  string
 	DataDir               string
+	HistoryDataDir        string
 	AircraftFile          string
 	ReceiverFile          string
 	StatsFile             string
@@ -58,7 +59,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
-	log.Printf("identd addr=%s data=%s", cfg.Addr, cfg.DataDir)
+	log.Printf("identd addr=%s data=%s history=%s", cfg.Addr, cfg.DataDir, cfg.HistoryDataDir)
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
@@ -108,9 +109,10 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 	routes.Run(ctx)
 
 	srv := NewServerWithOptions(ctx, hub, ServerOptions{
-		DataDir:       cfg.DataDir,
-		Web:           bundledWeb(),
-		UpdateChecker: NewUpdateChecker(updateCheckerOptions(cfg)),
+		DataDir:        cfg.DataDir,
+		HistoryDataDir: cfg.HistoryDataDir,
+		Web:            bundledWeb(),
+		UpdateChecker:  NewUpdateChecker(updateCheckerOptions(cfg)),
 	})
 	httpSrv := &http.Server{
 		Addr:         cfg.Addr,
@@ -191,6 +193,7 @@ func loadConfigFrom(args []string, getenv func(string) string) (Config, error) {
 	cfg := Config{
 		Addr:                  envOr(getenv, "IDENT_ADDR", ":8080"),
 		DataDir:               envOr(getenv, "IDENT_DATA_DIR", detectReceiverDataDir(defaultReceiverDataDirs)),
+		HistoryDataDir:        envOr(getenv, "HISTORY_DATA_DIR", filepath.Join(envOr(getenv, "IDENT_DATA_DIR", detectReceiverDataDir(defaultReceiverDataDirs)), "chunks")),
 		AircraftFile:          envOr(getenv, "IDENT_AIRCRAFT_FILE", "aircraft.json"),
 		ReceiverFile:          envOr(getenv, "IDENT_RECEIVER_FILE", "receiver.json"),
 		StatsFile:             envOr(getenv, "IDENT_STATS_FILE", "stats.json"),
@@ -212,6 +215,7 @@ func loadConfigFrom(args []string, getenv func(string) string) (Config, error) {
 	flags := flag.NewFlagSet("identd", flag.ContinueOnError)
 	flags.StringVar(&cfg.Addr, "addr", cfg.Addr, "HTTP listen address")
 	flags.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "receiver data directory")
+	flags.StringVar(&cfg.HistoryDataDir, "history-data-dir", cfg.HistoryDataDir, "directory serving /chunks/* history files")
 	flags.StringVar(&cfg.AircraftFile, "aircraft-file", cfg.AircraftFile, "aircraft JSON file name")
 	flags.StringVar(&cfg.ReceiverFile, "receiver-file", cfg.ReceiverFile, "receiver JSON file name")
 	flags.StringVar(&cfg.StatsFile, "stats-file", cfg.StatsFile, "stats JSON file name")

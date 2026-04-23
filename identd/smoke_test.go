@@ -143,6 +143,10 @@ func TestPublishConfigEnvelopeIncludesLineOfSight(t *testing.T) {
 func TestLoadConfigFromLoadsLineOfSightEnv(t *testing.T) {
 	cfg, err := loadConfigFrom(nil, func(key string) string {
 		switch key {
+		case "IDENT_DATA_DIR":
+			return "/run/readsb"
+		case "HISTORY_DATA_DIR":
+			return "/var/globe_history"
 		case "IDENT_HEYWHATSTHAT_PANORAMA_ID":
 			return "abc123"
 		case "IDENT_HEYWHATSTHAT_ALTS":
@@ -156,6 +160,9 @@ func TestLoadConfigFromLoadsLineOfSightEnv(t *testing.T) {
 	}
 	if cfg.LineOfSightPanoramaID != "abc123" {
 		t.Fatalf("panorama id = %q", cfg.LineOfSightPanoramaID)
+	}
+	if cfg.HistoryDataDir != "/var/globe_history" {
+		t.Fatalf("history data dir = %q", cfg.HistoryDataDir)
 	}
 	if cfg.LineOfSightAlts != "40000ft,3000m" {
 		t.Fatalf("alts = %q", cfg.LineOfSightAlts)

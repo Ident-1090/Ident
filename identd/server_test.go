@@ -251,7 +251,7 @@ func TestServerServesChunkFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{DataDir: dir})
+	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{DataDir: dir, HistoryDataDir: chunkDir})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -268,6 +268,37 @@ func TestServerServesChunkFiles(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 	if string(body) != `{"chunks":[]}` {
+		t.Fatalf("body = %s", body)
+	}
+}
+
+func TestServerServesChunkFilesFromSeparateDirectory(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	dataDir := t.TempDir()
+	chunkDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(chunkDir, "chunks.json"), []byte(`{"chunks":["a.gz"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{DataDir: dataDir, HistoryDataDir: chunkDir})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := ts.Client().Get(ts.URL + "/chunks/chunks.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != 200 {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	if string(body) != `{"chunks":["a.gz"]}` {
 		t.Fatalf("body = %s", body)
 	}
 }

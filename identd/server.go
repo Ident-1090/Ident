@@ -24,18 +24,20 @@ var upgrader = websocket.Upgrader{
 }
 
 type Server struct {
-	ctx     context.Context
-	hub     *Hub
-	dataDir string
-	web     fs.FS
-	updates *UpdateChecker
-	ready   atomic.Bool
+	ctx            context.Context
+	hub            *Hub
+	dataDir        string
+	historyDataDir string
+	web            fs.FS
+	updates        *UpdateChecker
+	ready          atomic.Bool
 }
 
 type ServerOptions struct {
-	DataDir       string
-	Web           fs.FS
-	UpdateChecker *UpdateChecker
+	DataDir        string
+	HistoryDataDir string
+	Web            fs.FS
+	UpdateChecker  *UpdateChecker
 }
 
 func NewServer(ctx context.Context, hub *Hub) *Server {
@@ -44,11 +46,12 @@ func NewServer(ctx context.Context, hub *Hub) *Server {
 
 func NewServerWithOptions(ctx context.Context, hub *Hub, opts ServerOptions) *Server {
 	return &Server{
-		ctx:     ctx,
-		hub:     hub,
-		dataDir: opts.DataDir,
-		web:     opts.Web,
-		updates: opts.UpdateChecker,
+		ctx:            ctx,
+		hub:            hub,
+		dataDir:        opts.DataDir,
+		historyDataDir: opts.HistoryDataDir,
+		web:            opts.Web,
+		updates:        opts.UpdateChecker,
 	}
 }
 
@@ -62,6 +65,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/update.json", s.serveUpdateStatus)
 	if s.dataDir != "" {
 		mux.HandleFunc("/data/", s.serveReceiverData)
+	}
+	if s.historyDataDir != "" {
 		mux.HandleFunc("/chunks/", s.serveChunks)
 	}
 	if s.web != nil {
@@ -146,7 +151,7 @@ func (s *Server) serveReceiverData(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) serveChunks(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(r.URL.Path, "/chunks/")
-	file, ok := localFilePath(filepath.Join(s.dataDir, "chunks"), name, true)
+	file, ok := localFilePath(s.historyDataDir, name, true)
 	if !ok {
 		http.NotFound(w, r)
 		return
