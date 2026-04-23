@@ -1,0 +1,6 @@
+node_modules/
+dist/
+dist-tsnode/
+tsconfig.tsbuildinfo
+.env.local
+.husky/_/

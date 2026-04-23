@@ -1,0 +1,5 @@
+Contact: https://github.com/Ident-1090/Ident/security/advisories/new
+Preferred-Languages: en
+Canonical: https://raw.githubusercontent.com/Ident-1090/Ident/main/ident/public/.well-known/security.txt
+Policy: https://github.com/Ident-1090/Ident/blob/main/SECURITY.md
+Expires: 2099-12-31T00:00:00Z

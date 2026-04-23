@@ -1,0 +1,465 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example v0.1.0. Leave empty for a CI build."
+        required: false
+
+permissions:
+  contents: read
+
+env:
+  HUSKY: "0"
+  REGISTRY: ghcr.io
+
+jobs:
+  metadata:
+    name: Metadata
+    runs-on: ubuntu-latest
+    outputs:
+      created: ${{ steps.resolve.outputs.created }}
+      is_release: ${{ steps.resolve.outputs.is_release }}
+      package_version: ${{ steps.resolve.outputs.package_version }}
+      publish_image: ${{ steps.resolve.outputs.publish_image }}
+      version: ${{ steps.resolve.outputs.version }}
+    steps:
+      - name: Resolve build metadata
+        id: resolve
+        env:
+          REQUESTED_VERSION: ${{ github.event.inputs.version || '' }}
+        run: |
+          set -eu
+
+          is_release=false
+          publish_image=false
+
+          if [ -n "$REQUESTED_VERSION" ]; then
+            case "$REQUESTED_VERSION" in
+              v*) ;;
+              *)
+                echo "workflow_dispatch release versions must start with v" >&2
+                exit 1
+                ;;
+            esac
+            version="$REQUESTED_VERSION"
+            is_release=true
+            publish_image=true
+          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            version="$GITHUB_REF_NAME"
+            is_release=true
+            publish_image=true
+          elif [ "$GITHUB_EVENT_NAME" != "pull_request" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            version="0.0.0-main.${GITHUB_RUN_NUMBER}"
+            publish_image=true
+          else
+            version="0.0.0-ci"
+          fi
+
+          echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          echo "is_release=$is_release" >> "$GITHUB_OUTPUT"
+          echo "package_version=${version#v}" >> "$GITHUB_OUTPUT"
+          echo "publish_image=$publish_image" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ident
+    steps:
+      - name: Check out
+        uses: actions/checkout@v6
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Format
+        run: pnpm format:check
+      - name: Lint
+        run: pnpm lint
+      - name: Test
+        run: pnpm test
+      - name: Build
+        run: pnpm build
+
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: identd
+    steps:
+      - name: Check out
+        uses: actions/checkout@v6
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: identd/go.mod
+          cache-dependency-path: identd/go.sum
+      - name: Format
+        run: |
+          files="$(gofmt -l .)"
+          if [ -n "$files" ]; then
+            printf '%s\n' "$files"
+            exit 1
+          fi
+      - name: Lint
+        run: go vet ./...
+      - name: Test
+        run: go test ./...
+
+  scripts-test:
+    name: Scripts Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v6
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Test
+        run: node --test scripts/*.test.mjs
+
+  artifacts:
+    name: Artifacts ${{ matrix.id }}
+    runs-on: ubuntu-latest
+    needs:
+      - metadata
+      - frontend
+      - backend
+      - scripts-test
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-amd64
+            goos: linux
+            goarch: amd64
+            goarm: ""
+            package: deb
+            nfpm_arch: amd64
+          - id: linux-arm64
+            goos: linux
+            goarch: arm64
+            goarm: ""
+            package: deb
+            nfpm_arch: arm64
+          - id: linux-armv7
+            goos: linux
+            goarch: arm
+            goarm: "7"
+            package: deb
+            nfpm_arch: arm7
+          - id: darwin-amd64
+            goos: darwin
+            goarch: amd64
+            goarm: ""
+            package: ""
+            nfpm_arch: ""
+          - id: darwin-arm64
+            goos: darwin
+            goarch: arm64
+            goarm: ""
+            package: ""
+            nfpm_arch: ""
+          - id: freebsd-amd64
+            goos: freebsd
+            goarch: amd64
+            goarm: ""
+            package: ""
+            nfpm_arch: ""
+          - id: freebsd-arm64
+            goos: freebsd
+            goarch: arm64
+            goarm: ""
+            package: ""
+            nfpm_arch: ""
+    steps:
+      - name: Check out
+        uses: actions/checkout@v6
+      - name: Set up Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install web dependencies
+        working-directory: ident
+        run: pnpm install --frozen-lockfile
+      - name: Build web dist
+        working-directory: ident
+        run: pnpm build
+      - name: Prepare embedded web assets
+        run: |
+          mkdir -p identd/web
+          rsync -a --delete --exclude .keep ident/dist/ identd/web/
+          touch identd/web/.keep
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: identd/go.mod
+          cache-dependency-path: identd/go.sum
+      - name: Install nFPM
+        if: matrix.package == 'deb'
+        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+      - name: Build binary
+        env:
+          CREATED: ${{ needs.metadata.outputs.created }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          set -eu
+          mkdir -p dist/out
+          artifact="identd-${{ matrix.id }}"
+          versioned="identd-$VERSION-${{ matrix.id }}"
+          (
+            cd identd
+            env CGO_ENABLED=0 GOOS="${{ matrix.goos }}" GOARCH="${{ matrix.goarch }}" GOARM="${{ matrix.goarm }}" \
+              go build -tags embed -trimpath \
+                -ldflags "-s -w -X main.version=$VERSION -X main.commit=$GITHUB_SHA -X main.buildDate=$CREATED" \
+                -o "../dist/out/$artifact" .
+          )
+          cp "dist/out/$artifact" "dist/out/$versioned"
+          tmp="$(mktemp -d)"
+          cp "dist/out/$artifact" "$tmp/identd"
+          tar -czf "dist/out/$artifact.tar.gz" -C "$tmp" identd
+          cp "dist/out/$artifact.tar.gz" "dist/out/$versioned.tar.gz"
+      - name: Build package
+        if: matrix.package == 'deb'
+        env:
+          IDENT_ARCH: ${{ matrix.nfpm_arch }}
+          IDENT_VERSION: ${{ needs.metadata.outputs.package_version }}
+        run: |
+          mkdir -p dist/packages
+          cp "dist/out/identd-${{ matrix.id }}" dist/identd
+          nfpm package --packager deb --config packaging/nfpm.yaml --target dist/packages/
+          cp dist/packages/* dist/out/
+          cp dist/packages/*.deb "dist/out/identd-${{ matrix.id }}.deb"
+      - name: Calculate checksums
+        run: |
+          find dist/out -maxdepth 1 -type f ! -name 'CHECKSUMS-*' -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > "dist/out/CHECKSUMS-${{ matrix.id }}"
+      - name: Attest artifacts
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/out/*
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ident-artifacts-${{ matrix.id }}
+          path: dist/out/*
+
+  publish-release:
+    name: Publish Release
+    if: needs.metadata.outputs.is_release == 'true'
+    runs-on: ubuntu-latest
+    needs:
+      - metadata
+      - artifacts
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: ident-artifacts-*
+          path: dist/releases
+          merge-multiple: true
+      - name: Calculate aggregate checksums
+        run: |
+          rm -f dist/releases/SHA256SUMS
+          find dist/releases -maxdepth 1 -type f -name 'CHECKSUMS-*' -delete
+          find dist/releases -maxdepth 1 -type f ! -name SHA256SUMS -print0 \
+            | sort -z \
+            | xargs -0 sha256sum > dist/releases/SHA256SUMS
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-path: dist/releases/*
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ident-release-artifacts
+          path: dist/releases/*
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.metadata.outputs.version }}
+        run: |
+          if gh release view "$VERSION" >/dev/null 2>&1; then
+            gh release upload "$VERSION" dist/releases/* --clobber
+          else
+            gh release create "$VERSION" dist/releases/* --title "$VERSION" --notes "Release $VERSION"
+          fi
+
+  image-build:
+    name: Image ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    needs:
+      - metadata
+      - frontend
+      - backend
+      - scripts-test
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - id: linux-amd64
+            platform: linux/amd64
+            runner: ubuntu-latest
+            qemu: false
+          - id: linux-arm64
+            platform: linux/arm64
+            runner: ubuntu-24.04-arm
+            qemu: false
+          - id: linux-armv7
+            platform: linux/arm/v7
+            runner: ubuntu-latest
+            qemu: true
+    steps:
+      - name: Check out
+        uses: actions/checkout@v6
+      - name: Set image name
+        run: echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+      - name: Set up QEMU
+        if: matrix.qemu
+        uses: docker/setup-qemu-action@v4
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Log in to GHCR
+        if: needs.metadata.outputs.publish_image == 'true'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+      - name: Build image
+        if: needs.metadata.outputs.publish_image != 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          provenance: mode=max
+          sbom: true
+          build-args: |
+            VERSION=${{ needs.metadata.outputs.version }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ needs.metadata.outputs.created }}
+      - name: Build and push by digest
+        id: build
+        if: needs.metadata.outputs.publish_image == 'true'
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: ${{ matrix.platform }}
+          labels: ${{ steps.meta.outputs.labels }}
+          annotations: ${{ steps.meta.outputs.annotations }}
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,scope=${{ matrix.platform }},mode=max
+          outputs: type=image,name=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }},push-by-digest=true,name-canonical=true,push=true
+          provenance: mode=max
+          sbom: true
+          build-args: |
+            VERSION=${{ needs.metadata.outputs.version }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ needs.metadata.outputs.created }}
+      - name: Export digest
+        if: needs.metadata.outputs.publish_image == 'true'
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - name: Upload digest
+        if: needs.metadata.outputs.publish_image == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: digest-${{ matrix.id }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  image-merge:
+    name: Image Manifest
+    if: needs.metadata.outputs.publish_image == 'true'
+    runs-on: ubuntu-latest
+    needs:
+      - metadata
+      - image-build
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Set image name
+        run: echo "IMAGE_NAME=${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+      - name: Download digests
+        uses: actions/download-artifact@v8
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=${{ needs.metadata.outputs.version }},enable=${{ needs.metadata.outputs.is_release == 'true' }}
+            type=raw,value=latest
+      - name: Create manifest list and push
+        id: manifest
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
+          digest="$(docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+      - name: Attest container image
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.manifest.outputs.digest }}
+          push-to-registry: true

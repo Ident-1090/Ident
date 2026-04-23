@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover"
+    />
+    <meta name="theme-color" content="#0f1113" />
+    <link rel="icon" href="/icons/favicon.ico" sizes="48x48" />
+    <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon-180x180.png" />
+    <title>Ident</title>
+    <!-- Privacy: suppress Referer/Origin leakage on every sub-request (fonts,
+         tile CDNs, photo API, route lookups). -->
+    <meta name="referrer" content="no-referrer" />
+    <!-- Privacy: keep receiver-local deployments out of search engines. -->
+    <meta name="robots" content="noindex, nofollow, noarchive, nosnippet" />
+    <meta name="googlebot" content="noindex, nofollow" />
+    <!-- Privacy: disable speculative DNS lookups for non-rendered links. -->
+    <meta http-equiv="x-dns-prefetch-control" content="off" />
+    <!-- UX: don't auto-linkify numbers as phone / addresses on mobile. -->
+    <meta name="format-detection" content="telephone=no,address=no,email=no" />
+    <!-- Mobile Safari can only hide browser chrome when launched as an installed
+         web app; regular tabs still need safe-area-aware layout. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <!-- MapLibre GL JS runtime: hotlinked from jsdelivr with SRI so the pi
+         residential upstream serves our own bundle stripped of vendor JS.
+         Version pinned to match the maplibre-gl devDep used for types. -->
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/maplibre-gl@5.23.0/dist/maplibre-gl.css"
+      integrity="sha384-uTttxo/aOKbdE5RlD/SPzSDoDmNvGlUYPjONi2MN/b7c9HPSvW07OIuyP7uL6jxK"
+      crossorigin="anonymous"
+    />
+    <script
+      src="https://cdn.jsdelivr.net/npm/maplibre-gl@5.23.0/dist/maplibre-gl.js"
+      integrity="sha384-XUm39RJVRRZhhm3KBfi4/fn/dxDBFEa1wA/yRSYhlb83K5ggl6ApLqbfwcJFlK/W"
+      crossorigin="anonymous"
+      defer
+    ></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/app/main.tsx"></script>
+  </body>
+</html>

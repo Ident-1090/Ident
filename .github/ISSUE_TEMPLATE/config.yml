@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Ask a setup question
+    url: https://github.com/Ident-1090/Ident/discussions
+    about: Use Discussions for install help, receiver setup questions, and general support.
+  - name: Report a security vulnerability
+    url: https://github.com/Ident-1090/Ident/security/advisories/new
+    about: Please report security issues privately.

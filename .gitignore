@@ -1,0 +1,25 @@
+.DS_Store
+*.log
+*.swp
+dist/
+
+# Frontend local state and build output.
+ident/.env.local
+ident/node_modules/
+ident/dist/
+ident/dist-tsnode/
+ident/tsconfig.tsbuildinfo
+ident/.husky/_/
+
+# Go build output.
+identd/identd
+*.test
+identd/web/*
+!identd/web/.keep
+
+# Generated receiver fixture output.
+fixtures/receiver-sample/
+
+# Local working instructions for this release-prep checkout.
+CLAUDE.local.md
+AGENTS.override.md

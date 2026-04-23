@@ -1,0 +1,15 @@
+[Unit]
+Description=Ident ADS-B display service
+Documentation=https://github.com/Ident-1090/Ident
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/ident/identd.env
+ExecStart=/usr/bin/identd
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target

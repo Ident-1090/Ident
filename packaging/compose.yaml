@@ -1,0 +1,14 @@
+services:
+  ident:
+    image: ghcr.io/ident-1090/ident:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      IDENT_ADDR: ":8080"
+      IDENT_DATA_DIR: "/run/readsb"
+      IDENT_UPDATE_CHECK: "true"
+      IDENT_UPDATE_REPO: "Ident-1090/Ident"
+      IDENT_UPDATE_INTERVAL_SEC: "86400"
+    volumes:
+      - /run/readsb:/run/readsb:ro
