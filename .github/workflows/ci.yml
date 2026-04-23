@@ -35,43 +35,15 @@ jobs:
       publish_image: ${{ steps.resolve.outputs.publish_image }}
       version: ${{ steps.resolve.outputs.version }}
     steps:
+      - name: Check out
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
       - name: Resolve build metadata
         id: resolve
         env:
           REQUESTED_VERSION: ${{ github.event.inputs.version || '' }}
-        run: |
-          set -eu
-
-          is_release=false
-          publish_image=false
-
-          if [ -n "$REQUESTED_VERSION" ]; then
-            case "$REQUESTED_VERSION" in
-              v*) ;;
-              *)
-                echo "workflow_dispatch release versions must start with v" >&2
-                exit 1
-                ;;
-            esac
-            version="$REQUESTED_VERSION"
-            is_release=true
-            publish_image=true
-          elif [ "$GITHUB_REF_TYPE" = "tag" ]; then
-            version="$GITHUB_REF_NAME"
-            is_release=true
-            publish_image=true
-          elif [ "$GITHUB_EVENT_NAME" != "pull_request" ] && [ "$GITHUB_REF" = "refs/heads/main" ]; then
-            version="0.0.0-main.${GITHUB_RUN_NUMBER}"
-            publish_image=true
-          else
-            version="0.0.0-ci"
-          fi
-
-          echo "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
-          echo "is_release=$is_release" >> "$GITHUB_OUTPUT"
-          echo "package_version=${version#v}" >> "$GITHUB_OUTPUT"
-          echo "publish_image=$publish_image" >> "$GITHUB_OUTPUT"
-          echo "version=$version" >> "$GITHUB_OUTPUT"
+        run: scripts/resolve-build-metadata.sh >> "$GITHUB_OUTPUT"
 
   frontend:
     name: Frontend
@@ -315,8 +287,9 @@ jobs:
         run: |
           if gh release view "$VERSION" >/dev/null 2>&1; then
             gh release upload "$VERSION" dist/releases/* --clobber
+            gh release edit "$VERSION" --latest
           else
-            gh release create "$VERSION" dist/releases/* --title "$VERSION" --notes "Release $VERSION"
+            gh release create "$VERSION" dist/releases/* --title "$VERSION" --notes "Release $VERSION" --latest
           fi
 
   image-build:

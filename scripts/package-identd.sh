@@ -3,7 +3,15 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 PACKAGER=${1:-deb}
-VERSION=${IDENT_VERSION:-$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo 0.0.0)}
+
+if [ -n "${IDENT_VERSION:-}" ]; then
+  VERSION="$IDENT_VERSION"
+  PACKAGE_VERSION="${IDENT_VERSION#v}"
+else
+  METADATA="$(sh "$ROOT/scripts/resolve-build-metadata.sh")"
+  VERSION="$(printf '%s\n' "$METADATA" | sed -n 's/^version=//p')"
+  PACKAGE_VERSION="$(printf '%s\n' "$METADATA" | sed -n 's/^package_version=//p')"
+fi
 
 if ! command -v nfpm >/dev/null 2>&1; then
   echo "nfpm is required: https://nfpm.goreleaser.com/docs/install/" >&2
@@ -24,7 +32,7 @@ esac
 IDENT_VERSION=$VERSION IDENT_ARCH=$ARCH "$ROOT/scripts/build-identd.sh"
 mkdir -p "$ROOT/dist/packages"
 cd "$ROOT"
-IDENT_VERSION=$VERSION IDENT_ARCH=$ARCH nfpm package \
+IDENT_VERSION=$PACKAGE_VERSION IDENT_ARCH=$ARCH nfpm package \
   --packager "$PACKAGER" \
   --config packaging/nfpm.yaml \
   --target dist/packages/

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -69,6 +68,7 @@ type UpdateChecker struct {
 	cached        UpdateStatus
 	cachedAt      time.Time
 	lastSuccess   *ReleaseInfo
+	lastStatus    string
 	lastSuccessAt string
 	etag          string
 	inFlight      chan struct{}
@@ -79,6 +79,10 @@ type githubRelease struct {
 	Name        string    `json:"name"`
 	HTMLURL     string    `json:"html_url"`
 	PublishedAt time.Time `json:"published_at"`
+}
+
+type githubCompare struct {
+	Status string `json:"status"`
 }
 
 func NewUpdateChecker(opts UpdateCheckerOptions) *UpdateChecker {
@@ -183,7 +187,10 @@ func (c *UpdateChecker) Status(ctx context.Context) UpdateStatus {
 	if notModified && c.lastSuccess != nil {
 		status.Latest = c.lastSuccess
 		status.LastSuccessAt = c.lastSuccessAt
-		status.Status = classifyUpdate(c.current.Version, c.lastSuccess.Version)
+		status.Status = c.lastStatus
+		if status.Status == "" {
+			status.Status = UpdateUnknown
+		}
 		c.cached = status
 		c.cachedAt = now
 		return status
@@ -197,8 +204,9 @@ func (c *UpdateChecker) Status(ctx context.Context) UpdateStatus {
 
 	status.Latest = latest
 	status.LastSuccessAt = checkedAt
-	status.Status = classifyUpdate(c.current.Version, latest.Version)
+	status.Status = c.classifyUpdate(fetchCtx, latest)
 	c.lastSuccess = latest
+	c.lastStatus = status.Status
 	c.lastSuccessAt = checkedAt
 	c.cached = status
 	c.cachedAt = now
@@ -272,7 +280,7 @@ func (c *UpdateChecker) fetchLatest(ctx context.Context) (*ReleaseInfo, bool, st
 }
 
 func latestReleaseURL(apiBase, repo string) (string, error) {
-	owner, name, ok := strings.Cut(strings.Trim(repo, "/"), "/")
+	owner, name, ok := splitRepo(repo)
 	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
 		return "", fmt.Errorf("invalid update repo %q", repo)
 	}
@@ -284,59 +292,111 @@ func latestReleaseURL(apiBase, repo string) (string, error) {
 	return base.ResolveReference(rel).String(), nil
 }
 
-func classifyUpdate(current, latest string) string {
-	cmp, ok := compareReleaseVersions(current, latest)
-	if !ok {
+func (c *UpdateChecker) classifyUpdate(ctx context.Context, latest *ReleaseInfo) string {
+	if latest == nil {
 		return UpdateUnknown
 	}
-	if cmp < 0 {
+	latestVersion := strings.TrimSpace(latest.Version)
+	currentVersion := strings.TrimSpace(c.current.Version)
+	if latestVersion != "" && currentVersion == latestVersion {
+		return UpdateCurrent
+	}
+	currentCommit := normalizeCommit(c.current.Commit)
+	if currentCommit == "" || latestVersion == "" {
+		return UpdateUnknown
+	}
+	status, err := c.compareToLatest(ctx, currentCommit, latestVersion)
+	if err != nil {
+		return UpdateUnknown
+	}
+	return mapCompareStatus(status)
+}
+
+func (c *UpdateChecker) compareToLatest(ctx context.Context, currentCommit, latestVersion string) (string, error) {
+	endpoint, err := compareURL(c.apiBase, c.repo, currentCommit, latestVersion)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "identd/"+safeUserAgentVersion(c.current.Version))
+
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("compare latest release: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("GitHub compare returned HTTP %d", resp.StatusCode)
+	}
+
+	var compare githubCompare
+	if err := json.NewDecoder(resp.Body).Decode(&compare); err != nil {
+		return "", fmt.Errorf("decode compare: %w", err)
+	}
+	return strings.TrimSpace(compare.Status), nil
+}
+
+func compareURL(apiBase, repo, currentCommit, latestVersion string) (string, error) {
+	owner, name, ok := splitRepo(repo)
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return "", fmt.Errorf("invalid update repo %q", repo)
+	}
+	base, err := url.Parse(strings.TrimRight(apiBase, "/") + "/")
+	if err != nil {
+		return "", fmt.Errorf("invalid update API URL: %w", err)
+	}
+	rel := &url.URL{
+		Path: "repos/" + owner + "/" + name + "/compare/" + currentCommit + "..." + strings.TrimSpace(latestVersion),
+	}
+	return base.ResolveReference(rel).String(), nil
+}
+
+func splitRepo(repo string) (owner, name string, ok bool) {
+	owner, name, ok = strings.Cut(strings.Trim(repo, "/"), "/")
+	return owner, name, ok
+}
+
+func mapCompareStatus(status string) string {
+	switch status {
+	case "behind":
 		return UpdateAvailable
+	case "diverged":
+		return UpdateAvailable
+	case "ahead", "identical":
+		return UpdateCurrent
+	default:
+		return UpdateUnknown
 	}
-	return UpdateCurrent
 }
 
-func compareReleaseVersions(current, latest string) (int, bool) {
-	currentParts, ok := parseReleaseVersion(current)
-	if !ok {
-		return 0, false
+func normalizeCommit(raw string) string {
+	raw = strings.ToLower(strings.TrimSpace(raw))
+	if raw == "" || raw == "unknown" {
+		return ""
 	}
-	latestParts, ok := parseReleaseVersion(latest)
-	if !ok {
-		return 0, false
+	if strings.HasPrefix(raw, "g") {
+		raw = raw[1:]
 	}
-	for i := range currentParts {
-		if currentParts[i] < latestParts[i] {
-			return -1, true
-		}
-		if currentParts[i] > latestParts[i] {
-			return 1, true
-		}
+	if !isHexString(raw) {
+		return ""
 	}
-	return 0, true
+	return raw
 }
 
-func parseReleaseVersion(raw string) ([3]int, bool) {
-	var out [3]int
-	s := strings.TrimSpace(strings.TrimPrefix(raw, "v"))
-	if s == "" || s == "dev" || s == "unknown" {
-		return out, false
+func isHexString(raw string) bool {
+	if raw == "" {
+		return false
 	}
-	main, _, _ := strings.Cut(s, "-")
-	parts := strings.Split(main, ".")
-	if len(parts) < 2 || len(parts) > 3 {
-		return out, false
-	}
-	for i, part := range parts {
-		if part == "" {
-			return out, false
+	for _, r := range raw {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
 		}
-		n, err := strconv.Atoi(part)
-		if err != nil {
-			return out, false
-		}
-		out[i] = n
 	}
-	return out, true
+	return true
 }
 
 func formatTime(t time.Time) string {

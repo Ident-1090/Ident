@@ -497,8 +497,7 @@ export interface IdentState {
   // of it to draw based on settings.trailFadeSec and selection.
   trailsByHex: Record<string, TrailPoint[]>;
 
-  // HeyWhatsThat line-of-sight rings (null until the coverage-layers
-  // subagent fetches upintheair.json and calls setLosData).
+  // Relay-supplied line-of-sight rings from the config snapshot.
   losData: HeyWhatsThatJson | null;
 
   // Live feedback (1 Hz msg-rate rolling window + last-snapshot timestamp).

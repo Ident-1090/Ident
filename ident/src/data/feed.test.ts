@@ -172,6 +172,24 @@ describe("startFeed route envelopes", () => {
     stop();
   });
 
+  it("writes relay-supplied line_of_sight rings from the config envelope into store", () => {
+    const stop = startFeed();
+    wsHarness.instances[0].emitText(
+      JSON.stringify({
+        type: "config",
+        data: {
+          line_of_sight: {
+            rings: [{ alt: 3048, points: [[37, -122]] }],
+          },
+        },
+      }),
+    );
+    expect(useIdentStore.getState().losData).toEqual({
+      rings: [{ alt: 3048, points: [[37, -122]] }],
+    });
+    stop();
+  });
+
   it("does not refresh feed freshness from auxiliary websocket envelopes", () => {
     const stop = startFeed();
     wsHarness.instances[0].emitText(

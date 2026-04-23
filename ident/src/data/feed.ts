@@ -6,6 +6,7 @@ import {
 import { useIdentStore } from "./store";
 import type {
   AircraftFrame,
+  HeyWhatsThatJson,
   OutlineJson,
   ReceiverJson,
   StatsJson,
@@ -36,7 +37,13 @@ type Envelope =
   | { type: "receiver"; data: ReceiverJson }
   | { type: "stats"; data: StatsJson }
   | { type: "outline"; data: OutlineJson }
-  | { type: "config"; data: { station?: string | null } }
+  | {
+      type: "config";
+      data: {
+        station?: string | null;
+        line_of_sight?: HeyWhatsThatJson | null;
+      };
+    }
   | { type: "routes"; now?: number; data: RouteEntry[] };
 
 function parseJSON<T>(text: string): T | null {
@@ -119,7 +126,10 @@ function dispatch(env: Envelope): void {
       break;
     }
     case "config":
-      if (env.data) store.ingestConfig({ station: env.data.station ?? null });
+      if (env.data) {
+        store.ingestConfig({ station: env.data.station ?? null });
+        store.setLosData(env.data.line_of_sight ?? null);
+      }
       break;
   }
 }

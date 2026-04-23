@@ -63,7 +63,7 @@ func TestDetectReceiverDataDirFallsBackToFirstCandidate(t *testing.T) {
 
 func TestPublishConfigEnvelopeIncludesStationName(t *testing.T) {
 	hub := NewHub([]string{"config"})
-	publishConfigEnvelope(hub, Config{StationName: "Home Receiver"})
+	publishConfigEnvelope(hub, Config{StationName: "Home Receiver"}, nil)
 
 	snaps := hub.Snapshots()
 	if len(snaps) != 1 {
@@ -88,7 +88,7 @@ func TestPublishConfigEnvelopeIncludesStationName(t *testing.T) {
 
 func TestPublishConfigEnvelopeOmitsEmptyStation(t *testing.T) {
 	hub := NewHub([]string{"config"})
-	publishConfigEnvelope(hub, Config{StationName: ""})
+	publishConfigEnvelope(hub, Config{StationName: ""}, nil)
 
 	snaps := hub.Snapshots()
 	if len(snaps) != 1 {
@@ -103,5 +103,61 @@ func TestPublishConfigEnvelopeOmitsEmptyStation(t *testing.T) {
 	}
 	if _, hasStation := env.Data["station"]; hasStation {
 		t.Fatalf("empty station should be omitted: %s", snaps[0])
+	}
+}
+
+func TestPublishConfigEnvelopeIncludesLineOfSight(t *testing.T) {
+	hub := NewHub([]string{"config"})
+	publishConfigEnvelope(
+		hub,
+		Config{StationName: "Home Receiver"},
+		[]byte(`{"rings":[{"alt":3048,"points":[[1,2],[3,4],[5,6]]}]}`),
+	)
+
+	snaps := hub.Snapshots()
+	if len(snaps) != 1 {
+		t.Fatalf("expected 1 snapshot, got %d", len(snaps))
+	}
+	var env struct {
+		Type string `json:"type"`
+		Data struct {
+			Station     string `json:"station"`
+			LineOfSight struct {
+				Rings []struct {
+					Alt int `json:"alt"`
+				} `json:"rings"`
+			} `json:"line_of_sight"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(snaps[0], &env); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if env.Data.Station != "Home Receiver" {
+		t.Fatalf("station = %q", env.Data.Station)
+	}
+	if len(env.Data.LineOfSight.Rings) != 1 || env.Data.LineOfSight.Rings[0].Alt != 3048 {
+		t.Fatalf("line_of_sight = %#v", env.Data.LineOfSight)
+	}
+}
+
+func TestLoadConfigFromLoadsLineOfSightEnv(t *testing.T) {
+	cfg, err := loadConfigFrom(nil, func(key string) string {
+		switch key {
+		case "IDENT_HEYWHATSTHAT_PANORAMA_ID":
+			return "abc123"
+		case "IDENT_HEYWHATSTHAT_ALTS":
+			return "40000ft,3000m"
+		default:
+			return ""
+		}
+	})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.LineOfSightPanoramaID != "abc123" {
+		t.Fatalf("panorama id = %q", cfg.LineOfSightPanoramaID)
+	}
+	if cfg.LineOfSightAlts != "40000ft,3000m" {
+		t.Fatalf("alts = %q", cfg.LineOfSightAlts)
 	}
 }

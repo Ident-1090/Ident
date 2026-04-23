@@ -33,22 +33,24 @@ var defaultReceiverDataDirs = []string{
 }
 
 type Config struct {
-	Addr             string
-	DataDir          string
-	AircraftFile     string
-	ReceiverFile     string
-	StatsFile        string
-	OutlineFile      string
-	DebounceMs       int
-	RouteUpstreamURL string
-	RouteTTL         time.Duration
-	RouteBatchDelay  time.Duration
-	StationName      string
-	UpdateCheck      bool
-	UpdateRepo       string
-	UpdateAPIBase    string
-	UpdateInterval   time.Duration
-	UpdateTimeout    time.Duration
+	Addr                  string
+	DataDir               string
+	AircraftFile          string
+	ReceiverFile          string
+	StatsFile             string
+	OutlineFile           string
+	DebounceMs            int
+	RouteUpstreamURL      string
+	RouteTTL              time.Duration
+	RouteBatchDelay       time.Duration
+	StationName           string
+	LineOfSightPanoramaID string
+	LineOfSightAlts       string
+	UpdateCheck           bool
+	UpdateRepo            string
+	UpdateAPIBase         string
+	UpdateInterval        time.Duration
+	UpdateTimeout         time.Duration
 }
 
 func main() {
@@ -86,7 +88,16 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 	}
 	hub := NewHub(hubNames)
 
-	publishConfigEnvelope(hub, cfg)
+	lineOfSightCache := NewLOSCache(LOSOptions{
+		PanoramaID: cfg.LineOfSightPanoramaID,
+		Alts:       cfg.LineOfSightAlts,
+	})
+	lineOfSight, err := lineOfSightCache.Load(ctx)
+	if err != nil {
+		log.Printf("line_of_sight: %v", err)
+	}
+
+	publishConfigEnvelope(hub, cfg, lineOfSight)
 
 	routes := NewRouteCache(hub, RouteCacheOptions{
 		TTL:         cfg.RouteTTL,
@@ -178,22 +189,24 @@ func loadConfig() Config {
 
 func loadConfigFrom(args []string, getenv func(string) string) (Config, error) {
 	cfg := Config{
-		Addr:             envOr(getenv, "IDENT_ADDR", ":8080"),
-		DataDir:          envOr(getenv, "IDENT_DATA_DIR", detectReceiverDataDir(defaultReceiverDataDirs)),
-		AircraftFile:     envOr(getenv, "IDENT_AIRCRAFT_FILE", "aircraft.json"),
-		ReceiverFile:     envOr(getenv, "IDENT_RECEIVER_FILE", "receiver.json"),
-		StatsFile:        envOr(getenv, "IDENT_STATS_FILE", "stats.json"),
-		OutlineFile:      envOr(getenv, "IDENT_OUTLINE_FILE", "outline.json"),
-		DebounceMs:       75,
-		RouteUpstreamURL: envOr(getenv, "IDENT_RELAY_ROUTE_UPSTREAM", defaultRouteUpstreamURL),
-		RouteTTL:         time.Duration(envInt(getenv, "IDENT_RELAY_ROUTE_TTL_SEC", 300)) * time.Second,
-		RouteBatchDelay:  time.Duration(envInt(getenv, "IDENT_RELAY_ROUTE_BATCH_MS", 250)) * time.Millisecond,
-		StationName:      strings.TrimSpace(getenv("IDENT_STATION_NAME")),
-		UpdateCheck:      envBool(getenv, "IDENT_UPDATE_CHECK", true),
-		UpdateRepo:       envOr(getenv, "IDENT_UPDATE_REPO", defaultUpdateRepo),
-		UpdateAPIBase:    envOr(getenv, "IDENT_UPDATE_API_URL", defaultUpdateAPIBase),
-		UpdateInterval:   time.Duration(envInt(getenv, "IDENT_UPDATE_INTERVAL_SEC", int(defaultUpdateInterval/time.Second))) * time.Second,
-		UpdateTimeout:    time.Duration(envInt(getenv, "IDENT_UPDATE_TIMEOUT_SEC", int(defaultUpdateTimeout/time.Second))) * time.Second,
+		Addr:                  envOr(getenv, "IDENT_ADDR", ":8080"),
+		DataDir:               envOr(getenv, "IDENT_DATA_DIR", detectReceiverDataDir(defaultReceiverDataDirs)),
+		AircraftFile:          envOr(getenv, "IDENT_AIRCRAFT_FILE", "aircraft.json"),
+		ReceiverFile:          envOr(getenv, "IDENT_RECEIVER_FILE", "receiver.json"),
+		StatsFile:             envOr(getenv, "IDENT_STATS_FILE", "stats.json"),
+		OutlineFile:           envOr(getenv, "IDENT_OUTLINE_FILE", "outline.json"),
+		DebounceMs:            75,
+		RouteUpstreamURL:      envOr(getenv, "IDENT_RELAY_ROUTE_UPSTREAM", defaultRouteUpstreamURL),
+		RouteTTL:              time.Duration(envInt(getenv, "IDENT_RELAY_ROUTE_TTL_SEC", 300)) * time.Second,
+		RouteBatchDelay:       time.Duration(envInt(getenv, "IDENT_RELAY_ROUTE_BATCH_MS", 250)) * time.Millisecond,
+		StationName:           strings.TrimSpace(getenv("IDENT_STATION_NAME")),
+		LineOfSightPanoramaID: strings.TrimSpace(getenv("IDENT_HEYWHATSTHAT_PANORAMA_ID")),
+		LineOfSightAlts:       strings.TrimSpace(getenv("IDENT_HEYWHATSTHAT_ALTS")),
+		UpdateCheck:           envBool(getenv, "IDENT_UPDATE_CHECK", true),
+		UpdateRepo:            envOr(getenv, "IDENT_UPDATE_REPO", defaultUpdateRepo),
+		UpdateAPIBase:         envOr(getenv, "IDENT_UPDATE_API_URL", defaultUpdateAPIBase),
+		UpdateInterval:        time.Duration(envInt(getenv, "IDENT_UPDATE_INTERVAL_SEC", int(defaultUpdateInterval/time.Second))) * time.Second,
+		UpdateTimeout:         time.Duration(envInt(getenv, "IDENT_UPDATE_TIMEOUT_SEC", int(defaultUpdateTimeout/time.Second))) * time.Second,
 	}
 
 	flags := flag.NewFlagSet("identd", flag.ContinueOnError)
@@ -205,6 +218,8 @@ func loadConfigFrom(args []string, getenv func(string) string) (Config, error) {
 	flags.StringVar(&cfg.OutlineFile, "outline-file", cfg.OutlineFile, "outline JSON file name")
 	flags.StringVar(&cfg.StationName, "station-name", cfg.StationName, "display name for the receiver")
 	flags.StringVar(&cfg.RouteUpstreamURL, "route-upstream", cfg.RouteUpstreamURL, "route lookup endpoint")
+	flags.StringVar(&cfg.LineOfSightPanoramaID, "line-of-sight-panorama-id", cfg.LineOfSightPanoramaID, "HeyWhatsThat panorama ID for line-of-sight rings")
+	flags.StringVar(&cfg.LineOfSightAlts, "line-of-sight-alts", cfg.LineOfSightAlts, "comma-separated line-of-sight altitudes")
 	flags.BoolVar(&cfg.UpdateCheck, "update-check", cfg.UpdateCheck, "check GitHub Releases for update notifications")
 	flags.StringVar(&cfg.UpdateRepo, "update-repo", cfg.UpdateRepo, "GitHub owner/repo used for update notifications")
 	flags.StringVar(&cfg.UpdateAPIBase, "update-api-url", cfg.UpdateAPIBase, "GitHub API base URL for update notifications")
@@ -228,10 +243,14 @@ func updateCheckerOptions(cfg Config) UpdateCheckerOptions {
 // publishConfigEnvelope caches the one-shot runtime config snapshot on the
 // hub so every connecting client receives it. Fields left blank are omitted
 // so the client falls back to its own derivation logic.
-func publishConfigEnvelope(hub *Hub, cfg Config) {
+func publishConfigEnvelope(hub *Hub, cfg Config, lineOfSight []byte) {
 	payload := struct {
-		Station string `json:"station,omitempty"`
-	}{Station: cfg.StationName}
+		Station     string          `json:"station,omitempty"`
+		LineOfSight json.RawMessage `json:"line_of_sight,omitempty"`
+	}{
+		Station:     cfg.StationName,
+		LineOfSight: json.RawMessage(lineOfSight),
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		log.Printf("config: marshal: %v", err)

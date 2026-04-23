@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,15 +14,19 @@ import (
 
 func TestUpdateCheckerReportsAvailableRelease(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/repos/Ident-1090/Ident/releases/latest" {
+		switch r.URL.Path {
+		case "/repos/Ident-1090/Ident/releases/latest":
+			_ = json.NewEncoder(w).Encode(githubRelease{
+				TagName:     "v1.2.0",
+				Name:        "Ident v1.2.0",
+				HTMLURL:     "https://github.com/Ident-1090/Ident/releases/tag/v1.2.0",
+				PublishedAt: mustTime(t, "2026-04-23T10:00:00Z"),
+			})
+		case "/repos/Ident-1090/Ident/compare/abc123def456...v1.2.0":
+			_ = json.NewEncoder(w).Encode(githubCompare{Status: "behind"})
+		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
-		_ = json.NewEncoder(w).Encode(githubRelease{
-			TagName:     "v1.2.0",
-			Name:        "Ident v1.2.0",
-			HTMLURL:     "https://github.com/Ident-1090/Ident/releases/tag/v1.2.0",
-			PublishedAt: mustTime(t, "2026-04-23T10:00:00Z"),
-		})
 	}))
 	defer ts.Close()
 
@@ -30,7 +35,11 @@ func TestUpdateCheckerReportsAvailableRelease(t *testing.T) {
 		Repo:    "Ident-1090/Ident",
 		APIBase: ts.URL,
 		TTL:     time.Hour,
-		Current: VersionInfo{Version: "v1.1.0", Commit: "abc123", Date: "2026-04-20T00:00:00Z"},
+		Current: VersionInfo{
+			Version: "abc123def456",
+			Commit:  "abc123def456",
+			Date:    "2026-04-20T00:00:00Z",
+		},
 	})
 
 	status := checker.Status(context.Background())
@@ -46,7 +55,14 @@ func TestUpdateCheckerReportsAvailableRelease(t *testing.T) {
 }
 
 func TestUpdateCheckerReportsCurrentRelease(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	var compareCalled bool
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.Contains(r.URL.Path, "/compare/") {
+			compareCalled = true
+		}
+		if r.URL.Path != "/repos/Ident-1090/Ident/releases/latest" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
 		_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v1.2.0"})
 	}))
 	defer ts.Close()
@@ -56,7 +72,37 @@ func TestUpdateCheckerReportsCurrentRelease(t *testing.T) {
 		Repo:    "Ident-1090/Ident",
 		APIBase: ts.URL,
 		TTL:     time.Hour,
-		Current: VersionInfo{Version: "v1.2.0"},
+		Current: VersionInfo{Version: "v1.2.0", Commit: "abc123def456"},
+	})
+
+	status := checker.Status(context.Background())
+	if status.Status != UpdateCurrent {
+		t.Fatalf("status = %s, want %s", status.Status, UpdateCurrent)
+	}
+	if compareCalled {
+		t.Fatal("release-tag build should not call compare")
+	}
+}
+
+func TestUpdateCheckerTreatsAheadMainlineBuildsAsCurrent(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/Ident-1090/Ident/releases/latest":
+			_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v1.2.0"})
+		case "/repos/Ident-1090/Ident/compare/abc123def456...v1.2.0":
+			_ = json.NewEncoder(w).Encode(githubCompare{Status: "ahead"})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+
+	checker := NewUpdateChecker(UpdateCheckerOptions{
+		Enabled: true,
+		Repo:    "Ident-1090/Ident",
+		APIBase: ts.URL,
+		TTL:     time.Hour,
+		Current: VersionInfo{Version: "abc123def456", Commit: "abc123def456"},
 	})
 
 	status := checker.Status(context.Background())
@@ -65,8 +111,38 @@ func TestUpdateCheckerReportsCurrentRelease(t *testing.T) {
 	}
 }
 
-func TestUpdateCheckerDoesNotFlagDevBuilds(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+func TestUpdateCheckerTreatsDivergedMainlineBuildsAsUpdatable(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/Ident-1090/Ident/releases/latest":
+			_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v1.2.0"})
+		case "/repos/Ident-1090/Ident/compare/abc123def456...v1.2.0":
+			_ = json.NewEncoder(w).Encode(githubCompare{Status: "diverged"})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+
+	checker := NewUpdateChecker(UpdateCheckerOptions{
+		Enabled: true,
+		Repo:    "Ident-1090/Ident",
+		APIBase: ts.URL,
+		TTL:     time.Hour,
+		Current: VersionInfo{Version: "abc123def456", Commit: "abc123def456"},
+	})
+
+	status := checker.Status(context.Background())
+	if status.Status != UpdateAvailable {
+		t.Fatalf("status = %s, want %s", status.Status, UpdateAvailable)
+	}
+}
+
+func TestUpdateCheckerDoesNotFlagBuildsWithoutKnownCommit(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/Ident-1090/Ident/releases/latest" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
 		_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v9.9.9"})
 	}))
 	defer ts.Close()
@@ -76,7 +152,7 @@ func TestUpdateCheckerDoesNotFlagDevBuilds(t *testing.T) {
 		Repo:    "Ident-1090/Ident",
 		APIBase: ts.URL,
 		TTL:     time.Hour,
-		Current: VersionInfo{Version: "dev"},
+		Current: VersionInfo{Version: "dev", Commit: "unknown"},
 	})
 
 	status := checker.Status(context.Background())
@@ -87,12 +163,19 @@ func TestUpdateCheckerDoesNotFlagDevBuilds(t *testing.T) {
 
 func TestUpdateCheckerKeepsLastSuccessfulReleaseOnFailure(t *testing.T) {
 	fail := false
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if fail {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail && r.URL.Path == "/repos/Ident-1090/Ident/releases/latest" {
 			http.Error(w, "temporary outage", http.StatusBadGateway)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v1.2.0"})
+		switch r.URL.Path {
+		case "/repos/Ident-1090/Ident/releases/latest":
+			_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v1.2.0"})
+		case "/repos/Ident-1090/Ident/compare/abc123def456...v1.2.0":
+			_ = json.NewEncoder(w).Encode(githubCompare{Status: "behind"})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
 	}))
 	defer ts.Close()
 
@@ -101,7 +184,7 @@ func TestUpdateCheckerKeepsLastSuccessfulReleaseOnFailure(t *testing.T) {
 		Repo:    "Ident-1090/Ident",
 		APIBase: ts.URL,
 		TTL:     time.Nanosecond,
-		Current: VersionInfo{Version: "v1.1.0"},
+		Current: VersionInfo{Version: "abc123def456", Commit: "abc123def456"},
 	})
 
 	first := checker.Status(context.Background())
@@ -127,15 +210,24 @@ func TestUpdateCheckerKeepsLastSuccessfulReleaseOnFailure(t *testing.T) {
 }
 
 func TestUpdateCheckerUsesETagForRepeatedChecks(t *testing.T) {
+	var compareRequests int32
 	var sawETag bool
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("If-None-Match") == `"release-v1"` {
-			sawETag = true
-			w.WriteHeader(http.StatusNotModified)
-			return
+		switch r.URL.Path {
+		case "/repos/Ident-1090/Ident/releases/latest":
+			if r.Header.Get("If-None-Match") == `"release-v1"` {
+				sawETag = true
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			w.Header().Set("ETag", `"release-v1"`)
+			_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v1.2.0"})
+		case "/repos/Ident-1090/Ident/compare/abc123def456...v1.2.0":
+			atomic.AddInt32(&compareRequests, 1)
+			_ = json.NewEncoder(w).Encode(githubCompare{Status: "behind"})
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
-		w.Header().Set("ETag", `"release-v1"`)
-		_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v1.2.0"})
 	}))
 	defer ts.Close()
 
@@ -144,7 +236,7 @@ func TestUpdateCheckerUsesETagForRepeatedChecks(t *testing.T) {
 		Repo:    "Ident-1090/Ident",
 		APIBase: ts.URL,
 		TTL:     time.Nanosecond,
-		Current: VersionInfo{Version: "v1.1.0"},
+		Current: VersionInfo{Version: "abc123def456", Commit: "abc123def456"},
 	})
 
 	first := checker.Status(context.Background())
@@ -159,11 +251,17 @@ func TestUpdateCheckerUsesETagForRepeatedChecks(t *testing.T) {
 	if !sawETag {
 		t.Fatal("second request did not include If-None-Match")
 	}
+	if got := atomic.LoadInt32(&compareRequests); got != 1 {
+		t.Fatalf("compare requests = %d, want 1", got)
+	}
 }
 
 func TestUpdateCheckerCoalescesConcurrentRefreshes(t *testing.T) {
 	var requests int32
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/Ident-1090/Ident/releases/latest" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
 		atomic.AddInt32(&requests, 1)
 		time.Sleep(25 * time.Millisecond)
 		_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v1.2.0"})
@@ -175,7 +273,7 @@ func TestUpdateCheckerCoalescesConcurrentRefreshes(t *testing.T) {
 		Repo:    "Ident-1090/Ident",
 		APIBase: ts.URL,
 		TTL:     time.Hour,
-		Current: VersionInfo{Version: "v1.1.0"},
+		Current: VersionInfo{Version: "v1.2.0", Commit: "abc123def456"},
 	})
 
 	var wg sync.WaitGroup
@@ -184,8 +282,8 @@ func TestUpdateCheckerCoalescesConcurrentRefreshes(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			status := checker.Status(context.Background())
-			if status.Status != UpdateAvailable {
-				t.Errorf("status = %s, want %s", status.Status, UpdateAvailable)
+			if status.Status != UpdateCurrent {
+				t.Errorf("status = %s, want %s", status.Status, UpdateCurrent)
 			}
 		}()
 	}

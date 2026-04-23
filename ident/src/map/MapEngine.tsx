@@ -12,7 +12,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { loadLosData } from "../data/losData";
 import { useIdentStore } from "../data/store";
 import type {
   HeyWhatsThatJson,
@@ -184,22 +183,6 @@ export function MapEngine({ children }: MapEngineProps): ReactElement {
   const receiver = useIdentStore((s) => s.receiver);
   const outline = useIdentStore((s) => s.outline);
   const losData = useIdentStore((s) => s.losData);
-  const setLosData = useIdentStore((s) => s.setLosData);
-
-  // Fetch HeyWhatsThat LOS rings once on mount; consumers gate rendering on
-  // `layers.losRings`, so a missing or absent file resolves to null silently.
-  useEffect(() => {
-    if (losData) return;
-    let live = true;
-    loadLosData()
-      .then((data) => {
-        if (live && data) setLosData(data);
-      })
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [losData, setLosData]);
 
   // Store center/zoom used only for initial placement; moveend writes back.
   const storedCenter = useIdentStore((s) => s.map.center);
