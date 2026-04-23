@@ -1,0 +1,88 @@
+version: 2
+
+multi-ecosystem-groups:
+  release-infrastructure:
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "10:00"
+      timezone: "Etc/UTC"
+    labels:
+      - "dependencies"
+      - "infrastructure"
+
+updates:
+  - package-ecosystem: "npm"
+    directory: "/ident"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "10:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "frontend"
+    groups:
+      frontend-security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
+      frontend-runtime:
+        applies-to: "version-updates"
+        dependency-type: "production"
+        update-types:
+          - "minor"
+          - "patch"
+        patterns:
+          - "*"
+      frontend-tooling:
+        applies-to: "version-updates"
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+        patterns:
+          - "*"
+
+  - package-ecosystem: "gomod"
+    directory: "/identd"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "10:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "backend"
+    groups:
+      go-security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
+      go-runtime:
+        applies-to: "version-updates"
+        update-types:
+          - "minor"
+          - "patch"
+        patterns:
+          - "*"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "release-infrastructure"
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "release-infrastructure"
+
+  - package-ecosystem: "docker-compose"
+    directory: "/packaging"
+    patterns:
+      - "*"
+    multi-ecosystem-group: "release-infrastructure"

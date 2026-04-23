@@ -1,0 +1,76 @@
+services:
+  fixture:
+    image: node:24-alpine
+    init: true
+    working_dir: /work
+    command:
+      - node
+      - scripts/generate-receiver-fixture.mjs
+      - --seed
+      - ${IDENT_FIXTURE_SEED:-demo}
+      - --out
+      - /data
+      - --aircraft
+      - ${IDENT_FIXTURE_AIRCRAFT:-150}
+      - --live
+      - --interval-ms
+      - ${IDENT_FIXTURE_INTERVAL_MS:-1000}
+    volumes:
+      - .:/work:ro
+      - receiver-data:/data
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - test -s /data/aircraft.json && test -s /data/receiver.json && test -s /data/stats.json && test -s /data/outline.json && test -s /data/chunks/chunks.json && test -s /data/chunks/current_large.gz
+      interval: 2s
+      timeout: 1s
+      retries: 20
+      start_period: 2s
+
+  route-mock:
+    image: node:24-alpine
+    init: true
+    command:
+      - node
+      - --input-type=module
+      - -e
+      - |
+        import http from "node:http";
+        const server = http.createServer((req, res) => {
+          req.resume();
+          res.writeHead(200, { "content-type": "application/json; charset=utf-8" });
+          res.end("[]\n");
+        });
+        server.listen(8081, "0.0.0.0");
+
+  ident:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VERSION: dev
+        COMMIT: ${IDENT_COMMIT:-dev}
+        BUILD_DATE: ${IDENT_BUILD_DATE:-dev}
+    image: ident:dev
+    depends_on:
+      fixture:
+        condition: service_healthy
+      route-mock:
+        condition: service_started
+    environment:
+      IDENT_ADDR: ":8080"
+      IDENT_DATA_DIR: "/run/readsb"
+      IDENT_RELAY_ROUTE_UPSTREAM: "http://route-mock:8081/routeset"
+      IDENT_STATION_NAME: "Dev"
+      IDENT_UPDATE_CHECK: "false"
+    ports:
+      - "${IDENT_DEV_PORT:-8080}:8080"
+    volumes:
+      - receiver-data:/run/readsb:ro
+
+volumes:
+  receiver-data:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: size=64m

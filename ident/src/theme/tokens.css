@@ -1,0 +1,501 @@
+@import "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.2.8/400.css";
+@import "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.2.8/500.css";
+@import "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-sans@5.2.8/600.css";
+@import "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.2.7/400.css";
+@import "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.2.7/500.css";
+@import "https://cdn.jsdelivr.net/npm/@fontsource/ibm-plex-mono@5.2.7/600.css";
+
+@import "tailwindcss";
+
+@theme {
+  /* Surfaces */
+  --color-bg: #f7f7f7;
+  --color-paper: #ffffff;
+  --color-paper-2: #f5f5f5;
+  --color-paper-3: #ebebeb;
+
+  /* Ink (text) */
+  --color-ink: #2f3338;
+  --color-ink-soft: #4a4f55;
+  --color-ink-faint: #8e9297;
+
+  /* Legacy named palette (kept for back-compat with existing consumers) */
+  --color-blue: #37a5be;
+  --color-blue-deep: #1f7a8f;
+  --color-green: #26a671;
+  --color-orange: #f27200;
+  --color-yellow: #eaedad;
+  --color-red: #ff3900;
+  --color-gray-1: #ebebeb;
+  --color-gray-2: #d5d5d5;
+  --color-gray-3: #929292;
+  --color-gray-4: #6b6f73;
+
+  /* Lines / dividers */
+  --color-line: #d5d5d5;
+  --color-line-soft: #ebebeb;
+  --color-line-strong: #b0b4b8;
+
+  /* Map fills */
+  --color-water: #e7edf0;
+  --color-land: #f2f0ec;
+  --color-coast: #d5d5d5;
+  --color-grat: #ebebeb;
+
+  /* Semantic aliases — theme-agnostic; components consuming these re-skin
+     automatically when [data-theme="dark"] is set. */
+  --color-accent: #37a5be;
+  --color-live: #26a671;
+  --color-warn: #f27200;
+  --color-emerg: #ff3900;
+
+  /* Chrome — statusbar / diagnostics strip. Theme-agnostic: always dark so
+     dense technical readouts stay high-contrast in both light and dark apps.
+     Bg is a soft charcoal (not pure black) so it reads as a raised strip
+     against both pale-paper and near-black app surfaces. */
+  --color-chrome-bg: #2f3338;
+  --color-chrome-ink: #e4e7eb;
+  --color-chrome-ink-soft: #9fa6ae;
+  --color-chrome-ink-faint: #6c727a;
+  --color-chrome-line: #3d4147;
+
+  --font-sans: "IBM Plex Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --shadow-1: 0 1px 0 rgba(47, 51, 56, 0.04), 0 1px 2px rgba(47, 51, 56, 0.06);
+  --shadow-2:
+    0 6px 24px -8px rgba(47, 51, 56, 0.18), 0 1px 2px rgba(47, 51, 56, 0.06);
+
+  --animate-livepulse: livepulse 1.6s ease-out infinite;
+}
+
+/* Night Ops — active when <html data-theme="dark">.
+   App applies this attribute based on settings.theme resolved against
+   prefers-color-scheme when user picks "system". */
+:root[data-theme="dark"] {
+  --color-bg: #0f1113;
+  --color-paper: #16181b;
+  --color-paper-2: #1b1e22;
+  --color-paper-3: #20242a;
+
+  --color-ink: #e4e7eb;
+  --color-ink-soft: #9fa6ae;
+  --color-ink-faint: #6c727a;
+
+  --color-blue: #4cc2db;
+  --color-blue-deep: #2d8aa0;
+  --color-green: #2dc07d;
+  --color-orange: #ff8a24;
+  --color-yellow: #f2d657;
+  --color-red: #ff5a3c;
+  --color-gray-1: #1e2126;
+  --color-gray-2: #2a2d32;
+  --color-gray-3: #6c727a;
+  --color-gray-4: #9fa6ae;
+
+  --color-line: #25282d;
+  --color-line-soft: #1f2226;
+  --color-line-strong: #343941;
+
+  --color-water: #0d0f11;
+  --color-land: #16181b;
+  --color-coast: #2a2e34;
+  --color-grat: #1a1d21;
+
+  --color-accent: #4cc2db;
+  --color-live: #2dc07d;
+  --color-warn: #f2b23c;
+  --color-emerg: #ff5a3c;
+
+  --shadow-1: 0 1px 0 rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-2:
+    0 12px 40px -10px rgba(0, 0, 0, 0.6), 0 2px 10px rgba(0, 0, 0, 0.4);
+}
+
+@keyframes livepulse {
+  0% {
+    box-shadow: 0 0 0 0
+      color-mix(
+        in oklab,
+        var(--feed-pulse-color, var(--color-live)) 55%,
+        transparent
+      );
+  }
+  70% {
+    box-shadow: 0 0 0 8px
+      color-mix(
+        in oklab,
+        var(--feed-pulse-color, var(--color-live)) 0%,
+        transparent
+      );
+  }
+  100% {
+    box-shadow: 0 0 0 0
+      color-mix(
+        in oklab,
+        var(--feed-pulse-color, var(--color-live)) 0%,
+        transparent
+      );
+  }
+}
+
+/* Selected-aircraft halo: outer ring that grows and fades. Authored as an
+   SVG attribute animation so consumers can apply via className. */
+.sel-pulse {
+  animation: sel-pulse 1.6s ease-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+@keyframes sel-pulse {
+  0% {
+    r: 6;
+    opacity: 0.9;
+  }
+  100% {
+    r: 20;
+    opacity: 0;
+  }
+}
+
+/* Emergency halo: faster, warmer. Uses --color-emerg via the stroke attr. */
+.emerg-pulse {
+  animation: emerg-pulse 1.2s ease-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+@keyframes emerg-pulse {
+  0% {
+    r: 8;
+    opacity: 0.9;
+  }
+  100% {
+    r: 20;
+    opacity: 0;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--color-bg);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.4;
+  overflow: hidden;
+  overscroll-behavior: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+code,
+.mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "zero" 1;
+}
+
+:root {
+  --safe-area-top: env(safe-area-inset-top, 0px);
+  --safe-area-right: env(safe-area-inset-right, 0px);
+  --safe-area-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-area-left: env(safe-area-inset-left, 0px);
+  --mobile-safe-top: var(--safe-area-top);
+  --mobile-safe-bottom: var(--safe-area-bottom);
+  --mobile-top-chrome: calc(var(--mobile-safe-top) + 12px);
+  --mobile-attribution-bottom: var(--mobile-safe-bottom);
+  --mobile-sheet-height: 0px;
+  /* Lifts our overlay controls above the MapLibre attribution strip so the
+     two rows stack instead of overlapping. When an inspector sheet is open,
+     the same offset lifts our controls above its top edge. */
+  --mobile-control-bottom: max(
+    calc(var(--mobile-safe-bottom) + 2rem),
+    calc(var(--mobile-sheet-height) + 12px)
+  );
+}
+
+#root {
+  height: 100vh;
+  /* biome-ignore lint/suspicious/noDuplicateProperties: progressive enhancement — browsers without dvh support fall back to vh */
+  height: 100dvh;
+  width: 100vw;
+}
+
+.app-shell {
+  height: 100vh;
+  /* biome-ignore lint/suspicious/noDuplicateProperties: progressive enhancement — browsers without dvh support fall back to vh */
+  height: 100dvh;
+}
+
+@media (max-width: 767px) {
+  /* Phone: lock the React root to the dvh viewport. We intentionally do not
+     chase browser chrome beyond that box; controls and sheets stay within it. */
+  #root {
+    position: fixed;
+    inset: 0;
+    overflow: hidden;
+  }
+
+  /* Phone layout has no header row; the logo HUD floats over the map and
+     the shell is a single canvas row. */
+  .app-shell {
+    grid-template-rows: 1fr;
+  }
+}
+
+/* Basemap-tone scope: MapEngine sets data-basemap-tone on its container so
+   aircraft labels can pick ink + halo colors that contrast with the active
+   basemap's luminance, independent of the app theme. */
+.map-engine[data-basemap-tone="light"] {
+  --label-ink: #0f1114;
+  --label-ink-soft: #3b4148;
+  --label-halo: rgba(255, 255, 255, 0.92);
+  --aircraft-arrow-halo: rgba(11, 18, 23, 0.42);
+  --aircraft-glyph-lowest: #d44400;
+  --aircraft-glyph-low: #f27200;
+  --aircraft-glyph-mid-low: #e89b2b;
+  --aircraft-glyph-mid: #26a671;
+  --aircraft-glyph-high: #37a5be;
+  --aircraft-glyph-highest: #1f5673;
+}
+.map-engine {
+  --floating-inspector-width: clamp(300px, 24vw, 340px);
+}
+.floating-inspector-panel {
+  width: var(--floating-inspector-width);
+  animation: floating-inspector-in 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.map-bottom-controls {
+  right: calc(12px + var(--safe-area-right));
+  bottom: calc(12px + var(--safe-area-bottom));
+  transition: right 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@media (min-width: 768px) {
+  .map-bottom-controls[data-inspector-open="true"] {
+    right: calc(
+      var(--floating-inspector-width) +
+      24px +
+      var(--safe-area-right)
+    );
+  }
+}
+@media (max-width: 767px) {
+  .map-bottom-controls {
+    position: fixed;
+    right: calc(12px + var(--safe-area-right));
+    bottom: var(--mobile-control-bottom);
+    z-index: 10;
+  }
+}
+
+.map-top-controls {
+  top: 12px;
+  left: calc(12px + var(--safe-area-left));
+}
+
+@media (max-width: 767px) {
+  /* Phone: the container stacks the brand HUD and LayersHUD vertically via
+     flex; no manual per-child offsets. Anchor the column below the status-
+     bar safe area so the first child starts in a legible spot. */
+  .map-top-controls {
+    position: fixed;
+    top: var(--mobile-top-chrome);
+    z-index: 10;
+  }
+}
+
+.map-scale-controls {
+  left: calc(12px + var(--safe-area-left));
+  bottom: calc(32px + var(--safe-area-bottom));
+}
+
+@media (max-width: 767px) {
+  .map-scale-controls {
+    position: fixed;
+    bottom: var(--mobile-control-bottom);
+    z-index: 10;
+  }
+}
+
+.mobile-fab-row {
+  position: fixed;
+  top: var(--mobile-top-chrome);
+  right: calc(12px + var(--safe-area-right));
+}
+
+/* Floating chip material for HUDs over the map. Desktop uses a solid
+   paper chip with the project's standard shadow/border — the glass
+   recipe is a phone-only affordance (designed to read over full-bleed
+   map on mobile where HUDs float on top of the canvas). Over the
+   desktop layout's wider surfaces it reads as visual noise. */
+.liquid-glass {
+  background: var(--color-paper);
+  border: 1px solid var(--color-line);
+  box-shadow: var(--shadow-1);
+}
+
+/* Phone: liquid-glass recipe. CSS relative color syntax
+   (`rgb(from X r g b / alpha)`) keeps the paper hue but drops alpha
+   directly — mixing with `transparent` pulls toward rgba(0,0,0,0)'s
+   black and muddies the tint. Light mode stays minimal (no inset
+   highlights — white-on-white doesn't read); dark mode gets the full
+   recipe since translucent paper plays against the darker map
+   underneath. saturate() is what stops the blur from reading as
+   frosted plastic. */
+@media (max-width: 767px) {
+  .liquid-glass {
+    background: rgb(from var(--color-paper) r g b / 0.12);
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    backdrop-filter: blur(22px) saturate(180%);
+    border: 1px solid rgb(from var(--color-ink) r g b / 0.1);
+    box-shadow:
+      0 6px 20px -6px rgba(0, 0, 0, 0.18),
+      0 1px 2px rgba(0, 0, 0, 0.12);
+  }
+
+  :root[data-theme="dark"] .liquid-glass {
+    background: rgb(from var(--color-paper) r g b / 0.22);
+    border-color: rgb(255 255 255 / 0.14);
+    box-shadow:
+      inset 0 1px 0 rgb(255 255 255 / 0.16),
+      inset 0 -1px 0 rgb(0 0 0 / 0.3),
+      0 8px 24px -4px rgba(0, 0, 0, 0.55),
+      0 1px 2px rgba(0, 0, 0, 0.3);
+  }
+
+  /* Fallback for any engine without backdrop-filter — solid paper so
+     chips stay readable (no map bleed-through, but no worse than the
+     pre-glass state). */
+  @supports not (
+      (backdrop-filter: blur(1px)) or
+      (-webkit-backdrop-filter: blur(1px))
+    ) {
+    .liquid-glass {
+      background: var(--color-paper);
+    }
+  }
+}
+
+/* Drawer is a non-immersive popup: unlike the map and bottom sheet, the panel
+   stops inside the safe area. It opens from the hamburger button's center so
+   the menu feels attached to the triggering control rather than sliding in
+   from an unrelated screen edge. */
+.mobile-drawer-panel {
+  top: var(--mobile-top-chrome);
+  right: calc(12px + var(--safe-area-right));
+  bottom: calc(12px + var(--mobile-safe-bottom));
+  width: min(
+    360px,
+    calc(100vw - var(--safe-area-left) - var(--safe-area-right) - 24px)
+  );
+  transform-origin: calc(100% - 22px) 22px;
+  border-radius: 8px;
+  box-shadow:
+    0 18px 48px -18px rgba(0, 0, 0, 0.32),
+    0 2px 8px rgba(0, 0, 0, 0.12);
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(18px, -18px) scale(0.08);
+}
+
+.mobile-drawer-panel[data-open="true"] {
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+}
+
+/* Sheet anchors at the visible viewport bottom. The second box-shadow is a
+   paper-colored "skirt" that extends 200vh below the element with no blur
+   and no horizontal offset, so the sheet background spills into whatever
+   chrome strip (URL bar, home-indicator, iOS 26 Liquid Glass reservation)
+   sits below without needing a JS-measured overshoot. The first shadow is
+   the normal top drop-shadow for depth. */
+.mobile-bottom-sheet {
+  position: fixed;
+  bottom: 0;
+  box-shadow:
+    0 -4px 20px rgba(0, 0, 0, 0.25),
+    0 100vh 0 100vh var(--color-paper);
+}
+
+@media (max-width: 767px) {
+  .map-engine .maplibregl-ctrl-bottom-left,
+  .map-engine .maplibregl-ctrl-bottom-right {
+    position: fixed;
+    bottom: var(--mobile-attribution-bottom);
+    z-index: 1;
+  }
+
+  .map-engine .maplibregl-ctrl-bottom-left {
+    left: var(--safe-area-left);
+  }
+
+  .map-engine .maplibregl-ctrl-bottom-right {
+    right: var(--safe-area-right);
+  }
+}
+
+.omnibox-dialog {
+  left: calc(10px + var(--safe-area-left));
+  top: calc(58px + var(--safe-area-top));
+  max-height: calc(
+    100dvh -
+    98px -
+    var(--safe-area-top) -
+    var(--safe-area-bottom)
+  );
+}
+
+@media (max-width: 767px) {
+  .omnibox-dialog {
+    left: calc(8px + var(--safe-area-left));
+    right: calc(8px + var(--safe-area-right));
+    top: calc(56px + var(--safe-area-top));
+    width: auto;
+    max-width: none;
+    max-height: calc(
+      100dvh -
+      72px -
+      var(--safe-area-top) -
+      var(--safe-area-bottom)
+    );
+  }
+}
+
+@keyframes floating-inspector-in {
+  from {
+    opacity: 0;
+    transform: translateX(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .floating-inspector-panel {
+    animation: none;
+  }
+  .map-bottom-controls {
+    transition: none;
+  }
+  .mobile-drawer-panel {
+    transition: none;
+  }
+}
+.map-engine[data-basemap-tone="dark"] {
+  --label-ink: #f1f3f5;
+  --label-ink-soft: #c2c7cd;
+  --label-halo: rgba(0, 0, 0, 0.78);
+  --aircraft-arrow-halo: rgba(242, 249, 255, 0.88);
+  --aircraft-glyph-lowest: #f05e24;
+  --aircraft-glyph-low: #ff8a22;
+  --aircraft-glyph-mid-low: #f1b846;
+  --aircraft-glyph-mid: #36c98a;
+  --aircraft-glyph-high: #55c9de;
+  --aircraft-glyph-highest: #69afcb;
+}

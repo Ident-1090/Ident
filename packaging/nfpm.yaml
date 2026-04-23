@@ -1,0 +1,21 @@
+# yaml-language-server: $schema=https://nfpm.goreleaser.com/static/schema.json
+name: identd
+arch: ${IDENT_ARCH}
+platform: linux
+version: ${IDENT_VERSION}
+section: net
+priority: optional
+maintainer: Ident maintainers
+description: Modern ADS-B receiver display service
+homepage: https://github.com/Ident-1090/Ident
+contents:
+  - src: dist/identd
+    dst: /usr/bin/identd
+  - src: packaging/systemd/identd.service
+    dst: /lib/systemd/system/identd.service
+  - src: packaging/systemd/identd.env.example
+    dst: /etc/ident/identd.env
+    type: config|noreplace
+scripts:
+  postinstall: packaging/nfpm/postinstall.sh
+  postremove: packaging/nfpm/postremove.sh
