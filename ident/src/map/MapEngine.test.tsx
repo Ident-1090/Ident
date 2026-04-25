@@ -75,14 +75,18 @@ describe("MapEngine", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     lastMap = null;
-    ctor = vi.fn().mockImplementation(() => {
+    ctor = vi.fn().mockImplementation(function MapLibreMap() {
       const m = makeFakeMap();
       lastMap = m;
       return m;
     });
     (window as unknown as { maplibregl: unknown }).maplibregl = {
       Map: ctor,
-      AttributionControl: vi.fn().mockImplementation(() => ({})),
+      AttributionControl: vi
+        .fn()
+        .mockImplementation(function AttributionControl() {
+          return {};
+        }),
     };
 
     // Seed the store with a MapSlice shape matching the post-migration spec.
