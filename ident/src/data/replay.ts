@@ -7,23 +7,32 @@ import type {
 } from "./types";
 
 const MANIFEST_URL = "api/replay/manifest.json";
+const REPLAY_FETCH_TIMEOUT_MS = 30 * 1000;
+let manifestLoad: Promise<ReplayManifest | null> | null = null;
+const rangeLoads = new Map<string, Promise<void>>();
 const blockLoads = new Map<string, Promise<void>>();
 
 export async function refreshReplayManifest(): Promise<ReplayManifest | null> {
-  try {
-    const manifest = await fetchJson<ReplayManifest>(appPath(MANIFEST_URL), {
-      cache: "no-store",
-    });
-    useIdentStore.getState().setReplayManifest(normalizeManifest(manifest));
-    return manifest;
-  } catch (err) {
-    useIdentStore
-      .getState()
-      .setReplayError(
-        err instanceof Error ? err.message : "Replay unavailable",
-      );
-    return null;
-  }
+  if (manifestLoad) return manifestLoad;
+  manifestLoad = (async () => {
+    try {
+      const manifest = await fetchJson<ReplayManifest>(appPath(MANIFEST_URL), {
+        cache: "no-store",
+      });
+      useIdentStore.getState().setReplayManifest(normalizeManifest(manifest));
+      return manifest;
+    } catch (err) {
+      useIdentStore
+        .getState()
+        .setReplayError(
+          err instanceof Error ? err.message : "Replay unavailable",
+        );
+      return null;
+    }
+  })().finally(() => {
+    manifestLoad = null;
+  });
+  return manifestLoad;
 }
 
 export async function ensureReplayRange(
@@ -35,20 +44,32 @@ export async function ensureReplayRange(
   const blocks = blocksForRange(st.replay.blocks, sinceMs, untilMs);
   if (blocks.length === 0) return;
 
+  const key = blocks.map((block) => block.url).join("\n");
+  const pending = rangeLoads.get(key);
+  if (pending) return pending;
+
   useIdentStore.getState().setReplayLoading(true);
-  try {
-    for (const block of blocks) {
-      await loadReplayBlock(block);
+  const load = (async () => {
+    try {
+      for (const block of blocks) {
+        await loadReplayBlock(block);
+      }
+    } catch (err) {
+      await refreshReplayManifest();
+      useIdentStore
+        .getState()
+        .setReplayError(
+          err instanceof Error ? err.message : "Replay block missing",
+        );
+    } finally {
+      rangeLoads.delete(key);
+      if (rangeLoads.size === 0) {
+        useIdentStore.getState().setReplayLoading(false);
+      }
     }
-    useIdentStore.getState().setReplayLoading(false);
-  } catch (err) {
-    await refreshReplayManifest();
-    useIdentStore
-      .getState()
-      .setReplayError(
-        err instanceof Error ? err.message : "Replay block missing",
-      );
-  }
+  })();
+  rangeLoads.set(key, load);
+  return load;
 }
 
 function loadReplayBlock(block: ReplayBlockIndex): Promise<void> {
@@ -88,9 +109,22 @@ export function blocksForRange(
 }
 
 async function fetchJson<T>(url: string, init: RequestInit): Promise<T> {
-  const res = await fetch(url, init);
-  if (!res.ok) throw new Error(`Replay request failed: ${res.status}`);
-  return (await res.json()) as T;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => {
+    controller.abort();
+  }, REPLAY_FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, { ...init, signal: controller.signal });
+    if (!res.ok) throw new Error(`Replay request failed: ${res.status}`);
+    return (await res.json()) as T;
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error("Replay request timed out");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function normalizeManifest(manifest: ReplayManifest): ReplayManifest {

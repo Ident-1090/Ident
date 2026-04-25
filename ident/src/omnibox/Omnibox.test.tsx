@@ -596,6 +596,22 @@ describe("field-focus grammar", () => {
     expect(r[0].value).toBe("KJFK");
   });
 
+  it("buildLiveFieldSuggestions tokenizes route strings for route completions", () => {
+    const map = new Map<string, Aircraft>([
+      ["a", { hex: "a", seen: 0, type: "adsb_icao", flight: "ASA953" }],
+    ]);
+    const routes = {
+      ASA953: { origin: "SJC", destination: "—", route: "SJC-OGG" },
+    };
+
+    const r = buildLiveFieldSuggestions("rt", map, routes);
+    const vals = r.map((s) => s.value);
+
+    expect(vals).toContain("SJC");
+    expect(vals).toContain("OGG");
+    expect(vals).toContain("SJC-OGG");
+  });
+
   it("buildLiveFieldSuggestions pulls ICAO countries from aircraft hexes", () => {
     const map = new Map<string, Aircraft>([
       ["a", { hex: "a8469e", seen: 0, type: "adsb_icao" }],

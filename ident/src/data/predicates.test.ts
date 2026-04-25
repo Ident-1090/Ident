@@ -17,13 +17,52 @@ describe("matchesFilter", () => {
     expect(matchesFilter(mkAc(), {})).toBe(true);
   });
 
-  it("hideGround drops airground=1", () => {
+  it("default altitude range still keeps ground aircraft visible", () => {
+    expect(
+      matchesFilter(mkAc({ alt_baro: "ground", airground: "ground" }), {
+        altRangeFt: [0, 45_000],
+        hideGround: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("altitude range compares ground aircraft as zero feet", () => {
+    expect(
+      matchesFilter(mkAc({ alt_baro: "ground" }), {
+        altRangeFt: [0, 100],
+      }),
+    ).toBe(true);
+    expect(
+      matchesFilter(mkAc({ alt_baro: "ground" }), {
+        altRangeFt: [1, 45_000],
+      }),
+    ).toBe(false);
+    expect(
+      matchesFilter(mkAc({ airground: "ground" }), {
+        altMinFt: -100,
+        altMaxFt: 100,
+      }),
+    ).toBe(true);
+  });
+
+  it("hideGround drops every ground representation", () => {
     expect(matchesFilter(mkAc({ airground: 1 }), { hideGround: true })).toBe(
       false,
     );
+    expect(
+      matchesFilter(mkAc({ airground: "ground" }), { hideGround: true }),
+    ).toBe(false);
+    expect(
+      matchesFilter(mkAc({ alt_baro: "ground" }), { hideGround: true }),
+    ).toBe(false);
     expect(matchesFilter(mkAc({ airground: 0 }), { hideGround: true })).toBe(
       true,
     );
+    expect(
+      matchesFilter(mkAc({ alt_baro: 0, airground: 0 }), {
+        hideGround: true,
+      }),
+    ).toBe(true);
   });
 
   it("positionOnly drops AC without lat/lon", () => {

@@ -2,6 +2,8 @@ import { haversineNm } from "./derive";
 import { findIcaoCountry } from "./icaoCountry";
 import type { Aircraft, CategoryKey, RouteInfo } from "./types";
 
+const DEFAULT_ALT_RANGE_FT: [number, number] = [0, 45_000];
+
 export interface FilterState {
   // Accepts two shapes:
   //   - Set<string> of letter-prefix codes (e.g. Set(["A", "B"])): legacy call
@@ -109,7 +111,7 @@ export function matchesFilter(ac: Aircraft, f: FilterState): boolean {
   const hasPosOnly = f.hasPosOnly ?? f.positionOnly ?? false;
   const emergOnly = f.emergOnly ?? f.emergencyOnly ?? false;
 
-  if (hideGround && ac.airground === 1) return false;
+  if (hideGround && isGroundAircraft(ac)) return false;
   if (hasPosOnly && (ac.lat == null || ac.lon == null)) return false;
   if (emergOnly && (!ac.emergency || ac.emergency === "none")) return false;
 
@@ -125,10 +127,17 @@ export function matchesFilter(ac: Aircraft, f: FilterState): boolean {
     }
   }
 
-  const altMinFt = f.altMinFt ?? f.altRangeFt?.[0];
-  const altMaxFt = f.altMaxFt ?? f.altRangeFt?.[1];
+  const defaultAltRange =
+    f.altMinFt == null &&
+    f.altMaxFt == null &&
+    f.altRangeFt?.[0] === DEFAULT_ALT_RANGE_FT[0] &&
+    f.altRangeFt?.[1] === DEFAULT_ALT_RANGE_FT[1];
+  const altMinFt =
+    f.altMinFt ?? (defaultAltRange ? undefined : f.altRangeFt?.[0]);
+  const altMaxFt =
+    f.altMaxFt ?? (defaultAltRange ? undefined : f.altRangeFt?.[1]);
   if (altMinFt != null || altMaxFt != null) {
-    const alt = typeof ac.alt_baro === "number" ? ac.alt_baro : null;
+    const alt = filterAltitudeFt(ac);
     if (alt == null) return false;
     if (altMinFt != null && alt < altMinFt) return false;
     if (altMaxFt != null && alt > altMaxFt) return false;
@@ -265,4 +274,15 @@ export function matchesFilter(ac: Aircraft, f: FilterState): boolean {
   }
 
   return true;
+}
+
+function isGroundAircraft(ac: Aircraft): boolean {
+  return (
+    ac.alt_baro === "ground" || ac.airground === "ground" || ac.airground === 1
+  );
+}
+
+function filterAltitudeFt(ac: Aircraft): number | null {
+  if (isGroundAircraft(ac)) return 0;
+  return typeof ac.alt_baro === "number" ? ac.alt_baro : null;
 }

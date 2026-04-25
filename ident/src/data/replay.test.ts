@@ -49,10 +49,32 @@ describe("replay data loading", () => {
 
     expect(globalThis.fetch).toHaveBeenCalledWith(
       "/ident/api/replay/manifest.json",
-      { cache: "no-store" },
+      expect.objectContaining({
+        cache: "no-store",
+        signal: expect.any(AbortSignal),
+      }),
     );
     expect(useIdentStore.getState().replay.enabled).toBe(true);
     expect(useIdentStore.getState().replay.blocks).toHaveLength(1);
+  });
+
+  it("deduplicates concurrent manifest refreshes", async () => {
+    let resolveManifest: ((value: Response) => void) | null = null;
+    globalThis.fetch = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveManifest = resolve;
+        }),
+    ) as never;
+
+    const first = refreshReplayManifest();
+    const second = refreshReplayManifest();
+    const resolve = resolveManifest as ((value: Response) => void) | null;
+    if (!resolve) throw new Error("manifest request was not started");
+    resolve(responseJson(manifest()));
+    await Promise.all([first, second]);
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(1);
   });
 
   it("fetches needed blocks and drives display selectors in replay mode", async () => {
@@ -100,6 +122,28 @@ describe("replay data loading", () => {
     await refreshReplayManifest();
     const first = ensureReplayRange(120_000, 180_000);
     const second = ensureReplayRange(120_000, 180_000);
+    const resolve = resolveBlock as ((value: Response) => void) | null;
+    if (!resolve) throw new Error("block request was not started");
+    resolve(responseJson(block));
+    await Promise.all([first, second]);
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("deduplicates overlapping range requests before issuing block loads", async () => {
+    const block = replayBlock();
+    let resolveBlock: ((value: Response) => void) | null = null;
+    globalThis.fetch = vi.fn((url: string) => {
+      if (url.includes("manifest"))
+        return Promise.resolve(responseJson(manifest()));
+      return new Promise<Response>((resolve) => {
+        resolveBlock = resolve;
+      });
+    }) as never;
+
+    await refreshReplayManifest();
+    const first = ensureReplayRange(120_000, 180_000);
+    const second = ensureReplayRange(121_000, 179_000);
     const resolve = resolveBlock as ((value: Response) => void) | null;
     if (!resolve) throw new Error("block request was not started");
     resolve(responseJson(block));

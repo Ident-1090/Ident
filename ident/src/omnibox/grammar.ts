@@ -862,8 +862,7 @@ export function buildLiveFieldSuggestions(
       if (!cs) continue;
       const route = routeByCallsign[cs];
       if (!route) continue;
-      bump(route.origin);
-      bump(route.destination);
+      for (const value of routeSuggestionValues(route)) bump(value);
     }
   } else if (field === "country") {
     const countries = new Map<
@@ -922,6 +921,23 @@ export function buildLiveFieldSuggestions(
   };
 
   return sorted.map(([value]) => ({ value, desc: describe(field, value) }));
+}
+
+function routeSuggestionValues(route: RouteInfo): string[] {
+  const out: string[] = [];
+  const add = (value: string | undefined | null) => {
+    const v = value?.trim();
+    if (!v || v === "—") return;
+    out.push(v.toUpperCase());
+  };
+
+  add(route.origin);
+  add(route.destination);
+  add(route.route);
+  for (const part of route.route?.split(/[^A-Za-z0-9]+/) ?? []) {
+    add(part);
+  }
+  return out;
 }
 
 // Merge well-known squawks with a frequency-sorted tail of live squawks,
