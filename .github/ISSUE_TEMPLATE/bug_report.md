@@ -20,7 +20,7 @@ Describe the expected behavior.
 - Operating system:
 - Hardware:
 - Path where `aircraft.json` is written:
-- Optional files present: `receiver.json` / `stats.json` / `outline.json` / chunks
+- Optional files present: `receiver.json` / `stats.json` / `outline.json`
 
 ## Browser
 

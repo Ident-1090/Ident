@@ -24,22 +24,20 @@ var upgrader = websocket.Upgrader{
 }
 
 type Server struct {
-	ctx            context.Context
-	hub            *Hub
-	basePath       string
-	dataDir        string
-	historyDataDir string
-	web            fs.FS
-	updates        *UpdateChecker
-	ready          atomic.Bool
+	ctx      context.Context
+	hub      *Hub
+	basePath string
+	dataDir  string
+	web      fs.FS
+	updates  *UpdateChecker
+	ready    atomic.Bool
 }
 
 type ServerOptions struct {
-	DataDir        string
-	BasePath       string
-	HistoryDataDir string
-	Web            fs.FS
-	UpdateChecker  *UpdateChecker
+	DataDir       string
+	BasePath      string
+	Web           fs.FS
+	UpdateChecker *UpdateChecker
 }
 
 func NewServer(ctx context.Context, hub *Hub) *Server {
@@ -52,13 +50,12 @@ func NewServerWithOptions(ctx context.Context, hub *Hub, opts ServerOptions) *Se
 		log.Printf("base path %q ignored: %v", opts.BasePath, err)
 	}
 	return &Server{
-		ctx:            ctx,
-		hub:            hub,
-		basePath:       basePath,
-		dataDir:        opts.DataDir,
-		historyDataDir: opts.HistoryDataDir,
-		web:            opts.Web,
-		updates:        opts.UpdateChecker,
+		ctx:      ctx,
+		hub:      hub,
+		basePath: basePath,
+		dataDir:  opts.DataDir,
+		web:      opts.Web,
+		updates:  opts.UpdateChecker,
 	}
 }
 
@@ -72,9 +69,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/update.json", s.serveUpdateStatus)
 	if s.dataDir != "" {
 		mux.HandleFunc("/api/data/", s.serveReceiverData)
-	}
-	if s.historyDataDir != "" {
-		mux.HandleFunc("/api/chunks/", s.serveChunks)
 	}
 	mux.HandleFunc("/api/", http.NotFound)
 	if s.web != nil {
@@ -158,16 +152,6 @@ func (s *Server) readPump(c *Client) {
 func (s *Server) serveReceiverData(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(r.URL.Path, "/api/data/")
 	file, ok := localFilePath(s.dataDir, name, false)
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	http.ServeFile(w, r, file)
-}
-
-func (s *Server) serveChunks(w http.ResponseWriter, r *http.Request) {
-	name := strings.TrimPrefix(r.URL.Path, "/api/chunks/")
-	file, ok := localFilePath(s.historyDataDir, name, true)
 	if !ok {
 		http.NotFound(w, r)
 		return

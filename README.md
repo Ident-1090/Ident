@@ -46,7 +46,7 @@ Ident is built for common self-hosted ADS-B receiver stacks.
 | Stack | Support |
 | --- | --- |
 | readsb | Live aircraft, receiver metadata, stats, and range outline. |
-| ultrafeeder | readsb-compatible data plus optional history chunks when available. |
+| ultrafeeder | readsb-compatible live aircraft, receiver metadata, stats, and range outline. |
 | dump1090-fa | Live aircraft display from JSON output. Optional metadata depends on the install. |
 | PiAware | Installs that expose dump1090-fa JSON output. |
 
@@ -142,6 +142,8 @@ services:
 
 The left side of the volume is the path on the receiver host. The right side is
 the path inside the Ident container, and should match `IDENT_DATA_DIR`.
+Recent trails are kept by `identd`; Docker's writable container layer preserves
+the compressed trail cache across a normal `docker restart`.
 
 If Ident is being added to an existing Compose stack, share the same receiver
 JSON volume with the decoder service:
@@ -177,7 +179,7 @@ Start it:
 docker compose up -d
 ```
 
-Then open:
+Then open it from the receiver host or another device on the same network:
 
 ```text
 http://receiver.local:8080/
@@ -278,20 +280,38 @@ IDENT_OUTLINE_FILE=outline.json
 For PiAware and dump1090-fa, set `IDENT_DATA_DIR` to the directory where
 `aircraft.json` is written.
 
+### Trails
+
+Ident keeps recent aircraft trails inside `identd` instead of requiring a
+separate history producer. The defaults retain two hours, sample each aircraft
+at most once every five seconds, and write a compressed restart cache once a
+minute.
+
+```sh
+IDENT_TRAILS_MEMORY_WINDOW_SEC=7200
+IDENT_TRAILS_SAMPLE_INTERVAL_SEC=5
+IDENT_TRAILS_RESTART_CACHE=true
+IDENT_TRAILS_RESTART_CACHE_DIR=/var/cache/ident
+IDENT_TRAILS_RESTART_CACHE_INTERVAL_SEC=60
+```
+
+Disabling the restart cache keeps trails memory-only; they will be lost when
+`identd` exits.
+
 ## How It Works
 
 ```text
 browser
   -> /              web UI
-  -> /api/ws        live traffic stream
+  -> /api/ws        live traffic, config, routes, and trails
   -> /api/data/*    receiver JSON fallback
-  -> /api/chunks/*  receiver history chunks when present
   -> /api/update.json
   -> /healthz       service health
 
 identd
   -> serves the embedded web app
   -> watches receiver JSON files
+  -> maintains recent aircraft trails
   -> sends typed updates to connected browsers
 ```
 

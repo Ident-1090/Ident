@@ -21,7 +21,7 @@ services:
     healthcheck:
       test:
         - CMD-SHELL
-        - test -s /data/aircraft.json && test -s /data/receiver.json && test -s /data/stats.json && test -s /data/outline.json && test -s /data/chunks/chunks.json && test -s /data/chunks/current_large.gz
+        - test -s /data/aircraft.json && test -s /data/receiver.json && test -s /data/stats.json && test -s /data/outline.json
       interval: 2s
       timeout: 1s
       retries: 20

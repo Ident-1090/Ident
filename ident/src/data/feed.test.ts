@@ -1,9 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ChunkJson } from "./chunks";
-import { loadHistoricalTracks } from "./chunks";
 import { startFeed } from "./feed";
 import { useIdentStore } from "./store";
-import type { TrailPoint } from "./types";
 
 const wsHarness = vi.hoisted(() => ({
   instances: [] as Array<{ url: string; emitText: (text: string) => void }>,
@@ -47,22 +44,6 @@ vi.mock("./ws", () => ({
     }
   },
 }));
-vi.mock("./chunks", async () => {
-  const actual = await vi.importActual<typeof import("./chunks")>("./chunks");
-  return {
-    ...actual,
-    loadHistoricalTracks: vi.fn(),
-  };
-});
-
-function deferred<T>() {
-  let resolve!: (value: T | PromiseLike<T>) => void;
-  const promise = new Promise<T>((res) => {
-    resolve = res;
-  });
-  return { promise, resolve };
-}
-
 function resetStore() {
   useIdentStore.setState({
     aircraft: new Map(),
@@ -100,9 +81,6 @@ describe("startFeed route envelopes", () => {
   beforeEach(() => {
     resetStore();
     wsHarness.instances = [];
-    vi.mocked(loadHistoricalTracks).mockImplementation(() =>
-      Promise.resolve(new Map()),
-    );
     globalThis.fetch = vi.fn(
       async () =>
         ({ ok: false, status: 404, json: async () => ({}) }) as Response,
@@ -201,6 +179,37 @@ describe("startFeed route envelopes", () => {
     expect(useIdentStore.getState().losData).toEqual({
       rings: [{ alt: 3048, points: [[37, -122]] }],
     });
+    stop();
+  });
+
+  it("merges relay-supplied trail points into the local trail cache", () => {
+    const stop = startFeed();
+    useIdentStore.getState().recordTrailPoint("abc123", {
+      lat: 34.1,
+      lon: -118.2,
+      alt: 3000,
+      ts: 100_000,
+    });
+
+    wsHarness.instances[0].emitText(
+      JSON.stringify({
+        type: "trails",
+        data: {
+          aircraft: {
+            abc123: [
+              { lat: 34.0, lon: -118.1, alt: 2800, ts: 90_000 },
+              { lat: 34.2, lon: -118.3, alt: 3200, ts: 110_000 },
+            ],
+          },
+        },
+      }),
+    );
+
+    expect(useIdentStore.getState().trailsByHex.abc123).toEqual([
+      { lat: 34.0, lon: -118.1, alt: 2800, ts: 90_000 },
+      { lat: 34.1, lon: -118.2, alt: 3000, ts: 100_000 },
+      { lat: 34.2, lon: -118.3, alt: 3200, ts: 110_000 },
+    ]);
     stop();
   });
 
@@ -406,193 +415,6 @@ describe("startFeed route envelopes", () => {
     await vi.advanceTimersByTimeAsync(5_000);
     expect(vi.mocked(globalThis.fetch).mock.calls).toHaveLength(
       callsAfterFailures,
-    );
-
-    stop();
-  });
-});
-
-describe("startFeed trail seeding", () => {
-  const originalFetch = globalThis.fetch;
-  const mockedLoadHistoricalTracks = vi.mocked(loadHistoricalTracks);
-
-  beforeEach(() => {
-    resetStore();
-    wsHarness.instances = [];
-    vi.useFakeTimers();
-    globalThis.fetch = vi.fn(async (url: string) => {
-      if (url.endsWith("/current_large.gz")) {
-        return {
-          ok: false,
-          status: 404,
-          json: async () => ({}),
-        } as Response;
-      }
-      throw new Error(`unexpected fetch ${url}`);
-    }) as unknown as typeof fetch;
-  });
-
-  afterEach(() => {
-    vi.useRealTimers();
-    vi.restoreAllMocks();
-    mockedLoadHistoricalTracks.mockReset();
-    globalThis.fetch = originalFetch;
-  });
-
-  it("waits for the first live aircraft frame before starting trail seed fetches", async () => {
-    mockedLoadHistoricalTracks.mockImplementationOnce(() =>
-      Promise.resolve(new Map()),
-    );
-    const fetchSpy = vi.fn(async (url: string) => {
-      if (url.endsWith("/current_large.gz")) {
-        return {
-          ok: false,
-          status: 404,
-          json: async () => ({}),
-        } as Response;
-      }
-      throw new Error(`unexpected fetch ${url}`);
-    });
-    globalThis.fetch = fetchSpy as unknown as typeof fetch;
-
-    const stop = startFeed();
-
-    expect(fetchSpy).not.toHaveBeenCalled();
-    expect(mockedLoadHistoricalTracks).not.toHaveBeenCalled();
-
-    wsHarness.instances[0].emitText(
-      JSON.stringify({
-        type: "aircraft",
-        data: {
-          now: 3,
-          aircraft: [{ hex: "abc123", lat: 37.7, lon: -122.0, alt_baro: 2600 }],
-        },
-      }),
-    );
-
-    await vi.runOnlyPendingTimersAsync();
-
-    expect(fetchSpy).toHaveBeenCalledWith("/api/chunks/current_large.gz", {
-      cache: "no-store",
-    });
-    expect(mockedLoadHistoricalTracks).toHaveBeenCalledTimes(1);
-    stop();
-  });
-
-  it("seeds startup trails from current_large.gz after the first live aircraft frame", async () => {
-    vi.setSystemTime(3_000);
-
-    const historical = deferred<Map<string, TrailPoint[]>>();
-    mockedLoadHistoricalTracks.mockImplementationOnce(() => historical.promise);
-    const rolling: ChunkJson = {
-      files: [
-        {
-          now: 1_000,
-          messages: 0,
-          aircraft: [
-            [
-              "abc123",
-              2200,
-              120,
-              90,
-              37.5,
-              -122.2,
-              0.2,
-              "adsb_icao",
-              "TEST123",
-              10,
-            ],
-          ],
-        },
-        {
-          now: 1_120,
-          messages: 0,
-          aircraft: [
-            [
-              "abc123",
-              2400,
-              122,
-              92,
-              37.6,
-              -122.1,
-              0.2,
-              "adsb_icao",
-              "TEST123",
-              12,
-            ],
-          ],
-        },
-      ],
-    };
-    globalThis.fetch = vi.fn(async (url: string) => {
-      if (url.endsWith("/current_large.gz")) {
-        return {
-          ok: true,
-          status: 200,
-          json: async () => rolling,
-        } as Response;
-      }
-      throw new Error(`unexpected fetch ${url}`);
-    }) as unknown as typeof fetch;
-
-    const stop = startFeed();
-    expect(useIdentStore.getState().trailsByHex.abc123).toBeUndefined();
-
-    wsHarness.instances[0].emitText(
-      JSON.stringify({
-        type: "aircraft",
-        data: {
-          now: 3,
-          aircraft: [{ hex: "abc123", lat: 37.7, lon: -122.0, alt_baro: 2600 }],
-        },
-      }),
-    );
-    await vi.runOnlyPendingTimersAsync();
-
-    await vi.waitFor(() =>
-      expect(useIdentStore.getState().trailsByHex.abc123).toEqual([
-        { lat: 37.7, lon: -122.0, alt: 2600, ts: 3_000 },
-        { lat: 37.5, lon: -122.2, alt: 2200, ts: 999_800 },
-        { lat: 37.6, lon: -122.1, alt: 2400, ts: 1_119_800 },
-      ]),
-    );
-
-    historical.resolve(new Map());
-    stop();
-  });
-
-  it("merges delayed history behind live points in timestamp order instead of append order", async () => {
-    vi.setSystemTime(3_000);
-
-    const historical = deferred<Map<string, TrailPoint[]>>();
-    mockedLoadHistoricalTracks.mockImplementationOnce(() => historical.promise);
-
-    const stop = startFeed();
-    wsHarness.instances[0].emitText(
-      JSON.stringify({
-        type: "aircraft",
-        data: {
-          now: 3,
-          aircraft: [{ hex: "abc123", lat: 37.7, lon: -122.0, alt_baro: 2600 }],
-        },
-      }),
-    );
-
-    historical.resolve(
-      new Map([
-        [
-          "abc123",
-          [
-            { lat: 37.5, lon: -122.2, alt: 2200, ts: 1_000 },
-            { lat: 37.6, lon: -122.1, alt: 2400, ts: 2_000 },
-          ],
-        ],
-      ]),
-    );
-    await vi.waitFor(() =>
-      expect(
-        useIdentStore.getState().trailsByHex.abc123.map((point) => point.ts),
-      ).toEqual([1_000, 2_000, 3_000]),
     );
 
     stop();
