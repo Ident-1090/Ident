@@ -1,7 +1,11 @@
 import { X } from "lucide-react";
 import type { ReactNode } from "react";
 import { haversineNm } from "../data/derive";
-import { useIdentStore } from "../data/store";
+import {
+  selectDisplayAircraftMap,
+  selectDisplayTrailsByHex,
+  useIdentStore,
+} from "../data/store";
 import type {
   Aircraft,
   InspectorTab,
@@ -46,14 +50,14 @@ interface InspectorProps {
 }
 
 export function Inspector({ variant = "docked" }: InspectorProps) {
-  const aircraft = useIdentStore((s) => s.aircraft);
+  const aircraft = useIdentStore(selectDisplayAircraftMap);
   const receiver = useIdentStore((s) => s.receiver);
   const selectedHex = useIdentStore((s) => s.selectedHex);
   const select = useIdentStore((s) => s.select);
   const tab = useIdentStore((s) => s.inspector.tab);
   const setInspectorTab = useIdentStore((s) => s.setInspectorTab);
   const rssiBufs = useIdentStore((s) => s.rssiBufByHex);
-  const trails = useIdentStore((s) => s.trailsByHex);
+  const trails = useIdentStore(selectDisplayTrailsByHex);
 
   if (!selectedHex) return null;
   const ac = aircraft.get(selectedHex);

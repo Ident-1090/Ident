@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { haversineNm } from "../data/derive";
 import { findIcaoCountry, type IcaoCountry } from "../data/icaoCountry";
 import { matchesFilter } from "../data/predicates";
-import { useIdentStore } from "../data/store";
+import { selectDisplayAircraftMap, useIdentStore } from "../data/store";
 import type { Aircraft, RouteInfo } from "../data/types";
 import { preloadRoutesForAircraft } from "../inspector/route";
 import { queryTextFromOmnibox } from "../omnibox/grammar";
@@ -69,7 +69,7 @@ interface TrafficListProps {
 }
 
 export function TrafficList({ onAircraftSelect }: TrafficListProps = {}) {
-  const aircraft = useIdentStore((s) => s.aircraft);
+  const aircraft = useIdentStore(selectDisplayAircraftMap);
   const receiver = useIdentStore((s) => s.receiver);
   const filter = useIdentStore((s) => s.filter);
   const searchQuery = useIdentStore((s) => s.search.query);
@@ -85,7 +85,7 @@ export function TrafficList({ onAircraftSelect }: TrafficListProps = {}) {
       s.receiver != null ||
       s.stats != null ||
       s.outline != null ||
-      s.aircraft.size > 0,
+      selectDisplayAircraftMap(s).size > 0,
   );
   const units = resolveUnitOverrides(settings.unitMode, settings.unitOverrides);
   const queryText = useMemo(

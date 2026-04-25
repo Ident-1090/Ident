@@ -1,4 +1,5 @@
 import { appPath, appWebSocketUrl } from "./basePath";
+import { refreshReplayManifest } from "./replay";
 import { useIdentStore } from "./store";
 import type {
   AircraftFrame,
@@ -39,7 +40,8 @@ type Envelope =
       };
     }
   | { type: "routes"; now?: number; data: RouteEntry[] }
-  | { type: "trails"; data: { aircraft?: Record<string, TrailPoint[]> } };
+  | { type: "trails"; data: { aircraft?: Record<string, TrailPoint[]> } }
+  | { type: "replay.availability"; data: unknown };
 
 function parseJSON<T>(text: string): T | null {
   try {
@@ -144,6 +146,9 @@ function dispatch(env: Envelope): void {
         store.setLosData(env.data.line_of_sight ?? null);
       }
       break;
+    case "replay.availability":
+      void refreshReplayManifest();
+      break;
   }
 }
 
@@ -215,6 +220,7 @@ export function startFeed(): () => void {
     onStatus: (s, info) => store.setConnectionStatus("ws", s, info),
   });
 
+  void refreshReplayManifest();
   client.start();
 
   let pollTimer: ReturnType<typeof setInterval> | null = null;

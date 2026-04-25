@@ -424,3 +424,64 @@ func TestServerServesEmbeddedWebApp(t *testing.T) {
 		t.Fatalf("/api/missing status = %d, want 404", resp.StatusCode)
 	}
 }
+
+func TestServerServesReplayManifestAndIndexedBlock(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := newTestReplayStore(t, 10_000_000)
+	store.IngestAircraftJSON(replayFrameJSON(120, "abc123", 34.1, -118.1))
+	store.IngestAircraftJSON(replayFrameJSON(181, "abc123", 34.2, -118.2))
+	block := store.Manifest().Blocks[0]
+
+	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{Replay: store})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := ts.Client().Get(ts.URL + "/api/replay/manifest.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("manifest status = %d", resp.StatusCode)
+	}
+
+	client := &http.Client{Transport: &http.Transport{DisableCompression: true}}
+	resp, err = client.Get(ts.URL + "/api/replay/blocks/" + block.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("block status = %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Encoding"); got != "zstd" {
+		t.Fatalf("encoding = %q, want zstd", got)
+	}
+}
+
+func TestServerReplayBlockRejectsTraversalUnknownAndActive(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := newTestReplayStore(t, 10_000_000)
+	store.IngestAircraftJSON(replayFrameJSON(120, "abc123", 34.1, -118.1))
+
+	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{Replay: store})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	for _, path := range []string{
+		"/api/replay/blocks/../../etc/passwd",
+		"/api/replay/blocks/120000-180000.json.zst",
+		"/api/replay/blocks/missing.json.zst",
+	} {
+		resp, err := ts.Client().Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s status = %d, want 404", path, resp.StatusCode)
+		}
+	}
+}

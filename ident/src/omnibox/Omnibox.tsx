@@ -2,7 +2,7 @@ import { Command } from "cmdk";
 import { Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { findIcaoCountry } from "../data/icaoCountry";
-import { useIdentStore } from "../data/store";
+import { selectDisplayAircraftMap, useIdentStore } from "../data/store";
 import type { Aircraft, LayerKey } from "../data/types";
 import { BASEMAPS, type BasemapId } from "../map/styles";
 import { Kbd } from "../ui/Kbd";
@@ -306,7 +306,7 @@ function filterGroup<T extends { token: string; desc: string }>(
 }
 
 export function Omnibox({ open, onClose }: Props) {
-  const aircraftMap = useIdentStore((s) => s.aircraft);
+  const aircraftMap = useIdentStore(selectDisplayAircraftMap);
   const select = useIdentStore((s) => s.select);
   const resetFilter = useIdentStore((s) => s.resetFilter);
   const persistedQuery = useIdentStore((s) => s.search.query);

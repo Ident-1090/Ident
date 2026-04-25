@@ -1,7 +1,7 @@
 import { X } from "lucide-react";
 import { useMemo } from "react";
 import { categoryKeyFor, matchesFilter } from "../data/predicates";
-import { useIdentStore } from "../data/store";
+import { selectDisplayAircraftMap, useIdentStore } from "../data/store";
 import type { CategoryKey } from "../data/types";
 import {
   AIRCRAFT_GLYPH_COLORS_BY_TONE,
@@ -50,7 +50,7 @@ function categoryChipsFor(colors: AircraftGlyphColors): CategoryChip[] {
 }
 
 export function FiltersPanel() {
-  const aircraft = useIdentStore((s) => s.aircraft);
+  const aircraft = useIdentStore(selectDisplayAircraftMap);
   const filter = useIdentStore((s) => s.filter);
   const searchQuery = useIdentStore((s) => s.search.query);
   const routeByCallsign = useIdentStore((s) => s.routeByCallsign);

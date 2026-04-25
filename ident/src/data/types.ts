@@ -225,6 +225,34 @@ export interface TrailPoint {
   ts: number;
 }
 
+export interface ReplayBlockIndex {
+  start: number;
+  end: number;
+  url: string;
+  bytes: number;
+}
+
+export interface ReplayManifest {
+  enabled: boolean;
+  from: number | null;
+  to: number | null;
+  block_sec: number;
+  blocks: ReplayBlockIndex[];
+}
+
+export interface ReplayFrame {
+  ts: number;
+  aircraft: Aircraft[];
+}
+
+export interface ReplayBlockFile {
+  version: 1;
+  start: number;
+  end: number;
+  step_ms: number;
+  frames: ReplayFrame[];
+}
+
 export interface RouteInfo {
   origin: string;
   destination: string;

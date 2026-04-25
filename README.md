@@ -298,6 +298,50 @@ IDENT_TRAILS_RESTART_CACHE_INTERVAL_SEC=60
 Disabling the restart cache keeps trails memory-only; they will be lost when
 `identd` exits.
 
+### Replay
+
+Replay is opt-in because it writes longer-lived history blocks. When enabled,
+`identd` samples live `aircraft.json`, closes one compressed block every five
+minutes, writes an index, and prunes old blocks by both age and byte budget.
+The byte budget is mandatory so a misconfigured receiver cannot fill the host
+disk.
+
+```sh
+IDENT_REPLAY_ENABLE=true
+IDENT_REPLAY_DIR=/var/lib/ident/replay
+IDENT_REPLAY_RETENTION_SEC=259200
+IDENT_REPLAY_MAX_BYTES=524288000
+IDENT_REPLAY_BLOCK_SEC=300
+IDENT_REPLAY_SAMPLE_INTERVAL_SEC=5
+```
+
+With the example above, Ident keeps up to three days of replay data and never
+keeps more than 500 MiB of finalized blocks. The currently open block is not
+listed or served until it rolls over, so the smallest replay unit is five
+minutes.
+
+`identd` can serve replay blocks itself through `/api/replay/blocks/*`. Replay
+blocks are JSON compressed with zstd. For busy public displays, put the replay
+directory behind the reverse proxy and let the proxy serve finalized
+`.json.zst` files directly:
+
+```caddyfile
+handle_path /api/replay/blocks/* {
+	root * /var/lib/ident/replay/blocks
+	header Content-Type application/json
+	header Content-Encoding zstd
+	header Cache-Control "public, max-age=31536000, immutable"
+	file_server
+}
+
+reverse_proxy 127.0.0.1:8080
+```
+
+Keep the normal `identd` reverse proxy for `/api/replay/manifest.json` and
+`/api/ws`; the browser uses the local manifest to discover finalized block
+URLs. The block URLs are relative to the current Ident mount path, so the same
+setup works at `/` or behind a prefix such as `/ident`.
+
 ## How It Works
 
 ```text
@@ -305,6 +349,7 @@ browser
   -> /              web UI
   -> /api/ws        live traffic, config, routes, and trails
   -> /api/data/*    receiver JSON fallback
+  -> /api/replay/*  replay manifest and finalized replay blocks
   -> /api/update.json
   -> /healthz       service health
 
@@ -312,6 +357,7 @@ identd
   -> serves the embedded web app
   -> watches receiver JSON files
   -> maintains recent aircraft trails
+  -> optionally writes bounded compressed replay blocks
   -> sends typed updates to connected browsers
 ```
 

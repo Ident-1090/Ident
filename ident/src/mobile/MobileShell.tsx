@@ -11,12 +11,13 @@ import {
 import { useLayoutEffect, useMemo, useState } from "react";
 import { formatSiteTag } from "../data/siteTag";
 import type { LabelFields } from "../data/store";
-import { useIdentStore } from "../data/store";
+import { selectDisplayAircraftMap, useIdentStore } from "../data/store";
 import type { LabelMode, ThemeMode } from "../data/types";
 import { Inspector } from "../inspector/Inspector";
 import { BASEMAPS, type BasemapId } from "../map/styles";
 import { FiltersPanel } from "../rails/FiltersPanel";
 import { TrafficList } from "../rails/TrafficList";
+import { MobileReplayDock, MobileReplayFab } from "../replay/ReplayControls";
 import { useReceiverDiagnostics } from "../statusbar/StatusBar";
 import { SectionHead } from "../ui/SectionHead";
 import { SegButton, Segmented } from "../ui/Segmented";
@@ -89,7 +90,7 @@ export function MobileShell({
   const [drawerTab, setDrawerTab] = useState<DrawerTab>("traffic");
   const [snap, setSnap] = useState<SheetSnap>("half");
   const selectedHex = useIdentStore((s) => s.selectedHex);
-  const aircraft = useIdentStore((s) => s.aircraft);
+  const aircraft = useIdentStore(selectDisplayAircraftMap);
   const select = useIdentStore((s) => s.select);
   const hasSelected = selectedHex != null && aircraft.has(selectedHex);
 
@@ -119,7 +120,10 @@ export function MobileShell({
         >
           <Search size={18} strokeWidth={1.75} aria-hidden="true" />
         </button>
+        <MobileReplayFab />
       </div>
+
+      <MobileReplayDock />
 
       {hasSelected && (
         <BottomSheet

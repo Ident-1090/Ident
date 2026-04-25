@@ -9,11 +9,17 @@ import {
   useState,
 } from "react";
 import { matchesFilter } from "../data/predicates";
-import { useIdentStore } from "../data/store";
+import {
+  selectDisplayAircraftMap,
+  selectDisplayNow,
+  selectDisplayTrailsByHex,
+  useIdentStore,
+} from "../data/store";
 import type { Aircraft, TrailPoint } from "../data/types";
 import { labelFieldsKey, logMapTiming } from "../debug/mapTiming";
 import { MobileLogoHud } from "../mobile/MobileShell";
 import { queryTextFromOmnibox } from "../omnibox/grammar";
+import { ReplayScrubber } from "../replay/ReplayControls";
 import { resolveUnitOverrides } from "../settings/format";
 import { FeedStatusCell } from "../statusbar/StatusBar";
 import { Tooltip } from "../ui/Tooltip";
@@ -50,7 +56,7 @@ const AUTO_FIT_IDLE_MS = 12_000;
 
 export function MapOverlay() {
   const { map, isReady } = useMap();
-  const aircraft = useIdentStore((s) => s.aircraft);
+  const aircraft = useIdentStore(selectDisplayAircraftMap);
   const receiver = useIdentStore((s) => s.receiver);
   const stationOverride = useIdentStore((s) => s.config.station);
   const filter = useIdentStore((s) => s.filter);
@@ -69,9 +75,9 @@ export function MapOverlay() {
   const layersOn = useIdentStore((s) => s.map.layers);
   const recenterRequestId = useIdentStore((s) => s.map.recenterRequestId);
   const viewportHexes = useIdentStore((s) => s.map.viewportHexes);
-  const trailsByHex = useIdentStore((s) => s.trailsByHex);
+  const trailsByHex = useIdentStore(selectDisplayTrailsByHex);
   const trailFadeSec = useIdentStore((s) => s.settings.trailFadeSec);
-  const dataNow = useIdentStore((s) => s.now);
+  const dataNow = useIdentStore(selectDisplayNow);
   const hoveredHex = useIdentStore((s) => s.labels.hoveredHex);
   const setHoveredHex = useIdentStore((s) => s.setHoveredHex);
   const setMapViewportHexes = useIdentStore((s) => s.setMapViewportHexes);
@@ -576,6 +582,7 @@ export function MapOverlay() {
 
   return (
     <>
+      <ReplayScrubber />
       <div className="map-top-controls absolute flex flex-col items-start gap-2 pointer-events-none [&>*]:pointer-events-auto">
         <div className="md:hidden">
           <MobileLogoHud />

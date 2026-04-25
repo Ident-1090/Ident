@@ -410,7 +410,7 @@ describe("startFeed route envelopes", () => {
     await vi.advanceTimersByTimeAsync(4_100);
     const callsAfterFailures = vi.mocked(globalThis.fetch).mock.calls.length;
     expect(useIdentStore.getState().connectionStatus.http).toBe("closed");
-    expect(callsAfterFailures).toBe(12);
+    expect(callsAfterFailures).toBe(13);
 
     await vi.advanceTimersByTimeAsync(5_000);
     expect(vi.mocked(globalThis.fetch).mock.calls).toHaveLength(

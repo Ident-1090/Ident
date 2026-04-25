@@ -57,6 +57,12 @@ type Config struct {
 	TrailsRestartCache         bool
 	TrailsRestartCacheDir      string
 	TrailsRestartCacheInterval time.Duration
+	ReplayEnable               bool
+	ReplayDir                  string
+	ReplayRetention            time.Duration
+	ReplayMaxBytes             int64
+	ReplayBlockDuration        time.Duration
+	ReplaySampleInterval       time.Duration
 }
 
 func main() {
@@ -87,8 +93,9 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 
 	// `config` is a hub channel too — one snapshot envelope published once at
 	// startup and cached for snapshot-on-connect. Not file-watched.
-	hubNames := make([]string, 0, len(channels)+1)
+	hubNames := make([]string, 0, len(channels)+2)
 	hubNames = append(hubNames, "config")
+	hubNames = append(hubNames, "replay.availability")
 	for _, c := range channels {
 		hubNames = append(hubNames, c.name)
 	}
@@ -128,11 +135,30 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 		hub.AddSnapshotProvider(trails.SnapshotEnvelopes)
 	}
 
+	replay, err := NewReplayStore(ReplayOptions{
+		Enabled:        cfg.ReplayEnable,
+		Dir:            cfg.ReplayDir,
+		Retention:      cfg.ReplayRetention,
+		MaxBytes:       cfg.ReplayMaxBytes,
+		BlockDuration:  cfg.ReplayBlockDuration,
+		SampleInterval: cfg.ReplaySampleInterval,
+		OnAvailability: func(manifest ReplayManifest) {
+			publishReplayAvailabilityEnvelope(hub, manifest)
+		},
+	})
+	if err != nil {
+		return err
+	}
+	if err := replay.Load(); err != nil {
+		return err
+	}
+
 	srv := NewServerWithOptions(ctx, hub, ServerOptions{
 		BasePath:      cfg.BasePath,
 		DataDir:       cfg.DataDir,
 		Web:           bundledWeb(),
 		UpdateChecker: NewUpdateChecker(updateCheckerOptions(cfg)),
+		Replay:        replay,
 	})
 	httpSrv := &http.Server{
 		Addr:         cfg.Addr,
@@ -152,6 +178,7 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 			hub.Publish(c.name, b)
 			if c.name == "aircraft" {
 				hub.PublishEnvelope(trails.IngestAircraftJSON(b), "trails")
+				replay.IngestAircraftJSON(b)
 				if cs := extractAircraftCallsigns(b); len(cs) > 0 {
 					routes.Track(cs)
 				}
@@ -236,6 +263,12 @@ func loadConfigFrom(args []string, getenv func(string) string) (Config, error) {
 		TrailsRestartCache:         envBool(getenv, "IDENT_TRAILS_RESTART_CACHE", true),
 		TrailsRestartCacheDir:      envOr(getenv, "IDENT_TRAILS_RESTART_CACHE_DIR", "/var/cache/ident"),
 		TrailsRestartCacheInterval: time.Duration(envInt(getenv, "IDENT_TRAILS_RESTART_CACHE_INTERVAL_SEC", 60)) * time.Second,
+		ReplayEnable:               envBool(getenv, "IDENT_REPLAY_ENABLE", false),
+		ReplayDir:                  strings.TrimSpace(getenv("IDENT_REPLAY_DIR")),
+		ReplayRetention:            time.Duration(envInt(getenv, "IDENT_REPLAY_RETENTION_SEC", 0)) * time.Second,
+		ReplayMaxBytes:             envInt64(getenv, "IDENT_REPLAY_MAX_BYTES", 0),
+		ReplayBlockDuration:        time.Duration(envInt(getenv, "IDENT_REPLAY_BLOCK_SEC", 300)) * time.Second,
+		ReplaySampleInterval:       time.Duration(envInt(getenv, "IDENT_REPLAY_SAMPLE_INTERVAL_SEC", 5)) * time.Second,
 	}
 
 	flags := flag.NewFlagSet("identd", flag.ContinueOnError)
@@ -258,6 +291,12 @@ func loadConfigFrom(args []string, getenv func(string) string) (Config, error) {
 	flags.BoolVar(&cfg.TrailsRestartCache, "trails-restart-cache", cfg.TrailsRestartCache, "persist the in-memory trail cache for process/container restarts")
 	flags.StringVar(&cfg.TrailsRestartCacheDir, "trails-restart-cache-dir", cfg.TrailsRestartCacheDir, "directory for the compressed trail restart cache")
 	flags.DurationVar(&cfg.TrailsRestartCacheInterval, "trails-restart-cache-interval", cfg.TrailsRestartCacheInterval, "trail restart cache write interval")
+	flags.BoolVar(&cfg.ReplayEnable, "replay-enable", cfg.ReplayEnable, "enable file-backed replay blocks")
+	flags.StringVar(&cfg.ReplayDir, "replay-dir", cfg.ReplayDir, "directory for replay index and compressed blocks")
+	flags.DurationVar(&cfg.ReplayRetention, "replay-retention", cfg.ReplayRetention, "maximum replay history retained on disk")
+	flags.Int64Var(&cfg.ReplayMaxBytes, "replay-max-bytes", cfg.ReplayMaxBytes, "maximum bytes used by finalized replay blocks")
+	flags.DurationVar(&cfg.ReplayBlockDuration, "replay-block-duration", cfg.ReplayBlockDuration, "duration per finalized replay block")
+	flags.DurationVar(&cfg.ReplaySampleInterval, "replay-sample-interval", cfg.ReplaySampleInterval, "minimum interval between replay samples")
 	if err := flags.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -267,6 +306,28 @@ func loadConfigFrom(args []string, getenv func(string) string) (Config, error) {
 	}
 	cfg.BasePath = basePath
 	return cfg, nil
+}
+
+func publishReplayAvailabilityEnvelope(hub *Hub, manifest ReplayManifest) {
+	payload := struct {
+		Enabled  bool   `json:"enabled"`
+		From     *int64 `json:"from"`
+		To       *int64 `json:"to"`
+		BlockSec int64  `json:"block_sec"`
+		Blocks   int    `json:"blocks"`
+	}{
+		Enabled:  manifest.Enabled,
+		From:     manifest.From,
+		To:       manifest.To,
+		BlockSec: manifest.BlockSec,
+		Blocks:   len(manifest.Blocks),
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("replay availability: marshal: %v", err)
+		return
+	}
+	hub.Publish("replay.availability", body)
 }
 
 func updateCheckerOptions(cfg Config) UpdateCheckerOptions {
@@ -309,6 +370,15 @@ func envOr(getenv func(string) string, key, def string) string {
 func envInt(getenv func(string) string, key string, def int) int {
 	if v := getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return def
+}
+
+func envInt64(getenv func(string) string, key string, def int64) int64 {
+	if v := getenv(key); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
 			return n
 		}
 	}
