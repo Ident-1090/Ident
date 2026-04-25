@@ -33,7 +33,9 @@ RUN case "${TARGETARCH}/${TARGETVARIANT}" in \
 FROM alpine:3.23
 RUN apk add --no-cache ca-certificates \
   && addgroup -S ident \
-  && adduser -S -G ident ident
+  && adduser -S -G ident ident \
+  && mkdir -p /var/cache/ident \
+  && chown ident:ident /var/cache/ident
 USER ident
 ENV IDENT_ADDR=:8080 \
   IDENT_DATA_DIR=/run/readsb

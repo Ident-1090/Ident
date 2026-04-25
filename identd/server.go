@@ -23,23 +23,39 @@ var upgrader = websocket.Upgrader{
 	CheckOrigin:     func(_ *http.Request) bool { return true },
 }
 
+const (
+	maxClientMessageBytes         = 4096
+	maxTrailBackfillRequestIDLen  = 80
+	maxTrailBackfillRequestHexes  = 32
+	maxTrailBackfillRequestHexLen = 32
+	defaultTrailBackfillMaxPoints = 100_000
+)
+
+type TrailBackfillProvider interface {
+	BackfillTrailEnvelope(TrailBackfillRequest) []byte
+}
+
 type Server struct {
-	ctx            context.Context
-	hub            *Hub
-	basePath       string
-	dataDir        string
-	historyDataDir string
-	web            fs.FS
-	updates        *UpdateChecker
-	ready          atomic.Bool
+	ctx                    context.Context
+	hub                    *Hub
+	basePath               string
+	dataDir                string
+	web                    fs.FS
+	updates                *UpdateChecker
+	trailBackfill          TrailBackfillProvider
+	trailBackfillMaxWindow time.Duration
+	trailBackfillMaxPoints int
+	ready                  atomic.Bool
 }
 
 type ServerOptions struct {
-	DataDir        string
-	BasePath       string
-	HistoryDataDir string
-	Web            fs.FS
-	UpdateChecker  *UpdateChecker
+	DataDir                string
+	BasePath               string
+	Web                    fs.FS
+	UpdateChecker          *UpdateChecker
+	TrailBackfill          TrailBackfillProvider
+	TrailBackfillMaxWindow time.Duration
+	TrailBackfillMaxPoints int
 }
 
 func NewServer(ctx context.Context, hub *Hub) *Server {
@@ -51,14 +67,20 @@ func NewServerWithOptions(ctx context.Context, hub *Hub, opts ServerOptions) *Se
 	if err != nil {
 		log.Printf("base path %q ignored: %v", opts.BasePath, err)
 	}
+	maxPoints := opts.TrailBackfillMaxPoints
+	if maxPoints <= 0 {
+		maxPoints = defaultTrailBackfillMaxPoints
+	}
 	return &Server{
-		ctx:            ctx,
-		hub:            hub,
-		basePath:       basePath,
-		dataDir:        opts.DataDir,
-		historyDataDir: opts.HistoryDataDir,
-		web:            opts.Web,
-		updates:        opts.UpdateChecker,
+		ctx:                    ctx,
+		hub:                    hub,
+		basePath:               basePath,
+		dataDir:                opts.DataDir,
+		web:                    opts.Web,
+		updates:                opts.UpdateChecker,
+		trailBackfill:          opts.TrailBackfill,
+		trailBackfillMaxWindow: opts.TrailBackfillMaxWindow,
+		trailBackfillMaxPoints: maxPoints,
 	}
 }
 
@@ -72,9 +94,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/update.json", s.serveUpdateStatus)
 	if s.dataDir != "" {
 		mux.HandleFunc("/api/data/", s.serveReceiverData)
-	}
-	if s.historyDataDir != "" {
-		mux.HandleFunc("/api/chunks/", s.serveChunks)
 	}
 	mux.HandleFunc("/api/", http.NotFound)
 	if s.web != nil {
@@ -142,32 +161,75 @@ func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) readPump(c *Client) {
 	defer s.hub.drop(c)
-	c.conn.SetReadLimit(512)
+	c.conn.SetReadLimit(maxClientMessageBytes)
 	_ = c.conn.SetReadDeadline(time.Now().Add(90 * time.Second))
 	c.conn.SetPongHandler(func(string) error {
 		_ = c.conn.SetReadDeadline(time.Now().Add(90 * time.Second))
 		return nil
 	})
 	for {
-		if _, _, err := c.conn.NextReader(); err != nil {
+		messageType, reader, err := c.conn.NextReader()
+		if err != nil {
 			return
 		}
+		if messageType != websocket.TextMessage {
+			continue
+		}
+		body, err := io.ReadAll(reader)
+		if err != nil {
+			return
+		}
+		s.handleClientMessage(c, body)
+	}
+}
+
+func (s *Server) handleClientMessage(c *Client, body []byte) {
+	if s.trailBackfill == nil || len(body) == 0 {
+		return
+	}
+	var req struct {
+		Type  string   `json:"type"`
+		ID    string   `json:"id"`
+		Since int64    `json:"since"`
+		Until int64    `json:"until"`
+		Hex   []string `json:"hex"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		return
+	}
+	if req.Type != "trails.backfill" {
+		return
+	}
+	if len(req.ID) > maxTrailBackfillRequestIDLen || len(req.Hex) > maxTrailBackfillRequestHexes {
+		return
+	}
+	for _, hex := range req.Hex {
+		if len(hex) > maxTrailBackfillRequestHexLen {
+			return
+		}
+	}
+	env := s.trailBackfill.BackfillTrailEnvelope(TrailBackfillRequest{
+		RequestID: req.ID,
+		SinceMs:   req.Since,
+		UntilMs:   req.Until,
+		Hex:       req.Hex,
+		MaxWindow: s.trailBackfillMaxWindow,
+		MaxPoints: s.trailBackfillMaxPoints,
+	})
+	if len(env) == 0 {
+		return
+	}
+	select {
+	case c.send <- env:
+	default:
+		log.Printf("server: dropping slow client on trail backfill response")
+		s.hub.drop(c)
 	}
 }
 
 func (s *Server) serveReceiverData(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(r.URL.Path, "/api/data/")
 	file, ok := localFilePath(s.dataDir, name, false)
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	http.ServeFile(w, r, file)
-}
-
-func (s *Server) serveChunks(w http.ResponseWriter, r *http.Request) {
-	name := strings.TrimPrefix(r.URL.Path, "/api/chunks/")
-	file, ok := localFilePath(s.historyDataDir, name, true)
 	if !ok {
 		http.NotFound(w, r)
 		return

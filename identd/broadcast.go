@@ -15,20 +15,16 @@ const defaultQueueDepth = 8
 //
 // Channels come in two flavors:
 //   - "single" channels (aircraft/receiver/stats/outline) keep one latest
-//     envelope. Publishing overwrites; snapshot-on-connect replays that one.
-//   - "multi" channels (routes) accept pre-built envelopes one at a time
-//     and expose their snapshot through a pluggable provider so the cache
-//     can assemble a deterministic list of currently-cached routes.
+//     envelope. Publishing overwrites; snapshot-on-connect sends that one.
+//   - "provider" channels (routes/trails) accept pre-built envelopes one at
+//     a time and expose snapshots through pluggable providers.
 type Hub struct {
-	mu       sync.RWMutex
-	clients  map[*Client]struct{}
-	channels map[string][]byte // single-channel: name -> latest envelope bytes
+	mu        sync.RWMutex
+	clients   map[*Client]struct{}
+	channels  map[string][]byte // single-channel: name -> latest envelope bytes
+	providers []func() [][]byte
 	// Order channels are emitted in on snapshot-on-connect (deterministic).
 	order []string
-	// multiSnapshot optionally supplies snapshot-on-connect envelopes for a
-	// multi-envelope channel (e.g. routes). nil until SetRouteProvider wires
-	// it up. Called with the Hub mutex NOT held.
-	multiSnapshot func() [][]byte
 }
 
 type Client struct {
@@ -71,13 +67,11 @@ func (h *Hub) Publish(name string, fileBytes []byte) {
 	}
 }
 
-// Snapshots returns the latest envelope for each known channel in declared order.
-// Used to replay state to newly connected clients. Multi-envelope channels
-// (if registered via SetRouteProvider) are appended after the single-channel
-// snapshots in the order returned by the provider.
+// Snapshots returns the latest envelope for each known channel in declared
+// order, followed by provider snapshots. Used to seed newly connected clients.
 func (h *Hub) Snapshots() [][]byte {
 	h.mu.RLock()
-	provider := h.multiSnapshot
+	providers := append([]func() [][]byte(nil), h.providers...)
 	out := make([][]byte, 0, len(h.order))
 	for _, name := range h.order {
 		if env, ok := h.channels[name]; ok {
@@ -86,7 +80,7 @@ func (h *Hub) Snapshots() [][]byte {
 	}
 	h.mu.RUnlock()
 
-	if provider != nil {
+	for _, provider := range providers {
 		for _, env := range provider() {
 			out = append(out, append([]byte(nil), env...))
 		}
@@ -97,9 +91,16 @@ func (h *Hub) Snapshots() [][]byte {
 // SetRouteProvider registers a snapshot provider for the `routes`
 // multi-envelope channel. Must be called before any client connects.
 func (h *Hub) SetRouteProvider(fn func() [][]byte) {
+	h.AddSnapshotProvider(fn)
+}
+
+func (h *Hub) AddSnapshotProvider(fn func() [][]byte) {
+	if fn == nil {
+		return
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.multiSnapshot = fn
+	h.providers = append(h.providers, fn)
 }
 
 // PublishRoute broadcasts a pre-built route envelope (`{"type":"route",
@@ -107,6 +108,10 @@ func (h *Hub) SetRouteProvider(fn func() [][]byte) {
 // the Hub itself — the RouteCache is the snapshot source of truth via
 // SetRouteProvider.
 func (h *Hub) PublishRoute(env []byte) {
+	h.PublishEnvelope(env, "route")
+}
+
+func (h *Hub) PublishEnvelope(env []byte, label string) {
 	if len(env) == 0 {
 		return
 	}
@@ -121,7 +126,7 @@ func (h *Hub) PublishRoute(env []byte) {
 		select {
 		case c.send <- env:
 		default:
-			log.Printf("hub: dropping slow client on route publish (send buffer full)")
+			log.Printf("hub: dropping slow client on %s publish (send buffer full)", label)
 			h.drop(c)
 		}
 	}

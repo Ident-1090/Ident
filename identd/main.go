@@ -33,26 +33,33 @@ var defaultReceiverDataDirs = []string{
 }
 
 type Config struct {
-	Addr                  string
-	BasePath              string
-	DataDir               string
-	HistoryDataDir        string
-	AircraftFile          string
-	ReceiverFile          string
-	StatsFile             string
-	OutlineFile           string
-	DebounceMs            int
-	RouteUpstreamURL      string
-	RouteTTL              time.Duration
-	RouteBatchDelay       time.Duration
-	StationName           string
-	LineOfSightPanoramaID string
-	LineOfSightAlts       string
-	UpdateCheck           bool
-	UpdateRepo            string
-	UpdateAPIBase         string
-	UpdateInterval        time.Duration
-	UpdateTimeout         time.Duration
+	Addr                       string
+	BasePath                   string
+	DataDir                    string
+	AircraftFile               string
+	ReceiverFile               string
+	StatsFile                  string
+	OutlineFile                string
+	DebounceMs                 int
+	RouteUpstreamURL           string
+	RouteTTL                   time.Duration
+	RouteBatchDelay            time.Duration
+	StationName                string
+	LineOfSightPanoramaID      string
+	LineOfSightAlts            string
+	UpdateCheck                bool
+	UpdateRepo                 string
+	UpdateAPIBase              string
+	UpdateInterval             time.Duration
+	UpdateTimeout              time.Duration
+	TrailsMemoryWindow         time.Duration
+	TrailsSnapshotWindow       time.Duration
+	TrailsSampleInterval       time.Duration
+	TrailsBackfillMaxWindow    time.Duration
+	TrailsBackfillMaxPoints    int
+	TrailsRestartCache         bool
+	TrailsRestartCacheDir      string
+	TrailsRestartCacheInterval time.Duration
 }
 
 func main() {
@@ -60,7 +67,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("config: %v", err)
 	}
-	log.Printf("identd addr=%s data=%s history=%s", cfg.Addr, cfg.DataDir, cfg.HistoryDataDir)
+	log.Printf("identd addr=%s data=%s", cfg.Addr, cfg.DataDir)
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
@@ -109,12 +116,30 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 	hub.SetRouteProvider(routes.RouteSnapshots)
 	routes.Run(ctx)
 
+	trails := NewTrailStore(TrailOptions{
+		MemoryWindow:    cfg.TrailsMemoryWindow,
+		SnapshotWindow:  cfg.TrailsSnapshotWindow,
+		SampleInterval:  cfg.TrailsSampleInterval,
+		RestartCacheDir: cfg.TrailsRestartCacheDir,
+	})
+	if cfg.TrailsRestartCache {
+		if err := trails.LoadRestartCache(); err != nil {
+			log.Printf("trails restart cache: %v", err)
+		}
+		hub.AddSnapshotProvider(trails.SnapshotEnvelopes)
+		go trails.RunRestartCacheWriter(ctx, cfg.TrailsRestartCacheInterval)
+	} else {
+		hub.AddSnapshotProvider(trails.SnapshotEnvelopes)
+	}
+
 	srv := NewServerWithOptions(ctx, hub, ServerOptions{
-		BasePath:       cfg.BasePath,
-		DataDir:        cfg.DataDir,
-		HistoryDataDir: cfg.HistoryDataDir,
-		Web:            bundledWeb(),
-		UpdateChecker:  NewUpdateChecker(updateCheckerOptions(cfg)),
+		BasePath:               cfg.BasePath,
+		DataDir:                cfg.DataDir,
+		Web:                    bundledWeb(),
+		UpdateChecker:          NewUpdateChecker(updateCheckerOptions(cfg)),
+		TrailBackfill:          trails,
+		TrailBackfillMaxWindow: cfg.TrailsBackfillMaxWindow,
+		TrailBackfillMaxPoints: cfg.TrailsBackfillMaxPoints,
 	})
 	httpSrv := &http.Server{
 		Addr:         cfg.Addr,
@@ -133,6 +158,7 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 		w := NewWatcher(path, debounce, func(b []byte) {
 			hub.Publish(c.name, b)
 			if c.name == "aircraft" {
+				hub.PublishEnvelope(trails.IngestAircraftJSON(b), "trails")
 				if cs := extractAircraftCallsigns(b); len(cs) > 0 {
 					routes.Track(cs)
 				}
@@ -193,33 +219,39 @@ func loadConfig() Config {
 
 func loadConfigFrom(args []string, getenv func(string) string) (Config, error) {
 	cfg := Config{
-		Addr:                  envOr(getenv, "IDENT_ADDR", ":8080"),
-		BasePath:              envOr(getenv, "IDENT_BASE_PATH", ""),
-		DataDir:               envOr(getenv, "IDENT_DATA_DIR", detectReceiverDataDir(defaultReceiverDataDirs)),
-		HistoryDataDir:        envOr(getenv, "HISTORY_DATA_DIR", filepath.Join(envOr(getenv, "IDENT_DATA_DIR", detectReceiverDataDir(defaultReceiverDataDirs)), "chunks")),
-		AircraftFile:          envOr(getenv, "IDENT_AIRCRAFT_FILE", "aircraft.json"),
-		ReceiverFile:          envOr(getenv, "IDENT_RECEIVER_FILE", "receiver.json"),
-		StatsFile:             envOr(getenv, "IDENT_STATS_FILE", "stats.json"),
-		OutlineFile:           envOr(getenv, "IDENT_OUTLINE_FILE", "outline.json"),
-		DebounceMs:            75,
-		RouteUpstreamURL:      envOr(getenv, "IDENT_RELAY_ROUTE_UPSTREAM", defaultRouteUpstreamURL),
-		RouteTTL:              time.Duration(envInt(getenv, "IDENT_RELAY_ROUTE_TTL_SEC", 300)) * time.Second,
-		RouteBatchDelay:       time.Duration(envInt(getenv, "IDENT_RELAY_ROUTE_BATCH_MS", 250)) * time.Millisecond,
-		StationName:           strings.TrimSpace(getenv("IDENT_STATION_NAME")),
-		LineOfSightPanoramaID: strings.TrimSpace(getenv("IDENT_HEYWHATSTHAT_PANORAMA_ID")),
-		LineOfSightAlts:       strings.TrimSpace(getenv("IDENT_HEYWHATSTHAT_ALTS")),
-		UpdateCheck:           envBool(getenv, "IDENT_UPDATE_CHECK", true),
-		UpdateRepo:            envOr(getenv, "IDENT_UPDATE_REPO", defaultUpdateRepo),
-		UpdateAPIBase:         envOr(getenv, "IDENT_UPDATE_API_URL", defaultUpdateAPIBase),
-		UpdateInterval:        time.Duration(envInt(getenv, "IDENT_UPDATE_INTERVAL_SEC", int(defaultUpdateInterval/time.Second))) * time.Second,
-		UpdateTimeout:         time.Duration(envInt(getenv, "IDENT_UPDATE_TIMEOUT_SEC", int(defaultUpdateTimeout/time.Second))) * time.Second,
+		Addr:                       envOr(getenv, "IDENT_ADDR", ":8080"),
+		BasePath:                   envOr(getenv, "IDENT_BASE_PATH", ""),
+		DataDir:                    envOr(getenv, "IDENT_DATA_DIR", detectReceiverDataDir(defaultReceiverDataDirs)),
+		AircraftFile:               envOr(getenv, "IDENT_AIRCRAFT_FILE", "aircraft.json"),
+		ReceiverFile:               envOr(getenv, "IDENT_RECEIVER_FILE", "receiver.json"),
+		StatsFile:                  envOr(getenv, "IDENT_STATS_FILE", "stats.json"),
+		OutlineFile:                envOr(getenv, "IDENT_OUTLINE_FILE", "outline.json"),
+		DebounceMs:                 75,
+		RouteUpstreamURL:           envOr(getenv, "IDENT_RELAY_ROUTE_UPSTREAM", defaultRouteUpstreamURL),
+		RouteTTL:                   time.Duration(envInt(getenv, "IDENT_RELAY_ROUTE_TTL_SEC", 300)) * time.Second,
+		RouteBatchDelay:            time.Duration(envInt(getenv, "IDENT_RELAY_ROUTE_BATCH_MS", 250)) * time.Millisecond,
+		StationName:                strings.TrimSpace(getenv("IDENT_STATION_NAME")),
+		LineOfSightPanoramaID:      strings.TrimSpace(getenv("IDENT_HEYWHATSTHAT_PANORAMA_ID")),
+		LineOfSightAlts:            strings.TrimSpace(getenv("IDENT_HEYWHATSTHAT_ALTS")),
+		UpdateCheck:                envBool(getenv, "IDENT_UPDATE_CHECK", true),
+		UpdateRepo:                 envOr(getenv, "IDENT_UPDATE_REPO", defaultUpdateRepo),
+		UpdateAPIBase:              envOr(getenv, "IDENT_UPDATE_API_URL", defaultUpdateAPIBase),
+		UpdateInterval:             time.Duration(envInt(getenv, "IDENT_UPDATE_INTERVAL_SEC", int(defaultUpdateInterval/time.Second))) * time.Second,
+		UpdateTimeout:              time.Duration(envInt(getenv, "IDENT_UPDATE_TIMEOUT_SEC", int(defaultUpdateTimeout/time.Second))) * time.Second,
+		TrailsMemoryWindow:         time.Duration(envInt(getenv, "IDENT_TRAILS_MEMORY_WINDOW_SEC", 7200)) * time.Second,
+		TrailsSnapshotWindow:       time.Duration(envInt(getenv, "IDENT_TRAILS_SNAPSHOT_WINDOW_SEC", 600)) * time.Second,
+		TrailsSampleInterval:       time.Duration(envInt(getenv, "IDENT_TRAILS_SAMPLE_INTERVAL_SEC", 5)) * time.Second,
+		TrailsBackfillMaxWindow:    time.Duration(envInt(getenv, "IDENT_TRAILS_BACKFILL_MAX_WINDOW_SEC", 7200)) * time.Second,
+		TrailsBackfillMaxPoints:    envInt(getenv, "IDENT_TRAILS_BACKFILL_MAX_POINTS", defaultTrailBackfillMaxPoints),
+		TrailsRestartCache:         envBool(getenv, "IDENT_TRAILS_RESTART_CACHE", true),
+		TrailsRestartCacheDir:      envOr(getenv, "IDENT_TRAILS_RESTART_CACHE_DIR", "/var/cache/ident"),
+		TrailsRestartCacheInterval: time.Duration(envInt(getenv, "IDENT_TRAILS_RESTART_CACHE_INTERVAL_SEC", 60)) * time.Second,
 	}
 
 	flags := flag.NewFlagSet("identd", flag.ContinueOnError)
 	flags.StringVar(&cfg.Addr, "addr", cfg.Addr, "HTTP listen address")
 	flags.StringVar(&cfg.BasePath, "base-path", cfg.BasePath, "URL path prefix for subpath deployments")
 	flags.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "receiver data directory")
-	flags.StringVar(&cfg.HistoryDataDir, "history-data-dir", cfg.HistoryDataDir, "directory serving /api/chunks/* history files")
 	flags.StringVar(&cfg.AircraftFile, "aircraft-file", cfg.AircraftFile, "aircraft JSON file name")
 	flags.StringVar(&cfg.ReceiverFile, "receiver-file", cfg.ReceiverFile, "receiver JSON file name")
 	flags.StringVar(&cfg.StatsFile, "stats-file", cfg.StatsFile, "stats JSON file name")
@@ -231,6 +263,14 @@ func loadConfigFrom(args []string, getenv func(string) string) (Config, error) {
 	flags.BoolVar(&cfg.UpdateCheck, "update-check", cfg.UpdateCheck, "check GitHub Releases for update notifications")
 	flags.StringVar(&cfg.UpdateRepo, "update-repo", cfg.UpdateRepo, "GitHub owner/repo used for update notifications")
 	flags.StringVar(&cfg.UpdateAPIBase, "update-api-url", cfg.UpdateAPIBase, "GitHub API base URL for update notifications")
+	flags.DurationVar(&cfg.TrailsMemoryWindow, "trails-memory-window", cfg.TrailsMemoryWindow, "duration of in-memory aircraft trails retained by identd")
+	flags.DurationVar(&cfg.TrailsSnapshotWindow, "trails-snapshot-window", cfg.TrailsSnapshotWindow, "duration of aircraft trails sent automatically on WebSocket connect")
+	flags.DurationVar(&cfg.TrailsSampleInterval, "trails-sample-interval", cfg.TrailsSampleInterval, "minimum interval between retained trail samples per aircraft")
+	flags.DurationVar(&cfg.TrailsBackfillMaxWindow, "trails-backfill-max-window", cfg.TrailsBackfillMaxWindow, "maximum duration served by one trail backfill WebSocket request")
+	flags.IntVar(&cfg.TrailsBackfillMaxPoints, "trails-backfill-max-points", cfg.TrailsBackfillMaxPoints, "maximum trail points served by one trail backfill WebSocket request")
+	flags.BoolVar(&cfg.TrailsRestartCache, "trails-restart-cache", cfg.TrailsRestartCache, "persist the in-memory trail cache for process/container restarts")
+	flags.StringVar(&cfg.TrailsRestartCacheDir, "trails-restart-cache-dir", cfg.TrailsRestartCacheDir, "directory for the compressed trail restart cache")
+	flags.DurationVar(&cfg.TrailsRestartCacheInterval, "trails-restart-cache-interval", cfg.TrailsRestartCacheInterval, "trail restart cache write interval")
 	if err := flags.Parse(args); err != nil {
 		return Config{}, err
 	}

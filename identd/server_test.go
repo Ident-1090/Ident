@@ -249,6 +249,98 @@ func TestServerBroadcastAfterConnect(t *testing.T) {
 	}
 }
 
+func TestServerHandlesTrailBackfillRequest(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	trails := NewTrailStore(TrailOptions{
+		MemoryWindow:   time.Hour,
+		SnapshotWindow: 10 * time.Second,
+		SampleInterval: time.Second,
+	})
+	trails.IngestAircraftJSON([]byte(`{"now":100,"aircraft":[{"hex":"abc123","lat":34.1,"lon":-118.1,"alt_baro":3000}]}`))
+	trails.IngestAircraftJSON([]byte(`{"now":120,"aircraft":[{"hex":"abc123","lat":34.2,"lon":-118.2,"alt_baro":3200}]}`))
+
+	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{
+		TrailBackfill:          trails,
+		TrailBackfillMaxWindow: time.Hour,
+		TrailBackfillMaxPoints: 10,
+	})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	url := strings.Replace(ts.URL, "http://", "ws://", 1) + "/api/ws"
+	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"trails.backfill","id":"r1","since":100000,"until":120000,"hex":["abc123"]}`)); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	_, msg, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read backfill: %v", err)
+	}
+	env := decodeTrailEnvelopeForTest(t, msg)
+	if env.RequestID != "r1" {
+		t.Fatalf("request id = %q", env.RequestID)
+	}
+	points := env.Data.Aircraft["abc123"]
+	if len(points) != 2 {
+		t.Fatalf("points = %#v, want 2", points)
+	}
+}
+
+func TestServerIgnoresOversizedTrailBackfillRequest(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	trails := NewTrailStore(TrailOptions{
+		MemoryWindow:   time.Hour,
+		SnapshotWindow: 10 * time.Second,
+		SampleInterval: time.Second,
+	})
+	trails.IngestAircraftJSON([]byte(`{"now":100,"aircraft":[{"hex":"abc123","lat":34.1,"lon":-118.1,"alt_baro":3000}]}`))
+
+	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{
+		TrailBackfill:          trails,
+		TrailBackfillMaxWindow: time.Hour,
+		TrailBackfillMaxPoints: 10,
+	})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	url := strings.Replace(ts.URL, "http://", "ws://", 1) + "/api/ws"
+	conn, _, err := websocket.DefaultDialer.Dial(url, nil)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer conn.Close()
+
+	hexes := make([]string, maxTrailBackfillRequestHexes+1)
+	for i := range hexes {
+		hexes[i] = "abc123"
+	}
+	body, err := json.Marshal(map[string]any{
+		"type": "trails.backfill",
+		"id":   "too-many",
+		"hex":  hexes,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.WriteMessage(websocket.TextMessage, body); err != nil {
+		t.Fatalf("write request: %v", err)
+	}
+	_ = conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+	if _, _, err := conn.ReadMessage(); err == nil {
+		t.Fatalf("oversized hex request produced a response")
+	}
+}
+
 // TestServerSnapshotExceedsDefaultQueueDepth guards against the "silent drop
 // on connect" regression: if Snapshots() returns more envelopes than
 // defaultQueueDepth, the pre-queue must still fit them all rather than
@@ -347,71 +439,6 @@ func TestServerServesReceiverDataFiles(t *testing.T) {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
 	}
 	if string(body) != `{"aircraft":[]}` {
-		t.Fatalf("body = %s", body)
-	}
-}
-
-func TestServerServesChunkFiles(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	dir := t.TempDir()
-	chunkDir := filepath.Join(dir, "chunks")
-	if err := os.Mkdir(chunkDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(chunkDir, "chunks.json"), []byte(`{"chunks":[]}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{DataDir: dir, HistoryDataDir: chunkDir})
-	ts := httptest.NewServer(srv.Handler())
-	defer ts.Close()
-
-	resp, err := ts.Client().Get(ts.URL + "/api/chunks/chunks.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != 200 {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	if string(body) != `{"chunks":[]}` {
-		t.Fatalf("body = %s", body)
-	}
-}
-
-func TestServerServesChunkFilesFromSeparateDirectory(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	dataDir := t.TempDir()
-	chunkDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(chunkDir, "chunks.json"), []byte(`{"chunks":["a.gz"]}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{DataDir: dataDir, HistoryDataDir: chunkDir})
-	ts := httptest.NewServer(srv.Handler())
-	defer ts.Close()
-
-	resp, err := ts.Client().Get(ts.URL + "/api/chunks/chunks.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != 200 {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	if string(body) != `{"chunks":["a.gz"]}` {
 		t.Fatalf("body = %s", body)
 	}
 }

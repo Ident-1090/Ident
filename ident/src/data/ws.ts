@@ -45,6 +45,12 @@ export class WsClient {
     this.ws?.close();
   }
 
+  sendJSON(value: unknown): boolean {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
+    this.ws.send(JSON.stringify(value));
+    return true;
+  }
+
   private connect(): void {
     if (this.attempt > 0) console.info("[ident/ws] reconnecting");
     this.opts.onStatus?.("connecting", { isRetry: this.attempt > 0 });

@@ -5,8 +5,11 @@ type Listener = (event: Event) => void;
 
 class MockWebSocket {
   static instances: MockWebSocket[] = [];
+  static OPEN = 1;
 
   binaryType: BinaryType = "blob";
+  readyState = MockWebSocket.OPEN;
+  sent: string[] = [];
   private listeners: Record<string, Listener[]> = {};
 
   constructor(readonly url: string) {
@@ -18,7 +21,12 @@ class MockWebSocket {
   }
 
   close(): void {
+    this.readyState = 3;
     this.dispatch("close");
+  }
+
+  send(data: string): void {
+    this.sent.push(data);
   }
 
   dispatch(type: string): void {
@@ -108,5 +116,22 @@ describe("WsClient status", () => {
     client.stop();
 
     expect(statuses).toEqual(["connecting", "open"]);
+  });
+
+  it("sends JSON only while the socket is open", () => {
+    const client = new WsClient({ url: "ws://ident.test/ws" });
+
+    client.start();
+
+    expect(client.sendJSON({ type: "trails.backfill", hex: ["abc123"] })).toBe(
+      true,
+    );
+    expect(MockWebSocket.instances[0].sent).toEqual([
+      JSON.stringify({ type: "trails.backfill", hex: ["abc123"] }),
+    ]);
+
+    client.stop();
+
+    expect(client.sendJSON({ type: "trails.backfill" })).toBe(false);
   });
 });

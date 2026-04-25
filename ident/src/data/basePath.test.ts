@@ -18,8 +18,8 @@ describe("app path helpers", () => {
     window.history.replaceState(null, "", "/ident/#/aircraft/abc123");
 
     expect(appPath("api/update.json")).toBe("/ident/api/update.json");
-    expect(appPath("/api/chunks/chunks.json")).toBe(
-      "/ident/api/chunks/chunks.json",
+    expect(appPath("/api/data/aircraft.json")).toBe(
+      "/ident/api/data/aircraft.json",
     );
     expect(appWebSocketUrl("/api/ws")).toBe("ws://localhost:3000/ident/api/ws");
   });

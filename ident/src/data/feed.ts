@@ -1,9 +1,4 @@
 import { appPath, appWebSocketUrl } from "./basePath";
-import {
-  type ChunkJson,
-  groupChunkIntoTrails,
-  loadHistoricalTracks,
-} from "./chunks";
 import { useIdentStore } from "./store";
 import type {
   AircraftFrame,
@@ -17,13 +12,13 @@ import { WsClient } from "./ws";
 
 const WS_URL = "api/ws";
 const BASE_HTTP = "api/data";
-const CHUNKS_BASE = "api/chunks";
 const FALLBACK_AFTER_MS = 15_000;
 const POLL_INTERVAL_MS = 1000;
 const FALLBACK_FETCH_TIMEOUT_MS = 800;
 const MAX_FALLBACK_FAILURES = 3;
 const TRAIL_POINT_CAP = 1500;
-const STARTUP_TRAIL_SLICE = "current_large.gz";
+const TRAIL_BACKFILL_WINDOW_MS = 2 * 60 * 60 * 1000;
+const TRAIL_CONNECT_SNAPSHOT_MS = 10 * 60 * 1000;
 
 type RouteEntry = {
   callsign: string;
@@ -45,7 +40,16 @@ type Envelope =
         line_of_sight?: HeyWhatsThatJson | null;
       };
     }
-  | { type: "routes"; now?: number; data: RouteEntry[] };
+  | { type: "routes"; now?: number; data: RouteEntry[] }
+  | { type: "trails"; data: { aircraft?: Record<string, TrailPoint[]> } };
+
+type TrailBackfillRequest = {
+  type: "trails.backfill";
+  id: string;
+  since: number;
+  until: number;
+  hex: string[];
+};
 
 function parseJSON<T>(text: string): T | null {
   try {
@@ -126,6 +130,24 @@ function dispatch(env: Envelope): void {
       }
       break;
     }
+    case "trails": {
+      const trails = new Map<string, TrailPoint[]>();
+      for (const [hex, points] of Object.entries(env.data.aircraft ?? {})) {
+        if (!Array.isArray(points)) continue;
+        trails.set(
+          hex,
+          points.filter(
+            (point): point is TrailPoint =>
+              typeof point.lat === "number" &&
+              typeof point.lon === "number" &&
+              (typeof point.alt === "number" || point.alt === "ground") &&
+              typeof point.ts === "number",
+          ),
+        );
+      }
+      applyTrailSeed(trails);
+      break;
+    }
     case "config":
       if (env.data) {
         store.ingestConfig({ station: env.data.station ?? null });
@@ -171,20 +193,11 @@ function applyTrailSeed(trails: Map<string, TrailPoint[]>): void {
   });
 }
 
-async function fetchChunk(name: string): Promise<ChunkJson | null> {
-  try {
-    const res = await fetch(appPath(`${CHUNKS_BASE}/${name}`), {
-      cache: "no-store",
-    });
-    if (!res.ok) return null;
-    const body = (await res.json()) as unknown;
-    if (!body || typeof body !== "object") return null;
-    const files = (body as { files?: unknown }).files;
-    if (!Array.isArray(files)) return null;
-    return body as ChunkJson;
-  } catch {
-    return null;
-  }
+function feedNowMs(): number {
+  const now = useIdentStore.getState().now;
+  return typeof now === "number" && Number.isFinite(now) && now > 0
+    ? Math.round(now * 1000)
+    : Date.now();
 }
 
 async function fetchJsonWithTimeout<T>(url: string): Promise<T> {
@@ -207,27 +220,11 @@ async function fetchJsonWithTimeout<T>(url: string): Promise<T> {
   }
 }
 
-function seedStartupTrails(): void {
-  void fetchChunk(STARTUP_TRAIL_SLICE).then((rolling) => {
-    if (!rolling) return;
-    applyTrailSeed(groupChunkIntoTrails([rolling]));
-  });
-  void loadHistoricalTracks().then((trails) => applyTrailSeed(trails));
-}
-
 export function startFeed(): () => void {
   const store = useIdentStore.getState();
-  let trailSeedQueued = false;
-  let trailSeedTimer: ReturnType<typeof setTimeout> | null = null;
-
-  const queueTrailSeed = (): void => {
-    if (trailSeedQueued) return;
-    trailSeedQueued = true;
-    trailSeedTimer = setTimeout(() => {
-      trailSeedTimer = null;
-      seedStartupTrails();
-    }, 0);
-  };
+  let wsOpen = false;
+  let trailBackfillSeq = 0;
+  const requestedTrailBackfill = new Set<string>();
 
   const client = new WsClient({
     url: appWebSocketUrl(WS_URL),
@@ -235,10 +232,36 @@ export function startFeed(): () => void {
       const env = parseJSON<Envelope>(t);
       if (!env?.type) return;
       dispatch(env);
-      if (env.type === "aircraft") queueTrailSeed();
     },
-    onStatus: (s, info) => store.setConnectionStatus("ws", s, info),
+    onStatus: (s, info) => {
+      store.setConnectionStatus("ws", s, info);
+      wsOpen = s === "open";
+      if (wsOpen) {
+        requestedTrailBackfill.clear();
+        requestSelectedTrailBackfill();
+      }
+    },
   });
+
+  function requestSelectedTrailBackfill(): void {
+    if (!wsOpen) return;
+    const hex = useIdentStore.getState().selectedHex?.trim().toLowerCase();
+    if (!hex || hex.length > 32 || requestedTrailBackfill.has(hex)) return;
+    const nowMs = feedNowMs();
+    const until = nowMs - TRAIL_CONNECT_SNAPSHOT_MS;
+    const since = nowMs - TRAIL_BACKFILL_WINDOW_MS;
+    if (!Number.isFinite(since) || !Number.isFinite(until) || until <= since)
+      return;
+
+    const req: TrailBackfillRequest = {
+      type: "trails.backfill",
+      id: `trail-${++trailBackfillSeq}`,
+      since,
+      until,
+      hex: [hex],
+    };
+    if (client.sendJSON(req)) requestedTrailBackfill.add(hex);
+  }
 
   client.start();
 
@@ -255,11 +278,11 @@ export function startFeed(): () => void {
       pollTimer = null;
       useIdentStore.getState().setConnectionStatus("http", "closed");
     }
+    requestSelectedTrailBackfill();
   });
 
   return () => {
     clearTimeout(fallbackCheck);
-    if (trailSeedTimer) clearTimeout(trailSeedTimer);
     if (pollTimer) clearInterval(pollTimer);
     store.setConnectionStatus("http", "closed");
     unsub();
