@@ -1,3 +1,4 @@
+import { appPath } from "./basePath";
 import type { TrailPoint } from "./types";
 
 // Each aircraft chunk row is a positional tuple [hex, alt_ft, gs_kt, trk_deg,
@@ -33,7 +34,7 @@ export interface ChunksIndex {
   enable_uat?: string;
 }
 
-const CHUNKS_BASE = "/chunks";
+const CHUNKS_BASE = "api/chunks";
 const STALE_SEEN_POS_MAX_S = 15;
 const STALE_SEEN_POS_MAX_ADSC_S = 20 * 60;
 
@@ -113,7 +114,7 @@ const ROLLING_SLICES = new Set(["current_large.gz", "current_small.gz"]);
 
 async function fetchChunk(name: string): Promise<ChunkJson | null> {
   try {
-    const res = await fetch(`${CHUNKS_BASE}/${name}`);
+    const res = await fetch(appPath(`${CHUNKS_BASE}/${name}`));
     if (!res.ok) return null;
     // Browser auto-decompresses Content-Encoding: gzip, so .json() works.
     const body = (await res.json()) as unknown;
@@ -135,7 +136,9 @@ export async function loadHistoricalTracks(): Promise<
 > {
   let indexRes: Response;
   try {
-    indexRes = await fetch(`${CHUNKS_BASE}/chunks.json`, { cache: "no-store" });
+    indexRes = await fetch(appPath(`${CHUNKS_BASE}/chunks.json`), {
+      cache: "no-store",
+    });
   } catch {
     return new Map();
   }

@@ -5,6 +5,7 @@ import { startUpdateStatusPolling } from "./update";
 describe("startUpdateStatusPolling", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+    window.history.replaceState(null, "", "/");
     useIdentStore.setState({
       update: {
         enabled: true,
@@ -16,6 +17,24 @@ describe("startUpdateStatusPolling", () => {
         error: null,
       },
     });
+  });
+
+  it("reads the update endpoint relative to the mounted document path", async () => {
+    window.history.replaceState(null, "", "/ident/#/aircraft/abc123");
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ enabled: true, status: "current" }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const stop = startUpdateStatusPolling();
+    await settlePromises();
+    stop();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/ident/api/update.json",
+      expect.objectContaining({ cache: "no-store" }),
+    );
   });
 
   it("reads the local identd update endpoint", async () => {
@@ -43,7 +62,7 @@ describe("startUpdateStatusPolling", () => {
     stop();
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/update.json",
+      "/api/update.json",
       expect.objectContaining({ cache: "no-store" }),
     );
     expect(useIdentStore.getState().update.status).toBe("available");
@@ -62,7 +81,7 @@ describe("startUpdateStatusPolling", () => {
     stop();
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(fetchMock.mock.calls[0]?.[0]).toBe("/update.json");
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("/api/update.json");
     expect(useIdentStore.getState().update.status).toBe("unavailable");
   });
 });

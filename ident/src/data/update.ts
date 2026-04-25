@@ -1,3 +1,4 @@
+import { appPath } from "./basePath";
 import {
   type ReleaseInfo,
   type UpdateSlice,
@@ -6,7 +7,7 @@ import {
   type VersionInfo,
 } from "./store";
 
-const UPDATE_URL = "/update.json";
+const UPDATE_URL = "api/update.json";
 const UPDATE_POLL_INTERVAL_MS = 24 * 60 * 60 * 1000;
 const UPDATE_FETCH_TIMEOUT_MS = 5000;
 
@@ -47,7 +48,7 @@ export function startUpdateStatusPolling(): () => void {
     );
     useIdentStore.getState().setUpdateStatus({ status: "checking" });
     try {
-      const res = await fetch(UPDATE_URL, {
+      const res = await fetch(appPath(UPDATE_URL), {
         cache: "no-store",
         signal: controller.signal,
       });

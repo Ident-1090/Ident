@@ -177,6 +177,7 @@ describe("loadHistoricalTracks", () => {
   });
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    window.history.replaceState(null, "", "/");
   });
 
   it("returns an empty map when chunks.json 404s", async () => {
@@ -189,6 +190,21 @@ describe("loadHistoricalTracks", () => {
     const { loadHistoricalTracks } = await import("./chunks");
     const trails = await loadHistoricalTracks();
     expect(trails.size).toBe(0);
+  });
+
+  it("fetches chunks relative to the mounted document path", async () => {
+    window.history.replaceState(null, "", "/ident/#/aircraft/abc123");
+    const mock = vi.fn(async (_url: string) => ({
+      ok: false,
+      status: 404,
+      json: async () => ({}),
+    }));
+    globalThis.fetch = mock as unknown as typeof fetch;
+
+    const { loadHistoricalTracks } = await import("./chunks");
+    await loadHistoricalTracks();
+
+    expect(mock.mock.calls[0]?.[0]).toBe("/ident/api/chunks/chunks.json");
   });
 
   it("skips current_large.gz and current_small.gz when selecting historical chunks", async () => {

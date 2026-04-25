@@ -124,8 +124,8 @@ describe("Topbar basemap picker", () => {
     expect(container.querySelector("[title]")).toBeNull();
 
     expectTooltipOnFocus(
-      findButton(container, "Dot — minimal")!,
-      "Dot — minimal",
+      findButton(container, "Arrow — directional")!,
+      "Arrow — directional",
     );
     expectTooltipOnFocus(findButton(container, "Toggle Rt")!, "Route label");
     expectTooltipOnFocus(

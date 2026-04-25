@@ -26,6 +26,7 @@ var upgrader = websocket.Upgrader{
 type Server struct {
 	ctx            context.Context
 	hub            *Hub
+	basePath       string
 	dataDir        string
 	historyDataDir string
 	web            fs.FS
@@ -35,6 +36,7 @@ type Server struct {
 
 type ServerOptions struct {
 	DataDir        string
+	BasePath       string
 	HistoryDataDir string
 	Web            fs.FS
 	UpdateChecker  *UpdateChecker
@@ -45,9 +47,14 @@ func NewServer(ctx context.Context, hub *Hub) *Server {
 }
 
 func NewServerWithOptions(ctx context.Context, hub *Hub, opts ServerOptions) *Server {
+	basePath, err := normalizeBasePath(opts.BasePath)
+	if err != nil {
+		log.Printf("base path %q ignored: %v", opts.BasePath, err)
+	}
 	return &Server{
 		ctx:            ctx,
 		hub:            hub,
+		basePath:       basePath,
 		dataDir:        opts.DataDir,
 		historyDataDir: opts.HistoryDataDir,
 		web:            opts.Web,
@@ -59,18 +66,27 @@ func (s *Server) SetReady(v bool) { s.ready.Store(v) }
 
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/ws", s.serveWS)
+	mux.HandleFunc("/api/ws", s.serveWS)
 	mux.HandleFunc("/healthz", s.serveHealthz)
 	mux.HandleFunc("/version", s.serveVersion)
-	mux.HandleFunc("/update.json", s.serveUpdateStatus)
+	mux.HandleFunc("/api/update.json", s.serveUpdateStatus)
 	if s.dataDir != "" {
-		mux.HandleFunc("/data/", s.serveReceiverData)
+		mux.HandleFunc("/api/data/", s.serveReceiverData)
 	}
 	if s.historyDataDir != "" {
-		mux.HandleFunc("/chunks/", s.serveChunks)
+		mux.HandleFunc("/api/chunks/", s.serveChunks)
 	}
+	mux.HandleFunc("/api/", http.NotFound)
 	if s.web != nil {
 		mux.HandleFunc("/", s.serveWeb)
+	}
+	if s.basePath != "" {
+		outer := http.NewServeMux()
+		outer.Handle(s.basePath+"/", http.StripPrefix(s.basePath, mux))
+		outer.HandleFunc(s.basePath, func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, s.basePath+"/", http.StatusMovedPermanently)
+		})
+		return outer
 	}
 	return mux
 }
@@ -140,7 +156,7 @@ func (s *Server) readPump(c *Client) {
 }
 
 func (s *Server) serveReceiverData(w http.ResponseWriter, r *http.Request) {
-	name := strings.TrimPrefix(r.URL.Path, "/data/")
+	name := strings.TrimPrefix(r.URL.Path, "/api/data/")
 	file, ok := localFilePath(s.dataDir, name, false)
 	if !ok {
 		http.NotFound(w, r)
@@ -150,7 +166,7 @@ func (s *Server) serveReceiverData(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) serveChunks(w http.ResponseWriter, r *http.Request) {
-	name := strings.TrimPrefix(r.URL.Path, "/chunks/")
+	name := strings.TrimPrefix(r.URL.Path, "/api/chunks/")
 	file, ok := localFilePath(s.historyDataDir, name, true)
 	if !ok {
 		http.NotFound(w, r)
@@ -171,9 +187,6 @@ func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 	if serveFSFile(w, r, s.web, name) {
 		return
 	}
-	if path.Ext(name) == "" && serveFSFile(w, r, s.web, "index.html") {
-		return
-	}
 	http.NotFound(w, r)
 }
 
@@ -183,6 +196,22 @@ func localFilePath(root, name string, allowSlash bool) (string, bool) {
 	}
 	clean := strings.TrimPrefix(path.Clean("/"+name), "/")
 	return filepath.Join(root, filepath.FromSlash(clean)), true
+}
+
+func normalizeBasePath(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "/" {
+		return "", nil
+	}
+	trimmed := strings.Trim(raw, "/")
+	if !cleanRelativePath(trimmed, true) {
+		return "", path.ErrBadPattern
+	}
+	clean := path.Clean("/" + trimmed)
+	if clean == "/" {
+		return "", nil
+	}
+	return clean, nil
 }
 
 func cleanRelativePath(name string, allowSlash bool) bool {
@@ -198,23 +227,31 @@ func cleanRelativePath(name string, allowSlash bool) bool {
 }
 
 func serveFSFile(w http.ResponseWriter, r *http.Request, files fs.FS, name string) bool {
+	body, modTime, ok := readFSFile(files, name)
+	if !ok {
+		return false
+	}
+	http.ServeContent(w, r, name, modTime, bytes.NewReader(body))
+	return true
+}
+
+func readFSFile(files fs.FS, name string) ([]byte, time.Time, bool) {
 	f, err := files.Open(name)
 	if err != nil {
-		return false
+		return nil, time.Time{}, false
 	}
 	defer f.Close()
 
 	info, err := f.Stat()
 	if err != nil || info.IsDir() {
-		return false
+		return nil, time.Time{}, false
 	}
 
 	body, err := io.ReadAll(f)
 	if err != nil {
-		return false
+		return nil, time.Time{}, false
 	}
-	http.ServeContent(w, r, name, info.ModTime(), bytes.NewReader(body))
-	return true
+	return body, info.ModTime(), true
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

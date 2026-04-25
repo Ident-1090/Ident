@@ -4,7 +4,6 @@ import { relative, sep } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv, type ProxyOptions } from "vite";
-import { VitePWA } from "vite-plugin-pwa";
 
 function ignoreDevWatchPath(
   filePath: string,
@@ -104,100 +103,8 @@ export default defineConfig(({ mode }) => {
   };
 
   return {
-    base: "/",
-    plugins: [
-      react(),
-      tailwindcss(),
-      VitePWA({
-        registerType: "prompt",
-        includeAssets: [
-          "icons/icon.svg",
-          "icons/favicon.ico",
-          "icons/apple-touch-icon-180x180.png",
-        ],
-        manifest: {
-          name: "Ident",
-          short_name: "Ident",
-          description: "Modern ADS-B traffic display for a local receiver",
-          start_url: "/",
-          scope: "/",
-          display: "standalone",
-          orientation: "any",
-          background_color: "#0f1113",
-          theme_color: "#0f1113",
-          icons: [
-            { src: "icons/pwa-64x64.png", sizes: "64x64", type: "image/png" },
-            {
-              src: "icons/pwa-192x192.png",
-              sizes: "192x192",
-              type: "image/png",
-            },
-            {
-              src: "icons/pwa-512x512.png",
-              sizes: "512x512",
-              type: "image/png",
-            },
-            {
-              src: "icons/maskable-icon-512x512.png",
-              sizes: "512x512",
-              type: "image/png",
-              purpose: "maskable",
-            },
-            {
-              src: "icons/icon.svg",
-              sizes: "any",
-              type: "image/svg+xml",
-              purpose: "any",
-            },
-          ],
-        },
-        workbox: {
-          sourcemap: false,
-          globPatterns: ["**/*.{js,css,html,svg,woff2}"],
-          // SPA routing fallback, but the websocket and live-data endpoints
-          // must always hit the network — the SW must never pretend a lost
-          // ADS-B stream is the index.html shell.
-          navigateFallback: "/index.html",
-          navigateFallbackDenylist: [/^\/(ws|data|chunks)/],
-          runtimeCaching: [
-            {
-              urlPattern: /^https:\/\/cdn\.jsdelivr\.net\/npm\/maplibre-gl.*/,
-              handler: "CacheFirst",
-              options: {
-                cacheName: "maplibre-cdn",
-                expiration: {
-                  maxEntries: 20,
-                  maxAgeSeconds: 30 * 24 * 60 * 60,
-                },
-              },
-            },
-            {
-              urlPattern: /^https:\/\/cdn\.jsdelivr\.net\/npm\/@fontsource.*/,
-              handler: "CacheFirst",
-              options: {
-                cacheName: "fontsource",
-                expiration: {
-                  maxEntries: 30,
-                  maxAgeSeconds: 365 * 24 * 60 * 60,
-                },
-              },
-            },
-            {
-              urlPattern:
-                /^https:\/\/(tiles\.openfreemap\.org|server\.arcgisonline\.com)\/.*/,
-              handler: "StaleWhileRevalidate",
-              options: {
-                cacheName: "basemap-tiles",
-                expiration: {
-                  maxEntries: 500,
-                  maxAgeSeconds: 14 * 24 * 60 * 60,
-                },
-              },
-            },
-          ],
-        },
-      }),
-    ],
+    base: "./",
+    plugins: [react(), tailwindcss()],
     build: {
       outDir: "dist",
       sourcemap: false,
@@ -215,9 +122,10 @@ export default defineConfig(({ mode }) => {
         ignored: ignoreDevWatchPath,
       },
       proxy: {
-        "/ws": wsProxy,
-        "/data": httpProxy,
-        "/chunks": httpProxy,
+        "/api/ws": wsProxy,
+        "/api/data": httpProxy,
+        "/api/chunks": httpProxy,
+        "/api/update.json": httpProxy,
       },
     },
     test: {

@@ -255,8 +255,15 @@ When `IDENT_DATA_DIR` is unset, `identd` looks for `aircraft.json` in common
 receiver runtime directories such as `/run/readsb` and `/run/dump1090-fa`. Set
 `IDENT_DATA_DIR` when your receiver writes JSON somewhere else.
 
-Ident serves at the URL root by default. If you publish it under a prefix, have
-your reverse proxy strip that prefix before forwarding requests to `identd`.
+Ident serves at the URL root by default. If your reverse proxy passes a path
+prefix through to `identd`, set the same prefix on the service:
+
+```sh
+IDENT_BASE_PATH=/ident
+```
+
+If your reverse proxy strips the prefix before forwarding, leave
+`IDENT_BASE_PATH` unset. Do not both strip the prefix and set `IDENT_BASE_PATH`.
 
 Receiver file names are configurable for stacks that use a different layout.
 
@@ -276,9 +283,10 @@ For PiAware and dump1090-fa, set `IDENT_DATA_DIR` to the directory where
 ```text
 browser
   -> /              web UI
-  -> /ws            live traffic stream
-  -> /data/*        receiver JSON fallback
-  -> /chunks/*      receiver history chunks when present
+  -> /api/ws        live traffic stream
+  -> /api/data/*    receiver JSON fallback
+  -> /api/chunks/*  receiver history chunks when present
+  -> /api/update.json
   -> /healthz       service health
 
 identd
@@ -287,9 +295,9 @@ identd
   -> sends typed updates to connected browsers
 ```
 
-The browser talks to Ident endpoints. `identd` handles receiver-specific paths
-and file names, so the web app does not need to know where the decoder stores
-files on disk.
+The browser talks to Ident endpoints under the current mount path. `identd`
+handles receiver-specific paths and file names, so the web app does not need to
+know where the decoder stores files on disk.
 
 ## Updates
 

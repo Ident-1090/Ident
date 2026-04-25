@@ -1,3 +1,4 @@
+import { appPath, appWebSocketUrl } from "./basePath";
 import {
   type ChunkJson,
   groupChunkIntoTrails,
@@ -14,9 +15,9 @@ import type {
 } from "./types";
 import { WsClient } from "./ws";
 
-const WS_URL = "/ws";
-const BASE_HTTP = "/data";
-const CHUNKS_BASE = "/chunks";
+const WS_URL = "api/ws";
+const BASE_HTTP = "api/data";
+const CHUNKS_BASE = "api/chunks";
 const FALLBACK_AFTER_MS = 15_000;
 const POLL_INTERVAL_MS = 1000;
 const FALLBACK_FETCH_TIMEOUT_MS = 800;
@@ -172,7 +173,9 @@ function applyTrailSeed(trails: Map<string, TrailPoint[]>): void {
 
 async function fetchChunk(name: string): Promise<ChunkJson | null> {
   try {
-    const res = await fetch(`${CHUNKS_BASE}/${name}`, { cache: "no-store" });
+    const res = await fetch(appPath(`${CHUNKS_BASE}/${name}`), {
+      cache: "no-store",
+    });
     if (!res.ok) return null;
     const body = (await res.json()) as unknown;
     if (!body || typeof body !== "object") return null;
@@ -214,7 +217,6 @@ function seedStartupTrails(): void {
 
 export function startFeed(): () => void {
   const store = useIdentStore.getState();
-  const wsOrigin = location.origin.replace(/^http/, "ws");
   let trailSeedQueued = false;
   let trailSeedTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -228,7 +230,7 @@ export function startFeed(): () => void {
   };
 
   const client = new WsClient({
-    url: `${wsOrigin}${WS_URL}`,
+    url: appWebSocketUrl(WS_URL),
     onText: (t) => {
       const env = parseJSON<Envelope>(t);
       if (!env?.type) return;
@@ -280,10 +282,14 @@ function startPolling(): ReturnType<typeof setInterval> {
     useIdentStore.getState().setConnectionStatus("http", "connecting");
     try {
       const [ac, rx, st, ol] = await Promise.allSettled([
-        fetchJsonWithTimeout<AircraftFrame>(`${BASE_HTTP}/aircraft.json`),
-        fetchJsonWithTimeout<ReceiverJson>(`${BASE_HTTP}/receiver.json`),
-        fetchJsonWithTimeout<StatsJson>(`${BASE_HTTP}/stats.json`),
-        fetchJsonWithTimeout<OutlineJson>(`${BASE_HTTP}/outline.json`),
+        fetchJsonWithTimeout<AircraftFrame>(
+          appPath(`${BASE_HTTP}/aircraft.json`),
+        ),
+        fetchJsonWithTimeout<ReceiverJson>(
+          appPath(`${BASE_HTTP}/receiver.json`),
+        ),
+        fetchJsonWithTimeout<StatsJson>(appPath(`${BASE_HTTP}/stats.json`)),
+        fetchJsonWithTimeout<OutlineJson>(appPath(`${BASE_HTTP}/outline.json`)),
       ]);
       const httpOk = ac.status === "fulfilled";
       // Receiver first so downstream consumers see site coords on the first tick.

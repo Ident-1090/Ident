@@ -34,6 +34,7 @@ var defaultReceiverDataDirs = []string{
 
 type Config struct {
 	Addr                  string
+	BasePath              string
 	DataDir               string
 	HistoryDataDir        string
 	AircraftFile          string
@@ -109,6 +110,7 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 	routes.Run(ctx)
 
 	srv := NewServerWithOptions(ctx, hub, ServerOptions{
+		BasePath:       cfg.BasePath,
 		DataDir:        cfg.DataDir,
 		HistoryDataDir: cfg.HistoryDataDir,
 		Web:            bundledWeb(),
@@ -192,6 +194,7 @@ func loadConfig() Config {
 func loadConfigFrom(args []string, getenv func(string) string) (Config, error) {
 	cfg := Config{
 		Addr:                  envOr(getenv, "IDENT_ADDR", ":8080"),
+		BasePath:              envOr(getenv, "IDENT_BASE_PATH", ""),
 		DataDir:               envOr(getenv, "IDENT_DATA_DIR", detectReceiverDataDir(defaultReceiverDataDirs)),
 		HistoryDataDir:        envOr(getenv, "HISTORY_DATA_DIR", filepath.Join(envOr(getenv, "IDENT_DATA_DIR", detectReceiverDataDir(defaultReceiverDataDirs)), "chunks")),
 		AircraftFile:          envOr(getenv, "IDENT_AIRCRAFT_FILE", "aircraft.json"),
@@ -214,8 +217,9 @@ func loadConfigFrom(args []string, getenv func(string) string) (Config, error) {
 
 	flags := flag.NewFlagSet("identd", flag.ContinueOnError)
 	flags.StringVar(&cfg.Addr, "addr", cfg.Addr, "HTTP listen address")
+	flags.StringVar(&cfg.BasePath, "base-path", cfg.BasePath, "URL path prefix for subpath deployments")
 	flags.StringVar(&cfg.DataDir, "data-dir", cfg.DataDir, "receiver data directory")
-	flags.StringVar(&cfg.HistoryDataDir, "history-data-dir", cfg.HistoryDataDir, "directory serving /chunks/* history files")
+	flags.StringVar(&cfg.HistoryDataDir, "history-data-dir", cfg.HistoryDataDir, "directory serving /api/chunks/* history files")
 	flags.StringVar(&cfg.AircraftFile, "aircraft-file", cfg.AircraftFile, "aircraft JSON file name")
 	flags.StringVar(&cfg.ReceiverFile, "receiver-file", cfg.ReceiverFile, "receiver JSON file name")
 	flags.StringVar(&cfg.StatsFile, "stats-file", cfg.StatsFile, "stats JSON file name")
@@ -230,6 +234,11 @@ func loadConfigFrom(args []string, getenv func(string) string) (Config, error) {
 	if err := flags.Parse(args); err != nil {
 		return Config{}, err
 	}
+	basePath, err := normalizeBasePath(cfg.BasePath)
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.BasePath = basePath
 	return cfg, nil
 }
 

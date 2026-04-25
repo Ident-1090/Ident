@@ -15,7 +15,7 @@ import { StatusBar } from "../statusbar/StatusBar";
 import { useAppliedTheme } from "../theme/useTheme";
 import { Topbar } from "../topbar/Topbar";
 import { ErrorBoundary } from "./ErrorBoundary";
-import { PwaUpdatePrompt } from "./PwaUpdatePrompt";
+import { UpdatePrompt } from "./UpdatePrompt";
 
 export function App() {
   return (
@@ -117,7 +117,7 @@ function AppContent() {
       )}
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       <Omnibox open={omniboxOpen} onClose={() => setOmniboxOpen(false)} />
-      <PwaUpdatePrompt />
+      <UpdatePrompt />
     </div>
   );
 }

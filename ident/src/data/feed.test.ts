@@ -6,12 +6,14 @@ import { useIdentStore } from "./store";
 import type { TrailPoint } from "./types";
 
 const wsHarness = vi.hoisted(() => ({
-  instances: [] as Array<{ emitText: (text: string) => void }>,
+  instances: [] as Array<{ url: string; emitText: (text: string) => void }>,
 }));
 
 vi.mock("./ws", () => ({
   WsClient: class {
+    readonly url: string;
     readonly opts: {
+      url: string;
       onText?: (text: string) => void;
       onStatus?: (
         status: "connecting" | "open" | "closed",
@@ -20,12 +22,14 @@ vi.mock("./ws", () => ({
     };
 
     constructor(opts: {
+      url: string;
       onText?: (text: string) => void;
       onStatus?: (
         status: "connecting" | "open" | "closed",
         info?: { isRetry: boolean },
       ) => void;
     }) {
+      this.url = opts.url;
       this.opts = opts;
       wsHarness.instances.push(this);
     }
@@ -108,6 +112,7 @@ describe("startFeed route envelopes", () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    window.history.replaceState(null, "", "/");
     globalThis.fetch = originalFetch;
   });
 
@@ -145,6 +150,15 @@ describe("startFeed route envelopes", () => {
       route: "ATL-JFK",
     });
     expect(st.liveState.routesViaWs).toBe(true);
+    stop();
+  });
+
+  it("connects websocket relative to the mounted document path", () => {
+    window.history.replaceState(null, "", "/ident/#/aircraft/abc123");
+
+    const stop = startFeed();
+
+    expect(wsHarness.instances[0].url).toBe("ws://localhost:3000/ident/api/ws");
     stop();
   });
 
@@ -458,7 +472,7 @@ describe("startFeed trail seeding", () => {
 
     await vi.runOnlyPendingTimersAsync();
 
-    expect(fetchSpy).toHaveBeenCalledWith("/chunks/current_large.gz", {
+    expect(fetchSpy).toHaveBeenCalledWith("/api/chunks/current_large.gz", {
       cache: "no-store",
     });
     expect(mockedLoadHistoricalTracks).toHaveBeenCalledTimes(1);

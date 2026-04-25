@@ -52,7 +52,7 @@ vi.mock("../mobile/MobileShell", () => ({
     </button>
   ),
 }));
-vi.mock("./PwaUpdatePrompt", () => ({ PwaUpdatePrompt: () => null }));
+vi.mock("./UpdatePrompt", () => ({ UpdatePrompt: () => null }));
 
 describe("App layout", () => {
   let container: HTMLDivElement;

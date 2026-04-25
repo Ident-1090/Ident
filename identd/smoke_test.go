@@ -18,6 +18,7 @@ func TestLoadConfigFromFlags(t *testing.T) {
 	cfg, err := loadConfigFrom(
 		[]string{
 			"--addr", "127.0.0.1:9000",
+			"--base-path", "/ident",
 			"--data-dir", "/tmp/readsb",
 			"--aircraft-file", "aircraft.json",
 			"--receiver-file", "receiver.json",
@@ -34,6 +35,28 @@ func TestLoadConfigFromFlags(t *testing.T) {
 	}
 	if cfg.DataDir != "/tmp/readsb" {
 		t.Fatalf("data dir = %q", cfg.DataDir)
+	}
+	if cfg.BasePath != "/ident" {
+		t.Fatalf("base path = %q", cfg.BasePath)
+	}
+}
+
+func TestLoadConfigFromNormalizesBasePathEnv(t *testing.T) {
+	cfg, err := loadConfigFrom(nil, func(key string) string {
+		switch key {
+		case "IDENT_BASE_PATH":
+			return "ident/"
+		case "IDENT_DATA_DIR":
+			return "/run/readsb"
+		default:
+			return ""
+		}
+	})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.BasePath != "/ident" {
+		t.Fatalf("base path = %q", cfg.BasePath)
 	}
 }
 

@@ -10,26 +10,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetPreferencesStoreForTests } from "../data/preferences";
 import { useIdentStore } from "../data/store";
 
-// Hoisted mock state: driver flags and spies so individual tests can flip
-// needRefresh before rendering and read updateServiceWorker / setter calls
-// afterwards.
-const mockState = vi.hoisted(() => ({
-  needRefresh: false,
-  updateServiceWorker: vi.fn(),
-  setNeedRefresh: vi.fn(),
-}));
+import { UpdatePrompt } from "./UpdatePrompt";
 
-vi.mock("virtual:pwa-register/react", () => ({
-  useRegisterSW: () => ({
-    needRefresh: [mockState.needRefresh, mockState.setNeedRefresh],
-    offlineReady: [false, vi.fn()],
-    updateServiceWorker: mockState.updateServiceWorker,
-  }),
-}));
-
-import { PwaUpdatePrompt } from "./PwaUpdatePrompt";
-
-describe("PwaUpdatePrompt", () => {
+describe("UpdatePrompt", () => {
   let container: HTMLDivElement;
   let root: Root;
 
@@ -38,9 +21,6 @@ describe("PwaUpdatePrompt", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    mockState.needRefresh = false;
-    mockState.updateServiceWorker.mockReset();
-    mockState.setNeedRefresh.mockReset();
     useIdentStore.setState({
       update: {
         enabled: true,
@@ -59,61 +39,14 @@ describe("PwaUpdatePrompt", () => {
     container.remove();
     vi.useRealTimers();
     resetPreferencesStoreForTests();
+    window.history.replaceState(null, "", "/");
   });
 
   it("renders nothing when no update needs attention", () => {
     act(() => {
-      root.render(<PwaUpdatePrompt />);
+      root.render(<UpdatePrompt />);
     });
     expect(container.querySelector('[role="status"]')).toBeNull();
-  });
-
-  it("shows a reload prompt when a new SW is waiting and activates it on click", () => {
-    mockState.needRefresh = true;
-
-    act(() => {
-      root.render(<PwaUpdatePrompt />);
-    });
-
-    const status = container.querySelector('[role="status"]');
-    expect(status?.textContent).toContain("New version ready.");
-    expect(status?.className).toContain("top-");
-    expect(status?.className).toContain("right-");
-    expect(status?.className).not.toContain("bottom-");
-
-    const reload = Array.from(
-      container.querySelectorAll<HTMLButtonElement>("button"),
-    ).find((b) => b.textContent === "Reload");
-    expect(reload).toBeTruthy();
-    expect(reload?.getAttribute("title")).toBeNull();
-    expect(reload?.getAttribute("aria-describedby")).toBeNull();
-
-    act(() => reload!.click());
-
-    // The `true` arg tells workbox to skipWaiting AND reload the page —
-    // calling updateServiceWorker() without it would only register the new
-    // SW without applying it, silently stranding the user on stale code.
-    expect(mockState.updateServiceWorker).toHaveBeenCalledWith(true);
-  });
-
-  it("lets the user dismiss the update without reloading", () => {
-    mockState.needRefresh = true;
-
-    act(() => {
-      root.render(<PwaUpdatePrompt />);
-    });
-
-    const dismiss = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Dismiss update"]',
-    );
-    expect(dismiss).toBeTruthy();
-    expect(dismiss?.getAttribute("title")).toBeNull();
-    expect(dismiss?.getAttribute("aria-describedby")).toBeNull();
-
-    act(() => dismiss!.click());
-
-    expect(mockState.setNeedRefresh).toHaveBeenCalledWith(false);
-    expect(mockState.updateServiceWorker).not.toHaveBeenCalled();
   });
 
   it("shows release updates in the shared prompt", () => {
@@ -129,7 +62,7 @@ describe("PwaUpdatePrompt", () => {
     }));
 
     act(() => {
-      root.render(<PwaUpdatePrompt />);
+      root.render(<UpdatePrompt />);
     });
 
     const status = container.querySelector('[role="status"]');
@@ -160,7 +93,7 @@ describe("PwaUpdatePrompt", () => {
     }));
 
     act(() => {
-      root.render(<PwaUpdatePrompt />);
+      root.render(<UpdatePrompt />);
     });
 
     const dismiss = container.querySelector<HTMLButtonElement>(
@@ -185,7 +118,7 @@ describe("PwaUpdatePrompt", () => {
     }));
 
     act(() => {
-      root.render(<PwaUpdatePrompt />);
+      root.render(<UpdatePrompt />);
     });
 
     const dismiss = container.querySelector<HTMLButtonElement>(
@@ -198,7 +131,7 @@ describe("PwaUpdatePrompt", () => {
     root = createRoot(container);
 
     act(() => {
-      root.render(<PwaUpdatePrompt />);
+      root.render(<UpdatePrompt />);
     });
 
     expect(container.querySelector('[role="status"]')).toBeNull();
@@ -206,33 +139,10 @@ describe("PwaUpdatePrompt", () => {
     vi.setSystemTime(new Date("2026-01-08T00:00:01Z"));
 
     act(() => {
-      root.render(<PwaUpdatePrompt />);
+      root.render(<UpdatePrompt />);
     });
 
     const status = container.querySelector('[role="status"]');
     expect(status?.textContent).toContain("Ident v1.1.0 is available.");
-  });
-
-  it("prioritizes the reload prompt over release metadata", () => {
-    mockState.needRefresh = true;
-    useIdentStore.setState((st) => ({
-      update: {
-        ...st.update,
-        status: "available",
-        latest: {
-          version: "v1.1.0",
-          url: "https://github.com/Ident-1090/Ident/releases/tag/v1.1.0",
-        },
-      },
-    }));
-
-    act(() => {
-      root.render(<PwaUpdatePrompt />);
-    });
-
-    const status = container.querySelector('[role="status"]');
-    expect(status?.textContent).toContain("New version ready.");
-    expect(status?.textContent).not.toContain("v1.1.0");
-    expect(container.querySelector("a")).toBeNull();
   });
 });
