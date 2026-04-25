@@ -5,6 +5,10 @@ import type { LabelFields } from "../data/store";
 import { useIdentStore } from "../data/store";
 import type { LabelMode, ThemeMode } from "../data/types";
 import { BASEMAPS, type BasemapId } from "../map/styles";
+import {
+  DesktopReplayTransport,
+  replayDeltaLabel,
+} from "../replay/ReplayControls";
 import { SegButton, Segmented } from "../ui/Segmented";
 import { Tooltip } from "../ui/Tooltip";
 
@@ -68,6 +72,7 @@ export function Topbar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const basemapId = useIdentStore((s) => s.map.basemapId);
   const setBasemap = useIdentStore((s) => s.setBasemap);
   const updateAvailable = useIdentStore((s) => s.update.status === "available");
+  const replay = useIdentStore((s) => s.replay);
 
   function cycleTheme() {
     const i = THEME_CYCLE.indexOf(theme);
@@ -106,7 +111,14 @@ export function Topbar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const othersActive = BASEMAPS[basemapId]?.group === "others";
   const othersLabel = othersActive ? BASEMAPS[basemapId].label : "OTHERS";
 
-  const clock = formatTopbarClock(now, clockMode);
+  const liveClock = formatTopbarClock(now, clockMode);
+  const clock =
+    replay.mode === "replay" && replay.playheadMs != null
+      ? {
+          primary: `${new Date(replay.playheadMs).toISOString().slice(11, 19)}Z`,
+          subtitle: replayDeltaLabel(replay.playheadMs, replay.availableTo),
+        }
+      : liveClock;
   const site = formatSiteTag(receiver, stationOverride);
 
   return (
@@ -133,10 +145,19 @@ export function Topbar({ onOpenSettings }: { onOpenSettings: () => void }) {
           <b className="font-mono text-[14px] text-(--color-ink) font-medium tracking-[0.02em]">
             {clock.primary}
           </b>
-          <span className="font-mono text-[9.5px] text-ink-faint uppercase tracking-widest mt-0.5">
+          <span
+            className={
+              "font-mono text-[9.5px] uppercase tracking-widest mt-0.5 " +
+              (replay.mode === "replay"
+                ? "text-(--color-warn)"
+                : "text-ink-faint")
+            }
+          >
             {clock.subtitle}
           </span>
         </div>
+
+        <DesktopReplayTransport />
 
         <CtrlGroup label="Icon">
           <Segmented className="self-center">

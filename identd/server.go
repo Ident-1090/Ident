@@ -35,6 +35,11 @@ type TrailBackfillProvider interface {
 	BackfillTrailEnvelope(TrailBackfillRequest) []byte
 }
 
+type ReplayProvider interface {
+	Manifest() ReplayManifest
+	ServeBlock(http.ResponseWriter, *http.Request, string)
+}
+
 type Server struct {
 	ctx                    context.Context
 	hub                    *Hub
@@ -42,6 +47,7 @@ type Server struct {
 	dataDir                string
 	web                    fs.FS
 	updates                *UpdateChecker
+	replay                 ReplayProvider
 	trailBackfill          TrailBackfillProvider
 	trailBackfillMaxWindow time.Duration
 	trailBackfillMaxPoints int
@@ -53,6 +59,7 @@ type ServerOptions struct {
 	BasePath               string
 	Web                    fs.FS
 	UpdateChecker          *UpdateChecker
+	Replay                 ReplayProvider
 	TrailBackfill          TrailBackfillProvider
 	TrailBackfillMaxWindow time.Duration
 	TrailBackfillMaxPoints int
@@ -78,6 +85,7 @@ func NewServerWithOptions(ctx context.Context, hub *Hub, opts ServerOptions) *Se
 		dataDir:                opts.DataDir,
 		web:                    opts.Web,
 		updates:                opts.UpdateChecker,
+		replay:                 opts.Replay,
 		trailBackfill:          opts.TrailBackfill,
 		trailBackfillMaxWindow: opts.TrailBackfillMaxWindow,
 		trailBackfillMaxPoints: maxPoints,
@@ -92,6 +100,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/healthz", s.serveHealthz)
 	mux.HandleFunc("/version", s.serveVersion)
 	mux.HandleFunc("/api/update.json", s.serveUpdateStatus)
+	mux.HandleFunc("/api/replay/manifest.json", s.serveReplayManifest)
+	mux.HandleFunc("/api/replay/blocks/", s.serveReplayBlock)
 	if s.dataDir != "" {
 		mux.HandleFunc("/api/data/", s.serveReceiverData)
 	}
@@ -133,6 +143,23 @@ func (s *Server) serveUpdateStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, s.updates.Status(r.Context()))
+}
+
+func (s *Server) serveReplayManifest(w http.ResponseWriter, _ *http.Request) {
+	if s.replay == nil {
+		writeJSON(w, ReplayManifest{Enabled: false})
+		return
+	}
+	writeJSON(w, s.replay.Manifest())
+}
+
+func (s *Server) serveReplayBlock(w http.ResponseWriter, r *http.Request) {
+	if s.replay == nil {
+		http.NotFound(w, r)
+		return
+	}
+	name := strings.TrimPrefix(r.URL.Path, "/api/replay/blocks/")
+	s.replay.ServeBlock(w, r, name)
 }
 
 func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {

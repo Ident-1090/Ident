@@ -125,6 +125,7 @@ export default defineConfig(({ mode }) => {
         "/api/ws": wsProxy,
         "/api/data": httpProxy,
         "/api/chunks": httpProxy,
+        "/api/replay": httpProxy,
         "/api/update.json": httpProxy,
       },
     },

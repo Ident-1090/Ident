@@ -10,5 +10,17 @@ services:
       IDENT_UPDATE_CHECK: "true"
       IDENT_UPDATE_REPO: "Ident-1090/Ident"
       IDENT_UPDATE_INTERVAL_SEC: "86400"
+      # Replay is off by default. Uncomment this block and the replay volume
+      # below when you want file-backed history.
+      # IDENT_REPLAY_ENABLE: "true"
+      # IDENT_REPLAY_DIR: "/var/lib/ident/replay"
+      # IDENT_REPLAY_RETENTION_SEC: "259200"
+      # IDENT_REPLAY_MAX_BYTES: "524288000"
+      # IDENT_REPLAY_BLOCK_SEC: "300"
+      # IDENT_REPLAY_SAMPLE_INTERVAL_SEC: "5"
     volumes:
       - /run/readsb:/run/readsb:ro
+      # - ident-replay:/var/lib/ident/replay
+
+# volumes:
+#   ident-replay:

@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useState } from "react";
 import { startFeed } from "../data/feed";
-import { useIdentStore } from "../data/store";
+import { selectDisplayAircraftMap, useIdentStore } from "../data/store";
 import { startUpdateStatusPolling } from "../data/update";
 import { logMapTiming } from "../debug/mapTiming";
 import { Inspector } from "../inspector/Inspector";
@@ -10,6 +10,7 @@ import { MobileShell } from "../mobile/MobileShell";
 import { PHONE_QUERY, useMediaQuery } from "../mobile/useMediaQuery";
 import { Omnibox } from "../omnibox/Omnibox";
 import { Rail } from "../rails/Rail";
+import { ReplayRuntime } from "../replay/ReplayControls";
 import { SettingsModal } from "../settings/SettingsModal";
 import { StatusBar } from "../statusbar/StatusBar";
 import { useAppliedTheme } from "../theme/useTheme";
@@ -30,7 +31,7 @@ function AppContent() {
   const [omniboxOpen, setOmniboxOpen] = useState(false);
   useAppliedTheme();
   const isPhone = useMediaQuery(PHONE_QUERY);
-  const aircraft = useIdentStore((s) => s.aircraft);
+  const aircraft = useIdentStore(selectDisplayAircraftMap);
   const selected = useIdentStore((s) => s.selectedHex);
   const select = useIdentStore((s) => s.select);
   const hasSelectedAircraft = selected != null && aircraft.has(selected);
@@ -118,6 +119,7 @@ function AppContent() {
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       <Omnibox open={omniboxOpen} onClose={() => setOmniboxOpen(false)} />
       <UpdatePrompt />
+      <ReplayRuntime />
     </div>
   );
 }
