@@ -36,6 +36,7 @@ const PRIMARY_BASEMAPS: Array<{
   { id: "esriSat", label: "SAT", tooltip: "Satellite map" },
   { id: "esriTerrain", label: "TER", tooltip: "Terrain map" },
 ];
+const IDENT_GITHUB_URL = "https://github.com/Ident-1090/Ident";
 const OTHERS_BASEMAPS: Array<{
   id: BasemapId;
   label: string;
@@ -520,9 +521,15 @@ export function MobileLogoHud() {
           aria-hidden="true"
         />
       </div>
-      <div className="font-semibold tracking-[-0.01em] text-[13.5px]">
+      <a
+        href={IDENT_GITHUB_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Open Ident on GitHub"
+        className="font-semibold tracking-[-0.01em] text-[13.5px] text-(--color-ink) no-underline hover:text-(--color-accent)"
+      >
         Ident
-      </div>
+      </a>
       {site != null && (
         <div className="font-mono text-[11px] font-medium text-ink-soft border border-line-strong rounded-[3px] px-1.5 py-px">
           {site}

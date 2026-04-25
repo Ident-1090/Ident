@@ -149,6 +149,17 @@ describe("Topbar basemap picker", () => {
     expect(findButton(container, "Copy share link")).toBeNull();
   });
 
+  it("links the title brand to the GitHub project", () => {
+    const link = container.querySelector<HTMLAnchorElement>(
+      'a[aria-label="Open Ident on GitHub"]',
+    );
+    expect(link).not.toBeNull();
+    expect(link!.textContent).toBe("Ident");
+    expect(link!.href).toBe("https://github.com/Ident-1090/Ident");
+    expect(link!.target).toBe("_blank");
+    expect(link!.rel).toContain("noopener");
+  });
+
   it("marks settings when a release update is available", () => {
     act(() => {
       useIdentStore.setState((st) => ({
