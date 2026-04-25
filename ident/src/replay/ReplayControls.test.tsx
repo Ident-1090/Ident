@@ -6,6 +6,9 @@ import {
   DesktopReplayTransport,
   MobileReplayDock,
   MobileReplayFab,
+  ReplayRuntime,
+  ReplayScrubber,
+  rewindRangeLabel,
 } from "./ReplayControls";
 
 let host: HTMLDivElement;
@@ -48,12 +51,88 @@ describe("replay controls", () => {
 
   it("desktop transport enters replay and exposes playback controls", () => {
     act(() => root.render(<DesktopReplayTransport />));
-    click("Open replay");
+    expect(host.textContent).not.toContain("Replay");
+    click("Play replay");
 
     expect(useIdentStore.getState().replay.mode).toBe("replay");
     expect(host.querySelector('[aria-label="Play replay"]')).not.toBeNull();
     click("Play replay");
     expect(useIdentStore.getState().replay.playing).toBe(true);
+  });
+
+  it("opens replay at the live edge while runtime is mounted", () => {
+    act(() =>
+      root.render(
+        <>
+          <ReplayRuntime />
+          <DesktopReplayTransport />
+        </>,
+      ),
+    );
+
+    click("Play replay");
+
+    expect(useIdentStore.getState().replay.mode).toBe("replay");
+    expect(useIdentStore.getState().replay.playing).toBe(false);
+  });
+
+  it("renders the desktop scrubber as a compact topbar row", () => {
+    act(() => root.render(<ReplayScrubber />));
+
+    expect(
+      host.querySelector('[data-testid="replay-scrubber"]'),
+    ).not.toBeNull();
+    expect(
+      host.querySelector('[data-testid="replay-scrubber-track"]'),
+    ).not.toBeNull();
+    expect(
+      host.querySelector('[aria-label="Replay time"]')?.className,
+    ).not.toContain("w-full");
+  });
+
+  it("returns to live when scrubbed to the replay live edge", () => {
+    useIdentStore.getState().enterReplay(150_000);
+    act(() => root.render(<ReplayScrubber />));
+
+    const input = host.querySelector(
+      '[aria-label="Replay time"]',
+    ) as HTMLInputElement;
+    act(() => {
+      setInputValue(input, "180000");
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    expect(useIdentStore.getState().replay.mode).toBe("live");
+    expect(useIdentStore.getState().replay.playheadMs).toBeNull();
+    expect(input.value).toBe("180000");
+  });
+
+  it("keeps the live scrubber attached to the moving live edge", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        mode: "live",
+        playheadMs: 150_000,
+      },
+    }));
+    act(() => root.render(<ReplayScrubber />));
+
+    const input = host.querySelector(
+      '[aria-label="Replay time"]',
+    ) as HTMLInputElement;
+    expect(input.value).toBe("180000");
+
+    act(() => {
+      useIdentStore.getState().setReplayManifest({
+        enabled: true,
+        from: 120_000,
+        to: 210_000,
+        block_sec: 60,
+        blocks: [],
+      });
+    });
+
+    expect(input.value).toBe("210000");
   });
 
   it("mobile fab switches to live control and dock changes speed", () => {
@@ -81,6 +160,14 @@ describe("replay controls", () => {
     ) as HTMLButtonElement;
     act(() => speed.click());
     expect(useIdentStore.getState().replay.speed).toBe(4);
+    expect(host.textContent).toContain("-1M");
+  });
+
+  it("formats replay range labels below hour precision", () => {
+    expect(rewindRangeLabel(30_000)).toBe("-1M");
+    expect(rewindRangeLabel(30 * 60_000)).toBe("-30M");
+    expect(rewindRangeLabel(90 * 60_000)).toBe("-1.5H");
+    expect(rewindRangeLabel(24 * 60 * 60_000)).toBe("-1D");
   });
 });
 
@@ -90,4 +177,13 @@ function click(label: string): void {
   ) as HTMLButtonElement | null;
   if (!button) throw new Error(`missing button ${label}`);
   act(() => button.click());
+}
+
+function setInputValue(input: HTMLInputElement, value: string): void {
+  const setter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    "value",
+  )?.set;
+  if (!setter) throw new Error("missing input value setter");
+  setter.call(input, value);
 }

@@ -7,6 +7,7 @@ import type {
 } from "./types";
 
 const MANIFEST_URL = "api/replay/manifest.json";
+const blockLoads = new Map<string, Promise<void>>();
 
 export async function refreshReplayManifest(): Promise<ReplayManifest | null> {
   try {
@@ -37,15 +38,7 @@ export async function ensureReplayRange(
   useIdentStore.getState().setReplayLoading(true);
   try {
     for (const block of blocks) {
-      if (useIdentStore.getState().replay.cache[block.url]) continue;
-      const url = appPath(block.url.replace(/^\//, ""));
-      const body = await fetchJson<ReplayBlockFile>(url, {
-        cache: "force-cache",
-      });
-      if (body.version !== 1 || !Array.isArray(body.frames)) {
-        throw new Error("Invalid replay block");
-      }
-      useIdentStore.getState().setReplayBlock(block.url, body);
+      await loadReplayBlock(block);
     }
     useIdentStore.getState().setReplayLoading(false);
   } catch (err) {
@@ -56,6 +49,31 @@ export async function ensureReplayRange(
         err instanceof Error ? err.message : "Replay block missing",
       );
   }
+}
+
+function loadReplayBlock(block: ReplayBlockIndex): Promise<void> {
+  if (useIdentStore.getState().replay.cache[block.url]) {
+    return Promise.resolve();
+  }
+  const pending = blockLoads.get(block.url);
+  if (pending) return pending;
+  const load = (async () => {
+    if (useIdentStore.getState().replay.cache[block.url]) return;
+    const url = appPath(block.url.replace(/^\//, ""));
+    const body = await fetchJson<ReplayBlockFile>(url, {
+      cache: "force-cache",
+    });
+    if (body.version !== 1 || !Array.isArray(body.frames)) {
+      throw new Error("Invalid replay block");
+    }
+    useIdentStore.getState().setReplayBlock(block.url, body);
+  })();
+  blockLoads.set(block.url, load);
+  load.then(
+    () => blockLoads.delete(block.url),
+    () => blockLoads.delete(block.url),
+  );
+  return load;
 }
 
 export function blocksForRange(

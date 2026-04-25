@@ -10,7 +10,7 @@ import { MobileShell } from "../mobile/MobileShell";
 import { PHONE_QUERY, useMediaQuery } from "../mobile/useMediaQuery";
 import { Omnibox } from "../omnibox/Omnibox";
 import { Rail } from "../rails/Rail";
-import { ReplayRuntime } from "../replay/ReplayControls";
+import { ReplayRuntime, ReplayScrubber } from "../replay/ReplayControls";
 import { SettingsModal } from "../settings/SettingsModal";
 import { StatusBar } from "../statusbar/StatusBar";
 import { useAppliedTheme } from "../theme/useTheme";
@@ -78,9 +78,9 @@ function AppContent() {
   // Desktop keeps the traffic rail at its full width; the map column absorbs
   // narrower windows instead of compressing the sidebar.
   const base =
-    "app-shell grid w-screen relative grid-rows-[1fr] md:grid-rows-[48px_1fr_30px] " +
+    "app-shell grid w-screen relative grid-rows-[1fr] md:grid-rows-[48px_32px_1fr_30px] " +
     "grid-cols-[1fr] " +
-    "md:[grid-template-areas:'topbar_topbar''left_canvas''status_status'] " +
+    "md:[grid-template-areas:'topbar_topbar''left_replay''left_canvas''status_status'] " +
     "[grid-template-areas:'canvas']";
   const desktopCols = "md:grid-cols-[340px_minmax(0,1fr)]";
 
@@ -92,6 +92,7 @@ function AppContent() {
       <div className="hidden md:contents">
         <Rail onOpenOmnibox={() => setOmniboxOpen(true)} />
       </div>
+      <ReplayScrubber />
       <MapEngine>
         <MapOverlay />
         {hasSelectedAircraft && (

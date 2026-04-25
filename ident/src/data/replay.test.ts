@@ -73,6 +73,41 @@ describe("replay data loading", () => {
     expect(selectDisplayTrailsByHex(st).abc123).toHaveLength(2);
   });
 
+  it("does not request blocks that are already loaded", async () => {
+    const block = replayBlock();
+    globalThis.fetch = vi.fn(async (url: string) =>
+      url.includes("manifest") ? responseJson(manifest()) : responseJson(block),
+    ) as never;
+
+    await refreshReplayManifest();
+    await ensureReplayRange(120_000, 180_000);
+    await ensureReplayRange(120_000, 180_000);
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("deduplicates overlapping requests for the same block", async () => {
+    const block = replayBlock();
+    let resolveBlock: ((value: Response) => void) | null = null;
+    globalThis.fetch = vi.fn((url: string) => {
+      if (url.includes("manifest"))
+        return Promise.resolve(responseJson(manifest()));
+      return new Promise<Response>((resolve) => {
+        resolveBlock = resolve;
+      });
+    }) as never;
+
+    await refreshReplayManifest();
+    const first = ensureReplayRange(120_000, 180_000);
+    const second = ensureReplayRange(120_000, 180_000);
+    const resolve = resolveBlock as ((value: Response) => void) | null;
+    if (!resolve) throw new Error("block request was not started");
+    resolve(responseJson(block));
+    await Promise.all([first, second]);
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
   it("does not substitute live aircraft while replay history is unavailable", () => {
     useIdentStore.setState((st) => ({
       replay: {

@@ -57,6 +57,7 @@ export function Inspector({ variant = "docked" }: InspectorProps) {
   const tab = useIdentStore((s) => s.inspector.tab);
   const setInspectorTab = useIdentStore((s) => s.setInspectorTab);
   const rssiBufs = useIdentStore((s) => s.rssiBufByHex);
+  const replaying = useIdentStore((s) => s.replay.mode === "replay");
   const trails = useIdentStore(selectDisplayTrailsByHex);
 
   if (!selectedHex) return null;
@@ -70,7 +71,11 @@ export function Inspector({ variant = "docked" }: InspectorProps) {
 
   return (
     <aside className={shellClass}>
-      <Header aircraft={ac} onClose={() => select(null)} />
+      <Header
+        aircraft={ac}
+        replaying={replaying}
+        onClose={() => select(null)}
+      />
       <PhotoCard hex={ac.hex} reg={ac.r} type={ac.t} />
       <TelemetryGrid aircraft={ac} />
       <TrendSection aircraft={ac} trace={altTraceFromTrail(trails[ac.hex])} />
@@ -83,7 +88,7 @@ export function Inspector({ variant = "docked" }: InspectorProps) {
         {tab === "signal" && (
           <SignalTab
             aircraft={ac}
-            rssiBuf={rssiBufs[ac.hex] ?? []}
+            rssiBuf={replaying ? [] : (rssiBufs[ac.hex] ?? [])}
             receiver={receiver}
           />
         )}
@@ -95,9 +100,11 @@ export function Inspector({ variant = "docked" }: InspectorProps) {
 
 function Header({
   aircraft,
+  replaying,
   onClose,
 }: {
   aircraft: Aircraft;
+  replaying: boolean;
   onClose: () => void;
 }) {
   const callsign = aircraft.flight?.trim() || aircraft.hex.toUpperCase();
@@ -112,7 +119,7 @@ function Header({
     .filter(Boolean)
     .join(" · ")
     .toUpperCase();
-  const recency = aircraftRecency(aircraft);
+  const recency = aircraftRecency(aircraft, replaying);
   return (
     <div className="px-4 pt-[14px] pb-[10px] border-b border-(--color-line) relative min-w-0">
       <div className="flex justify-between items-start gap-3 min-w-0">
@@ -165,13 +172,25 @@ function Header({
   );
 }
 
-function aircraftRecency(aircraft: Aircraft): {
-  label: "LIVE" | "STALE" | "LOST";
-  tier: "live" | "stale" | "lost";
+function aircraftRecency(
+  aircraft: Aircraft,
+  replaying: boolean,
+): {
+  label: "LIVE" | "STALE" | "LOST" | "REPLAY";
+  tier: "live" | "stale" | "lost" | "replay";
   tooltip: string;
   className: string;
 } {
   const seenSec = aircraft.seen;
+  if (replaying) {
+    return {
+      label: "REPLAY",
+      tier: "replay",
+      tooltip: "Replay frame",
+      className:
+        "text-(--color-warn) bg-[color-mix(in_oklch,var(--color-warn)_12%,var(--color-paper))]",
+    };
+  }
   if (seenSec != null && seenSec <= 2) {
     return {
       label: "LIVE",

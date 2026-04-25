@@ -873,7 +873,7 @@ export const useIdentStore = create<IdentState>((set) => ({
               availableFrom,
               availableTo,
             )
-          : st.replay.playheadMs;
+          : null;
       return {
         replay: {
           ...st.replay,
@@ -931,12 +931,29 @@ export const useIdentStore = create<IdentState>((set) => ({
     }),
 
   goLive: () =>
-    set((st) => ({ replay: { ...st.replay, mode: "live", playing: false } })),
+    set((st) => ({
+      replay: {
+        ...st.replay,
+        mode: "live",
+        playheadMs: null,
+        playing: false,
+      },
+    })),
 
   setReplayPlayhead: (playheadMs) =>
     set((st) => {
       if (st.replay.availableFrom == null || st.replay.availableTo == null) {
         return st;
+      }
+      if (playheadMs >= st.replay.availableTo) {
+        return {
+          replay: {
+            ...st.replay,
+            mode: "live",
+            playing: false,
+            playheadMs: null,
+          },
+        };
       }
       return {
         replay: {
@@ -973,14 +990,29 @@ function clampReplayPlayhead(
   return out;
 }
 
+const EMPTY_REPLAY_AIRCRAFT = new Map<string, Aircraft>();
+const EMPTY_REPLAY_TRAILS: Record<string, TrailPoint[]> = {};
+const replayAircraftMapByFrame = new WeakMap<
+  ReplayFrame,
+  Map<string, Aircraft>
+>();
+let replayTrailsCache: {
+  blocks: Record<string, ReplayBlockFile>;
+  playheadMs: number;
+  trails: Record<string, TrailPoint[]>;
+} | null = null;
+
 export function selectDisplayAircraftMap(
   st: IdentState,
 ): Map<string, Aircraft> {
   const frame = currentReplayFrame(st);
   if (st.replay.mode === "replay") {
-    return frame
-      ? new Map(frame.aircraft.map((ac) => [ac.hex, ac]))
-      : new Map();
+    if (!frame) return EMPTY_REPLAY_AIRCRAFT;
+    const cached = replayAircraftMapByFrame.get(frame);
+    if (cached) return cached;
+    const next = new Map(frame.aircraft.map((ac) => [ac.hex, ac]));
+    replayAircraftMapByFrame.set(frame, next);
+    return next;
   }
   return st.aircraft;
 }
@@ -996,6 +1028,14 @@ export function selectDisplayTrailsByHex(
 ): Record<string, TrailPoint[]> {
   if (st.replay.mode !== "replay" || st.replay.playheadMs == null) {
     return st.trailsByHex;
+  }
+  if (Object.keys(st.replay.cache).length === 0) return EMPTY_REPLAY_TRAILS;
+  if (
+    replayTrailsCache &&
+    replayTrailsCache.blocks === st.replay.cache &&
+    replayTrailsCache.playheadMs === st.replay.playheadMs
+  ) {
+    return replayTrailsCache.trails;
   }
   const since = st.replay.playheadMs - TRAIL_FADE_MAX_SEC * 1000;
   const out: Record<string, TrailPoint[]> = {};
@@ -1024,6 +1064,11 @@ export function selectDisplayTrailsByHex(
       out[hex] = series.slice(series.length - TRAIL_POINT_CAP);
     }
   }
+  replayTrailsCache = {
+    blocks: st.replay.cache,
+    playheadMs: st.replay.playheadMs,
+    trails: out,
+  };
   return out;
 }
 

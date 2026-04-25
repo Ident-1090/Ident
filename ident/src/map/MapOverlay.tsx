@@ -19,7 +19,6 @@ import type { Aircraft, TrailPoint } from "../data/types";
 import { labelFieldsKey, logMapTiming } from "../debug/mapTiming";
 import { MobileLogoHud } from "../mobile/MobileShell";
 import { queryTextFromOmnibox } from "../omnibox/grammar";
-import { ReplayScrubber } from "../replay/ReplayControls";
 import { resolveUnitOverrides } from "../settings/format";
 import { FeedStatusCell } from "../statusbar/StatusBar";
 import { Tooltip } from "../ui/Tooltip";
@@ -582,7 +581,6 @@ export function MapOverlay() {
 
   return (
     <>
-      <ReplayScrubber />
       <div className="map-top-controls absolute flex flex-col items-start gap-2 pointer-events-none [&>*]:pointer-events-auto">
         <div className="md:hidden">
           <MobileLogoHud />

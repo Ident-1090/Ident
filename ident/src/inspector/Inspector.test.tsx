@@ -83,6 +83,7 @@ describe("Inspector", () => {
         ...initial.settings,
         unitOverrides: { ...initial.settings.unitOverrides },
       },
+      replay: initial.replay,
       // Force the WS-closed fallback so the mocked adsb.im fetch actually fires.
       connectionStatus: { ws: "closed" },
     });
@@ -151,6 +152,58 @@ describe("Inspector", () => {
     const pre = container.querySelector("pre");
     expect(pre).toBeTruthy();
     expect(pre!.textContent).toContain('"hex": "abc123"');
+  });
+
+  it("does not show a selected live aircraft while replay data is missing", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 150_000,
+      },
+    }));
+
+    act(() => root.render(<Inspector />));
+
+    expect(container.textContent).not.toContain("UAL123");
+  });
+
+  it("labels selected replay aircraft as replay and ignores live signal history", async () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 150_000,
+        cache: {
+          "/api/replay/blocks/120000-180000.json.zst": {
+            version: 1,
+            start: 120_000,
+            end: 180_000,
+            step_ms: 5_000,
+            frames: [{ ts: 150_000, aircraft: [{ ...FAKE, seen: 0.5 }] }],
+          },
+        },
+      },
+      inspector: { tab: "signal" },
+    }));
+
+    await act(async () => {
+      root.render(<Inspector />);
+      await Promise.resolve();
+    });
+
+    const recency = container.querySelector("[data-aircraft-recency]");
+    expect(recency?.textContent).toBe("REPLAY");
+    expect(recency?.getAttribute("data-aircraft-recency-tooltip")).toBe(
+      "Replay frame",
+    );
+    expect(container.textContent).toContain("collecting samples");
   });
 
   it("reflects live gs / tas updates into the telemetry grid without a remount", () => {

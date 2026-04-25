@@ -4,7 +4,12 @@ import {
   resetPreferencesStoreForTests,
   usePreferencesStore,
 } from "./preferences";
-import { sampleMpsOnce, useIdentStore } from "./store";
+import {
+  sampleMpsOnce,
+  selectDisplayAircraftMap,
+  selectDisplayTrailsByHex,
+  useIdentStore,
+} from "./store";
 import type { AircraftFrame } from "./types";
 
 function resetStore() {
@@ -50,6 +55,7 @@ function resetStore() {
       lastSuccessAt: null,
       error: null,
     },
+    replay: useIdentStore.getInitialState().replay,
   });
 }
 
@@ -69,6 +75,67 @@ describe("initial connection status", () => {
     expect(useIdentStore.getInitialState().connectionStatus.ws).toBe(
       "connecting",
     );
+  });
+});
+
+describe("replay display selectors", () => {
+  beforeEach(resetStore);
+
+  it("returns stable empty replay display collections while history is missing", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 180_000,
+      },
+    }));
+
+    const st = useIdentStore.getState();
+    expect(selectDisplayAircraftMap(st)).toBe(selectDisplayAircraftMap(st));
+    expect(selectDisplayTrailsByHex(st)).toBe(selectDisplayTrailsByHex(st));
+  });
+
+  it("returns to live mode when replay playhead reaches the live edge", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 150_000,
+        playing: true,
+      },
+    }));
+
+    useIdentStore.getState().setReplayPlayhead(180_000);
+
+    expect(useIdentStore.getState().replay.mode).toBe("live");
+    expect(useIdentStore.getState().replay.playheadMs).toBeNull();
+    expect(useIdentStore.getState().replay.playing).toBe(false);
+  });
+
+  it("goes live immediately at the current replay live edge", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 150_000,
+        playing: true,
+      },
+    }));
+
+    useIdentStore.getState().goLive();
+
+    expect(useIdentStore.getState().replay.mode).toBe("live");
+    expect(useIdentStore.getState().replay.playheadMs).toBeNull();
+    expect(useIdentStore.getState().replay.playing).toBe(false);
   });
 });
 

@@ -31,14 +31,16 @@ RUN case "${TARGETARCH}/${TARGETVARIANT}" in \
     -o /out/identd .
 
 FROM alpine:3.23
-RUN apk add --no-cache ca-certificates \
+RUN apk add --no-cache ca-certificates su-exec \
   && addgroup -S ident \
   && adduser -S -G ident ident \
-  && mkdir -p /var/cache/ident \
-  && chown ident:ident /var/cache/ident
-USER ident
+  && mkdir -p /var/cache/ident /var/lib/ident/replay \
+  && chown -R ident:ident /var/cache/ident /var/lib/ident
 ENV IDENT_ADDR=:8080 \
   IDENT_DATA_DIR=/run/readsb
 EXPOSE 8080
 COPY --from=build /out/identd /usr/local/bin/identd
-ENTRYPOINT ["/usr/local/bin/identd"]
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
+CMD ["/usr/local/bin/identd"]
