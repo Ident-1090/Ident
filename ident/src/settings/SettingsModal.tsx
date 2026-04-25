@@ -211,7 +211,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
             </ControlRow>
           </SettingsSection>
 
-          <SettingsSection title="Updates" last>
+          <SettingsSection title="Updates" layout="row" last>
             <UpdateDetails update={update} />
           </SettingsSection>
         </div>
@@ -239,35 +239,29 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
 
 function UpdateDetails({ update }: { update: UpdateSlice }) {
   const latestUrl = update.latest?.url;
+  const showStatusDot = updateNeedsAttention(update.status);
   return (
     <div className="grid gap-3">
-      <ControlRow label="Status">
+      <div className="flex flex-wrap items-center gap-2">
         <div className="flex min-h-9 items-center gap-2 rounded-sm border border-(--color-line) bg-paper px-3">
-          {update.status === "available" && (
-            <span className="h-2 w-2 rounded-full bg-(--color-warn)" />
+          {showStatusDot && (
+            <span
+              data-testid="update-status-dot"
+              className="h-2 w-2 rounded-full bg-(--color-warn)"
+            />
           )}
           <span className="font-mono text-[11px] font-medium uppercase tracking-[0.05em] text-(--color-ink)">
             {updateStatusLabel(update.status)}
           </span>
         </div>
-      </ControlRow>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <ControlStack label="Installed">
-          <ReadOnlyValue>
-            {formatVersion(update.current?.version)}
-          </ReadOnlyValue>
-        </ControlStack>
-        <ControlStack label="Latest">
-          <ReadOnlyValue>{formatVersion(update.latest?.version)}</ReadOnlyValue>
-        </ControlStack>
-        <ControlStack label="Checked">
-          <ReadOnlyValue>{formatDateTime(update.checkedAt)}</ReadOnlyValue>
-        </ControlStack>
-        <ControlStack label="Published">
-          <ReadOnlyValue>
-            {formatDateTime(update.latest?.publishedAt)}
-          </ReadOnlyValue>
-        </ControlStack>
+        <UpdateValue
+          label="Installed"
+          value={formatVersion(update.current?.version)}
+        />
+        <UpdateValue
+          label="Latest"
+          value={formatVersion(update.latest?.version)}
+        />
       </div>
       {update.status === "unavailable" && update.error && (
         <div className="rounded-sm border border-(--color-line-soft) bg-paper-2 px-3 py-2 font-mono text-[11px] text-ink-soft">
@@ -289,10 +283,13 @@ function UpdateDetails({ update }: { update: UpdateSlice }) {
   );
 }
 
-function ReadOnlyValue({ children }: { children: ReactNode }) {
+function UpdateValue({ label, value }: { label: string; value: string }) {
   return (
-    <div className="flex min-h-9 items-center rounded-sm border border-(--color-line) bg-paper px-3 font-mono text-[11px] text-ink-soft">
-      {children}
+    <div className="flex min-h-9 items-center gap-2 rounded-sm border border-(--color-line) bg-paper px-3 font-mono text-[11px]">
+      <span className="font-medium uppercase tracking-[0.06em] text-ink-faint">
+        {label}
+      </span>
+      <span className="text-ink-soft">{value}</span>
     </div>
   );
 }
@@ -316,40 +313,40 @@ function updateStatusLabel(status: string): string {
   }
 }
 
-function formatVersion(value: string | undefined): string {
-  return value?.trim() ? value : "-";
+function updateNeedsAttention(status: string): boolean {
+  return status === "available" || status === "unavailable";
 }
 
-function formatDateTime(value: string | null | undefined): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
+function formatVersion(value: string | undefined): string {
+  return value?.trim() ? value : "-";
 }
 
 function SettingsSection({
   title,
   last = false,
+  layout = "stack",
   children,
 }: {
   title: string;
   last?: boolean;
+  layout?: "stack" | "row";
   children: ReactNode;
 }) {
+  const rowLayout = layout === "row";
   return (
     <section
       className={
         "grid gap-3.5 py-4 first:pt-0 " +
+        (rowLayout
+          ? "sm:grid-cols-[116px_minmax(0,1fr)] sm:items-start "
+          : "") +
         (last ? "pb-0" : "border-b border-(--color-line-soft)")
       }
     >
       <h3 className="m-0 font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-ink-faint">
         {title}
       </h3>
-      <div className="grid gap-3">{children}</div>
+      <div className="grid min-w-0 gap-3">{children}</div>
     </section>
   );
 }

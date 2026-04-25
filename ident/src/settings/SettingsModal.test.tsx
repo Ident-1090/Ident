@@ -163,10 +163,39 @@ describe("SettingsModal", () => {
     });
 
     expect(container.textContent).toContain("Update available");
+    expect(container.textContent).toContain("Installed");
     expect(container.textContent).toContain("v1.0.0");
+    expect(container.textContent).toContain("Latest");
     expect(container.textContent).toContain("v1.1.0");
+    expect(container.textContent).not.toContain("Checked");
+    expect(container.textContent).not.toContain("Published");
+    const statusDot = container.querySelector(
+      '[data-testid="update-status-dot"]',
+    );
+    expect(statusDot).toBeTruthy();
     expect(
       container.querySelector('a[href*="/releases/tag/v1.1.0"]'),
+    ).toBeTruthy();
+  });
+
+  it("shows an attention dot when updates cannot be checked", () => {
+    useIdentStore.setState((st) => ({
+      update: {
+        ...st.update,
+        status: "unavailable",
+        current: null,
+        latest: null,
+        error: "Update check failed",
+      },
+    }));
+
+    act(() => {
+      root.render(<SettingsModal onClose={vi.fn()} />);
+    });
+
+    expect(container.textContent).toContain("Unable to check");
+    expect(
+      container.querySelector('[data-testid="update-status-dot"]'),
     ).toBeTruthy();
   });
 });

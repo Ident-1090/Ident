@@ -7,6 +7,10 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  resetPreferencesStoreForTests,
+  usePreferencesStore,
+} from "../data/preferences";
 import { useIdentStore } from "../data/store";
 import type { Aircraft } from "../data/types";
 import { Inspector } from "./Inspector";
@@ -48,7 +52,7 @@ describe("Inspector", () => {
   const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
-    localStorage.clear();
+    resetPreferencesStoreForTests();
     resetRouteCacheForTests();
     globalThis.fetch = vi.fn(async () => ({
       ok: true,
@@ -142,7 +146,7 @@ describe("Inspector", () => {
     });
     // Store tab updated and persisted.
     expect(useIdentStore.getState().inspector.tab).toBe("raw");
-    expect(localStorage.getItem("ident.inspector.tab")).toBe("raw");
+    expect(usePreferencesStore.getState().inspectorTab).toBe("raw");
     // Raw tab pre block shows a JSON field.
     const pre = container.querySelector("pre");
     expect(pre).toBeTruthy();

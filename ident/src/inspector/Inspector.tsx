@@ -1,5 +1,5 @@
 import { X } from "lucide-react";
-import { type ReactNode, useEffect, useRef } from "react";
+import type { ReactNode } from "react";
 import { haversineNm } from "../data/derive";
 import { useIdentStore } from "../data/store";
 import type {
@@ -27,7 +27,6 @@ import { RawTab } from "./tabs/RawTab";
 import { SignalTab } from "./tabs/SignalTab";
 import { TelemetryTab } from "./tabs/TelemetryTab";
 
-const TAB_STORAGE_KEY = "ident.inspector.tab";
 const TAB_ORDER: InspectorTab[] = ["telemetry", "quality", "signal", "raw"];
 const TAB_LABEL: Record<InspectorTab, string> = {
   telemetry: "TELEMETRY",
@@ -42,10 +41,6 @@ const TAB_TOOLTIP: Record<InspectorTab, string> = {
   raw: "Raw aircraft JSON",
 };
 
-function isInspectorTab(v: string | null): v is InspectorTab {
-  return v === "telemetry" || v === "quality" || v === "signal" || v === "raw";
-}
-
 interface InspectorProps {
   variant?: "docked" | "floating";
 }
@@ -59,24 +54,6 @@ export function Inspector({ variant = "docked" }: InspectorProps) {
   const setInspectorTab = useIdentStore((s) => s.setInspectorTab);
   const rssiBufs = useIdentStore((s) => s.rssiBufByHex);
   const trails = useIdentStore((s) => s.trailsByHex);
-
-  // Seed tab from localStorage on mount; persist on change afterwards.
-  const didSeed = useRef(false);
-  useEffect(() => {
-    try {
-      if (!didSeed.current) {
-        didSeed.current = true;
-        const stored = localStorage.getItem(TAB_STORAGE_KEY);
-        if (isInspectorTab(stored) && stored !== tab) {
-          setInspectorTab(stored);
-          return;
-        }
-      }
-      localStorage.setItem(TAB_STORAGE_KEY, tab);
-    } catch {
-      // Intentionally ignore: privacy-mode browsers throw on storage access.
-    }
-  }, [tab, setInspectorTab]);
 
   if (!selectedHex) return null;
   const ac = aircraft.get(selectedHex);

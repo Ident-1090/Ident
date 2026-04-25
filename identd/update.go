@@ -362,11 +362,9 @@ func splitRepo(repo string) (owner, name string, ok bool) {
 
 func mapCompareStatus(status string) string {
 	switch status {
-	case "behind":
+	case "ahead", "diverged":
 		return UpdateAvailable
-	case "diverged":
-		return UpdateAvailable
-	case "ahead", "identical":
+	case "behind", "identical":
 		return UpdateCurrent
 	default:
 		return UpdateUnknown

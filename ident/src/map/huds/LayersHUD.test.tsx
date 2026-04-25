@@ -6,6 +6,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { resetPreferencesStoreForTests } from "../../data/preferences";
 import { useIdentStore } from "../../data/store";
 import { LayersHUD } from "./LayersHUD";
 
@@ -20,7 +21,7 @@ describe("LayersHUD", () => {
   let root: Root;
 
   beforeEach(() => {
-    localStorage.clear();
+    resetPreferencesStoreForTests();
     useIdentStore.setState((st) => ({
       map: {
         ...st.map,

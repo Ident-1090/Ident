@@ -8,6 +8,7 @@ import type { CSSProperties } from "react";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetPreferencesStoreForTests } from "../data/preferences";
 import { useIdentStore } from "../data/store";
 import type { Aircraft } from "../data/types";
 import { MapEngineContext } from "./MapEngine";
@@ -335,7 +336,7 @@ describe("MapOverlay", () => {
   let root: Root;
 
   beforeEach(() => {
-    localStorage.clear();
+    resetPreferencesStoreForTests();
     useIdentStore.setState((st) => ({
       ...st,
       aircraft: new Map([

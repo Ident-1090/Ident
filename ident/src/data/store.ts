@@ -2,17 +2,18 @@ import { create } from "zustand";
 import { labelFieldsKey, startMapTimingTrace } from "../debug/mapTiming";
 import type { BasemapId } from "../map/styles";
 import { deriveFilterFromQuery } from "../omnibox/grammar";
-import { presetUnitOverrides } from "../settings/format";
+import {
+  type LabelFields,
+  normalizeUnitOverrides,
+  usePreferencesStore,
+} from "./preferences";
 import type {
   Aircraft,
   AircraftFrame,
   Alert,
-  AltitudeUnit,
   CategoryKey,
   ClockMode,
-  DistanceUnit,
   HeyWhatsThatJson,
-  HorizontalSpeedUnit,
   InspectorTab,
   LabelMode,
   LayerKey,
@@ -20,13 +21,13 @@ import type {
   ReceiverJson,
   RouteInfo,
   StatsJson,
-  TemperatureUnit,
   ThemeMode,
   TrailPoint,
   UnitMode,
   UnitOverrides,
-  VerticalSpeedUnit,
 } from "./types";
+
+export type { LabelFields } from "./preferences";
 
 export type ConnStatus = "connecting" | "open" | "closed";
 
@@ -42,229 +43,11 @@ const ALERT_WINDOW_MS = 30 * 60 * 1000;
 // (~1.5 h at 4 s historical cadence + 1 Hz live). settings.trailFadeSec controls
 // how much of that buffer is drawn for UNSELECTED aircraft; selected renders all.
 const TRAIL_POINT_CAP = 1500;
-const DEFAULT_TRAIL_FADE_SEC = 180;
 const TRAIL_FADE_MIN_SEC = 10;
 const TRAIL_FADE_MAX_SEC = 600;
 
-const MAP_STORAGE_KEY = "ident.map.state";
-const SETTINGS_STORAGE_KEY = "ident.settings.state";
 const MAP_CENTER_EPSILON_DEG = 1e-6;
 const MAP_ZOOM_EPSILON = 1e-3;
-
-export interface LabelFields {
-  cs: boolean;
-  type: boolean;
-  alt: boolean;
-  spd: boolean;
-  sqk: boolean;
-  rt: boolean;
-}
-
-const DEFAULT_LABEL_FIELDS: LabelFields = {
-  cs: true,
-  type: false,
-  alt: true,
-  spd: true,
-  sqk: false,
-  rt: false,
-};
-
-interface PersistedMapState {
-  labelMode: LabelMode;
-  layers: Record<LayerKey, boolean>;
-  labelFields: LabelFields;
-  basemapId: BasemapId;
-  // null = MapEngine should place the map at the receiver once it arrives.
-  // Populated values are restored verbatim on next session.
-  center: { lng: number; lat: number } | null;
-  zoom: number | null;
-}
-
-const VALID_BASEMAP_IDS: BasemapId[] = [
-  "ident",
-  "osm",
-  "cartoPositron",
-  "cartoDark",
-  "esriSat",
-  "esriTerrain",
-];
-
-interface PersistedSettingsState {
-  trailFadeSec: number;
-  unitMode: UnitMode;
-  unitOverrides: UnitOverrides;
-  clock: ClockMode;
-  theme: ThemeMode;
-}
-
-function isThemeMode(v: unknown): v is ThemeMode {
-  return v === "system" || v === "light" || v === "dark";
-}
-
-function isAltitudeUnit(v: unknown): v is AltitudeUnit {
-  return v === "m" || v === "ft";
-}
-
-function isHorizontalSpeedUnit(v: unknown): v is HorizontalSpeedUnit {
-  return v === "km/h" || v === "mph" || v === "kt";
-}
-
-function isDistanceUnit(v: unknown): v is DistanceUnit {
-  return v === "km" || v === "mi" || v === "nm";
-}
-
-function isVerticalSpeedUnit(v: unknown): v is VerticalSpeedUnit {
-  return v === "m/s" || v === "ft/min" || v === "fpm";
-}
-
-function isTemperatureUnit(v: unknown): v is TemperatureUnit {
-  return v === "C" || v === "F";
-}
-
-function normalizeUnitOverrides(
-  raw: Partial<UnitOverrides> | undefined,
-  fallback: UnitOverrides,
-): UnitOverrides {
-  return {
-    altitude: isAltitudeUnit(raw?.altitude) ? raw.altitude : fallback.altitude,
-    horizontalSpeed: isHorizontalSpeedUnit(raw?.horizontalSpeed)
-      ? raw.horizontalSpeed
-      : fallback.horizontalSpeed,
-    distance: isDistanceUnit(raw?.distance) ? raw.distance : fallback.distance,
-    verticalSpeed: isVerticalSpeedUnit(raw?.verticalSpeed)
-      ? raw.verticalSpeed
-      : fallback.verticalSpeed,
-    temperature: isTemperatureUnit(raw?.temperature)
-      ? raw.temperature
-      : fallback.temperature,
-  };
-}
-
-function loadMapState(defaults: PersistedMapState): PersistedMapState {
-  try {
-    const raw =
-      typeof localStorage !== "undefined"
-        ? localStorage.getItem(MAP_STORAGE_KEY)
-        : null;
-    if (!raw) return defaults;
-    const parsed = JSON.parse(raw) as Partial<PersistedMapState> & {
-      labelMode?: string;
-      basemapId?: string;
-    };
-    const glyph: LabelMode =
-      parsed.labelMode === "arrow" || parsed.labelMode === "icon"
-        ? parsed.labelMode
-        : defaults.labelMode;
-    const basemapId = VALID_BASEMAP_IDS.includes(parsed.basemapId as BasemapId)
-      ? (parsed.basemapId as BasemapId)
-      : defaults.basemapId;
-    const center =
-      parsed.center &&
-      typeof parsed.center.lng === "number" &&
-      typeof parsed.center.lat === "number"
-        ? { lng: parsed.center.lng, lat: parsed.center.lat }
-        : defaults.center;
-    const zoom = typeof parsed.zoom === "number" ? parsed.zoom : defaults.zoom;
-    // Restore each known LayerKey from parsed; legacy keys absent from
-    // defaults drop naturally so the activeCount badge doesn't carry them.
-    const layers = {} as Record<LayerKey, boolean>;
-    for (const key of Object.keys(defaults.layers) as LayerKey[]) {
-      const v = parsed.layers?.[key];
-      layers[key] = typeof v === "boolean" ? v : defaults.layers[key];
-    }
-    return {
-      labelMode: glyph,
-      layers,
-      // Per-key merge so fields added after a user's last save get their
-      // default value rather than undefined.
-      labelFields: { ...defaults.labelFields, ...(parsed.labelFields ?? {}) },
-      basemapId,
-      center,
-      zoom,
-    };
-  } catch {
-    return defaults;
-  }
-}
-
-function persistMapState(map: MapSlice): void {
-  try {
-    if (typeof localStorage === "undefined") return;
-    const payload: PersistedMapState = {
-      labelMode: map.labelMode,
-      layers: map.layers,
-      labelFields: map.labelFields,
-      basemapId: map.basemapId,
-      center: map.center,
-      zoom: map.zoom,
-    };
-    localStorage.setItem(MAP_STORAGE_KEY, JSON.stringify(payload));
-  } catch {
-    // Intentionally ignore: privacy-mode browsers throw on storage access.
-  }
-}
-
-function loadSettingsState(
-  defaults: PersistedSettingsState,
-): PersistedSettingsState {
-  try {
-    const raw =
-      typeof localStorage !== "undefined"
-        ? localStorage.getItem(SETTINGS_STORAGE_KEY)
-        : null;
-    if (!raw) return defaults;
-    const parsed = JSON.parse(raw) as Partial<PersistedSettingsState> & {
-      units?: UnitMode;
-    };
-    const legacyMode = parsed.units;
-    const unitMode =
-      parsed.unitMode === "metric" ||
-      parsed.unitMode === "imperial" ||
-      parsed.unitMode === "aviation" ||
-      parsed.unitMode === "custom"
-        ? parsed.unitMode
-        : legacyMode === "metric" ||
-            legacyMode === "imperial" ||
-            legacyMode === "aviation"
-          ? legacyMode
-          : defaults.unitMode;
-    const presetFallback =
-      unitMode === "custom"
-        ? defaults.unitOverrides
-        : presetUnitOverrides(unitMode);
-    return {
-      trailFadeSec:
-        typeof parsed.trailFadeSec === "number"
-          ? parsed.trailFadeSec
-          : defaults.trailFadeSec,
-      unitMode,
-      unitOverrides: normalizeUnitOverrides(
-        parsed.unitOverrides,
-        presetFallback,
-      ),
-      clock: parsed.clock ?? defaults.clock,
-      theme: isThemeMode(parsed.theme) ? parsed.theme : defaults.theme,
-    };
-  } catch {
-    return defaults;
-  }
-}
-
-function persistSettingsState(settings: SettingsSlice): void {
-  try {
-    if (typeof localStorage === "undefined") return;
-    const payload: PersistedSettingsState = {
-      trailFadeSec: settings.trailFadeSec,
-      unitMode: settings.unitMode,
-      unitOverrides: settings.unitOverrides,
-      clock: settings.clock,
-      theme: settings.theme,
-    };
-    localStorage.setItem(SETTINGS_STORAGE_KEY, JSON.stringify(payload));
-  } catch {
-    // Intentionally ignore: privacy-mode browsers throw on storage access.
-  }
-}
 
 const MPS_BUFFER_LEN = 60;
 const MPS_SAMPLE_INTERVAL_MS = 1000;
@@ -439,13 +222,6 @@ const DEFAULT_FILTER: FilterSlice = {
   militaryOnly: false,
   inViewOnly: false,
   expressionBranches: null,
-};
-
-const DEFAULT_LAYERS: Record<LayerKey, boolean> = {
-  rangeRings: true,
-  rxRange: false,
-  trails: false,
-  losRings: false,
 };
 
 export interface IdentState {
@@ -658,23 +434,6 @@ function sameMapView(
   return Math.abs(a.zoom - b.zoom) <= MAP_ZOOM_EPSILON;
 }
 
-const INITIAL_MAP_STATE: PersistedMapState = loadMapState({
-  labelMode: "arrow",
-  layers: DEFAULT_LAYERS,
-  labelFields: DEFAULT_LABEL_FIELDS,
-  basemapId: "ident",
-  center: null,
-  zoom: null,
-});
-
-const INITIAL_SETTINGS_STATE: PersistedSettingsState = loadSettingsState({
-  trailFadeSec: DEFAULT_TRAIL_FADE_SEC,
-  unitMode: "aviation",
-  unitOverrides: presetUnitOverrides("aviation"),
-  clock: "utc",
-  theme: "system",
-});
-
 const INITIAL_CAMERA_STATE: CameraSlice = {
   trackSelected: false,
   autoFitTraffic: false,
@@ -701,7 +460,7 @@ export const useIdentStore = create<IdentState>((set) => ({
   connectionStatusInfo: { ws: { isRetry: false } },
   selectedHex: null,
 
-  inspector: { tab: "telemetry" },
+  inspector: { tab: usePreferencesStore.getState().inspectorTab },
   altTrendsByHex: {},
   gsTrendsByHex: {},
   rssiBufByHex: {},
@@ -711,7 +470,11 @@ export const useIdentStore = create<IdentState>((set) => ({
 
   alerts: [],
 
-  map: { ...INITIAL_MAP_STATE, viewportHexes: null, recenterRequestId: 0 },
+  map: {
+    ...usePreferencesStore.getState().map,
+    viewportHexes: null,
+    recenterRequestId: 0,
+  },
 
   labels: {
     hoveredHex: null,
@@ -721,7 +484,7 @@ export const useIdentStore = create<IdentState>((set) => ({
 
   camera: INITIAL_CAMERA_STATE,
 
-  settings: INITIAL_SETTINGS_STATE,
+  settings: usePreferencesStore.getState().settings,
 
   trailsByHex: {},
 
@@ -793,8 +556,10 @@ export const useIdentStore = create<IdentState>((set) => ({
     }));
   },
 
-  setInspectorTab: (tab) =>
-    set((st) => ({ inspector: { ...st.inspector, tab } })),
+  setInspectorTab: (tab) => {
+    usePreferencesStore.getState().setInspectorTab(tab);
+    set((st) => ({ inspector: { ...st.inspector, tab } }));
+  },
 
   recordAircraftSample: (hex, sample) =>
     set((st) => {
@@ -899,7 +664,7 @@ export const useIdentStore = create<IdentState>((set) => ({
         to: mode,
       });
       const map = { ...st.map, labelMode: mode };
-      persistMapState(map);
+      usePreferencesStore.getState().setMapPreferences(map);
       return { map };
     }),
 
@@ -909,14 +674,14 @@ export const useIdentStore = create<IdentState>((set) => ({
         ...st.map,
         layers: { ...st.map.layers, [key]: !st.map.layers[key] },
       };
-      persistMapState(map);
+      usePreferencesStore.getState().setMapPreferences(map);
       return { map };
     }),
 
   setBasemap: (id) =>
     set((st) => {
       const map = { ...st.map, basemapId: id };
-      persistMapState(map);
+      usePreferencesStore.getState().setMapPreferences(map);
       return { map };
     }),
 
@@ -929,7 +694,7 @@ export const useIdentStore = create<IdentState>((set) => ({
     set((st) => {
       const map = { ...st.map, center, zoom };
       if (sameMapView(st.map, map)) return st;
-      persistMapState(map);
+      usePreferencesStore.getState().setMapPreferences(map);
       return { map };
     }),
 
@@ -944,7 +709,7 @@ export const useIdentStore = create<IdentState>((set) => ({
         value: map.labelFields[key],
         fields: labelFieldsKey(map.labelFields),
       });
-      persistMapState(map);
+      usePreferencesStore.getState().setMapPreferences(map);
       return { map };
     }),
 
@@ -1006,7 +771,7 @@ export const useIdentStore = create<IdentState>((set) => ({
         clock: next.clock ?? st.settings.clock,
         theme: next.theme ?? st.settings.theme,
       };
-      persistSettingsState(settings);
+      usePreferencesStore.getState().setSettingsPreferences(settings);
       return { settings };
     }),
 
@@ -1017,7 +782,7 @@ export const useIdentStore = create<IdentState>((set) => ({
         Math.min(TRAIL_FADE_MAX_SEC, Math.round(sec)),
       );
       const settings = { ...st.settings, trailFadeSec: clamped };
-      persistSettingsState(settings);
+      usePreferencesStore.getState().setSettingsPreferences(settings);
       return { settings };
     }),
 

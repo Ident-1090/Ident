@@ -7,6 +7,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { resetPreferencesStoreForTests } from "../data/preferences";
 import { useIdentStore } from "../data/store";
 
 // Hoisted mock state: driver flags and spies so individual tests can flip
@@ -33,6 +34,7 @@ describe("PwaUpdatePrompt", () => {
   let root: Root;
 
   beforeEach(() => {
+    resetPreferencesStoreForTests();
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -55,6 +57,8 @@ describe("PwaUpdatePrompt", () => {
   afterEach(() => {
     act(() => root.unmount());
     container.remove();
+    vi.useRealTimers();
+    resetPreferencesStoreForTests();
   });
 
   it("renders nothing when no update needs attention", () => {
@@ -134,8 +138,11 @@ describe("PwaUpdatePrompt", () => {
     expect(status?.className).toContain("right-");
     expect(status?.className).not.toContain("bottom-");
     expect(
-      container.querySelector('a[href*="/releases/tag/v1.1.0"]'),
+      container.querySelector(
+        'a[aria-label="Release notes"][href*="/releases/tag/v1.1.0"]',
+      ),
     ).toBeTruthy();
+    expect(status?.textContent).not.toContain("Release notes");
     expect(
       Array.from(container.querySelectorAll<HTMLButtonElement>("button")).some(
         (button) => button.textContent === "Reload",
@@ -164,6 +171,46 @@ describe("PwaUpdatePrompt", () => {
     act(() => dismiss!.click());
 
     expect(container.querySelector('[role="status"]')).toBeNull();
+  });
+
+  it("keeps a dismissed release hidden for seven days for the same version", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    useIdentStore.setState((st) => ({
+      update: {
+        ...st.update,
+        status: "available",
+        latest: { version: "v1.1.0" },
+      },
+    }));
+
+    act(() => {
+      root.render(<PwaUpdatePrompt />);
+    });
+
+    const dismiss = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Dismiss update"]',
+    );
+    expect(dismiss).toBeTruthy();
+
+    act(() => dismiss!.click());
+    act(() => root.unmount());
+    root = createRoot(container);
+
+    act(() => {
+      root.render(<PwaUpdatePrompt />);
+    });
+
+    expect(container.querySelector('[role="status"]')).toBeNull();
+
+    vi.setSystemTime(new Date("2026-01-08T00:00:01Z"));
+
+    act(() => {
+      root.render(<PwaUpdatePrompt />);
+    });
+
+    const status = container.querySelector('[role="status"]');
+    expect(status?.textContent).toContain("Ident v1.1.0 is available.");
   });
 
   it("prioritizes the reload prompt over release metadata", () => {

@@ -1,10 +1,18 @@
 import { useRegisterSW } from "virtual:pwa-register/react";
 import { ExternalLink, RefreshCw, X } from "lucide-react";
 import { useState } from "react";
+import {
+  isReleaseUpdateDismissed,
+  usePreferencesStore,
+} from "../data/preferences";
 import { useIdentStore } from "../data/store";
 
 export function PwaUpdatePrompt() {
   const update = useIdentStore((s) => s.update);
+  const updateDismissal = usePreferencesStore((s) => s.updateDismissal);
+  const dismissReleaseUpdate = usePreferencesStore(
+    (s) => s.dismissReleaseUpdate,
+  );
   const [dismissedReleaseKey, setDismissedReleaseKey] = useState<string | null>(
     null,
   );
@@ -20,10 +28,12 @@ export function PwaUpdatePrompt() {
       console.error("[pwa] service worker registration failed", error);
     },
   });
-  const releaseKey =
-    update.latest?.version ?? update.latest?.url ?? "available";
-  const releaseAvailable =
-    update.status === "available" && releaseKey !== dismissedReleaseKey;
+  const releaseVersion = update.latest?.version?.trim() || null;
+  const releaseKey = releaseVersion ?? update.latest?.url ?? "available";
+  const releaseDismissed =
+    releaseKey === dismissedReleaseKey ||
+    isReleaseUpdateDismissed(releaseVersion, updateDismissal);
+  const releaseAvailable = update.status === "available" && !releaseDismissed;
 
   if (!needRefresh && !releaseAvailable) return null;
 
@@ -41,9 +51,7 @@ export function PwaUpdatePrompt() {
     >
       {isReloadPrompt ? (
         <RefreshCw size={14} strokeWidth={1.75} aria-hidden="true" />
-      ) : (
-        <ExternalLink size={14} strokeWidth={1.75} aria-hidden="true" />
-      )}
+      ) : null}
       <span className="flex-1 min-w-0">
         {isReloadPrompt ? "New version ready." : releaseLabel}
       </span>
@@ -61,9 +69,10 @@ export function PwaUpdatePrompt() {
             href={update.latest.url}
             target="_blank"
             rel="noreferrer"
-            className="px-2 py-1 border border-line-strong rounded-sm text-(--color-ink) hover:bg-paper-2 cursor-pointer whitespace-nowrap"
+            aria-label="Release notes"
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-sm border border-line-strong text-(--color-ink) hover:bg-paper-2 cursor-pointer"
           >
-            Release notes
+            <ExternalLink size={14} strokeWidth={1.75} aria-hidden="true" />
           </a>
         )
       )}
@@ -76,6 +85,7 @@ export function PwaUpdatePrompt() {
             setNeedRefresh(false);
           } else {
             setDismissedReleaseKey(releaseKey);
+            if (releaseVersion) dismissReleaseUpdate(releaseVersion);
           }
         }}
       >

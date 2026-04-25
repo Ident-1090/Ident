@@ -1,5 +1,9 @@
 // biome-ignore-all lint/style/noNonNullAssertion: test fixture — missing elements/mocks fail the test loudly via the test runner.
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  resetPreferencesStoreForTests,
+  usePreferencesStore,
+} from "./preferences";
 import { sampleMpsOnce, useIdentStore } from "./store";
 import type { AircraftFrame } from "./types";
 
@@ -37,6 +41,15 @@ function resetStore() {
       theme: "system",
     },
     stats: null,
+    update: {
+      enabled: true,
+      status: "idle",
+      current: null,
+      latest: null,
+      checkedAt: null,
+      lastSuccessAt: null,
+      error: null,
+    },
   });
 }
 
@@ -252,13 +265,11 @@ describe("map setters", () => {
     expect(useIdentStore.getState().map.layers.losRings).toBe(true);
   });
 
-  it("toggleLayer persists to localStorage and a fresh store init restores it", async () => {
-    localStorage.removeItem("ident.map.state");
+  it("toggleLayer persists through preferences and a fresh store init restores it", async () => {
+    resetPreferencesStoreForTests();
     const before = useIdentStore.getState().map.layers.rangeRings;
     useIdentStore.getState().toggleLayer("rangeRings");
-    const raw = localStorage.getItem("ident.map.state");
-    expect(raw).toBeTruthy();
-    expect(JSON.parse(raw!).layers.rangeRings).toBe(!before);
+    expect(usePreferencesStore.getState().map.layers.rangeRings).toBe(!before);
 
     vi.resetModules();
     const fresh = await import("./store");
@@ -376,7 +387,7 @@ describe("settings slice", () => {
   beforeEach(resetStore);
 
   it("defaults the unit system to aviation", async () => {
-    localStorage.removeItem("ident.settings.state");
+    resetPreferencesStoreForTests();
     vi.resetModules();
 
     const fresh = await import("./store");
@@ -406,6 +417,46 @@ describe("settings slice", () => {
     expect(settings.unitMode).toBe("custom");
     expect(settings.unitOverrides.temperature).toBe("F");
     expect(settings.unitOverrides.distance).toBe("nm");
+  });
+});
+
+describe("update dismissal persistence", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    resetPreferencesStoreForTests();
+  });
+
+  it("stores release dismissal and restores it on fresh preferences init", async () => {
+    resetPreferencesStoreForTests();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+
+    usePreferencesStore.getState().dismissReleaseUpdate(" v1.1.0 ");
+
+    expect(usePreferencesStore.getState().updateDismissal).toEqual({
+      version: "v1.1.0",
+      dismissedUntil: Date.parse("2026-01-08T00:00:00Z"),
+    });
+
+    vi.resetModules();
+    const fresh = await import("./preferences");
+    expect(fresh.usePreferencesStore.getState().updateDismissal).toEqual({
+      version: "v1.1.0",
+      dismissedUntil: Date.parse("2026-01-08T00:00:00Z"),
+    });
+  });
+
+  it("drops expired release dismissal on fresh preferences init", async () => {
+    resetPreferencesStoreForTests();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    usePreferencesStore.getState().dismissReleaseUpdate("v1.1.0");
+    vi.setSystemTime(new Date("2026-01-08T00:00:01Z"));
+
+    vi.resetModules();
+    const fresh = await import("./preferences");
+
+    expect(fresh.usePreferencesStore.getState().updateDismissal).toBeNull();
   });
 });
 

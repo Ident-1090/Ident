@@ -23,7 +23,7 @@ func TestUpdateCheckerReportsAvailableRelease(t *testing.T) {
 				PublishedAt: mustTime(t, "2026-04-23T10:00:00Z"),
 			})
 		case "/repos/Ident-1090/Ident/compare/abc123def456...v1.2.0":
-			_ = json.NewEncoder(w).Encode(githubCompare{Status: "behind"})
+			_ = json.NewEncoder(w).Encode(githubCompare{Status: "ahead"})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -90,7 +90,7 @@ func TestUpdateCheckerTreatsAheadMainlineBuildsAsCurrent(t *testing.T) {
 		case "/repos/Ident-1090/Ident/releases/latest":
 			_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v1.2.0"})
 		case "/repos/Ident-1090/Ident/compare/abc123def456...v1.2.0":
-			_ = json.NewEncoder(w).Encode(githubCompare{Status: "ahead"})
+			_ = json.NewEncoder(w).Encode(githubCompare{Status: "behind"})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -172,7 +172,7 @@ func TestUpdateCheckerKeepsLastSuccessfulReleaseOnFailure(t *testing.T) {
 		case "/repos/Ident-1090/Ident/releases/latest":
 			_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v1.2.0"})
 		case "/repos/Ident-1090/Ident/compare/abc123def456...v1.2.0":
-			_ = json.NewEncoder(w).Encode(githubCompare{Status: "behind"})
+			_ = json.NewEncoder(w).Encode(githubCompare{Status: "ahead"})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
@@ -224,7 +224,7 @@ func TestUpdateCheckerUsesETagForRepeatedChecks(t *testing.T) {
 			_ = json.NewEncoder(w).Encode(githubRelease{TagName: "v1.2.0"})
 		case "/repos/Ident-1090/Ident/compare/abc123def456...v1.2.0":
 			atomic.AddInt32(&compareRequests, 1)
-			_ = json.NewEncoder(w).Encode(githubCompare{Status: "behind"})
+			_ = json.NewEncoder(w).Encode(githubCompare{Status: "ahead"})
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}
