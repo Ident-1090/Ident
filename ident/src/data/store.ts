@@ -151,14 +151,10 @@ function loadMapState(defaults: PersistedMapState): PersistedMapState {
       labelMode?: string;
       basemapId?: string;
     };
-    // Older persisted values "cs"/"fl"/"full" were replaced by the labelFields
-    // multi-toggle; coerce them to the new glyph-only enum.
     const glyph: LabelMode =
-      parsed.labelMode === "dot"
-        ? "dot"
-        : parsed.labelMode === "arrow"
-          ? "arrow"
-          : defaults.labelMode;
+      parsed.labelMode === "arrow" || parsed.labelMode === "icon"
+        ? parsed.labelMode
+        : defaults.labelMode;
     const basemapId = VALID_BASEMAP_IDS.includes(parsed.basemapId as BasemapId)
       ? (parsed.basemapId as BasemapId)
       : defaults.basemapId;

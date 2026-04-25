@@ -48,12 +48,12 @@ const OTHERS_BASEMAPS: Array<{
   }));
 
 const ICON_MODES: Array<{
-  key: Extract<LabelMode, "dot" | "arrow">;
-  glyph: string;
+  key: LabelMode;
+  text: string;
   label: string;
 }> = [
-  { key: "dot", glyph: "●", label: "Dot" },
-  { key: "arrow", glyph: "➤", label: "Arrow" },
+  { key: "arrow", text: "Arrow", label: "Arrow" },
+  { key: "icon", text: "Type", label: "Type" },
 ];
 
 const LABEL_FIELDS: Array<{
@@ -349,7 +349,7 @@ function LabelControl() {
               tooltip={`Icon ${mode.label}`}
               onClick={() => setLabelMode(mode.key)}
             >
-              {mode.glyph}
+              {mode.text}
             </SegButton>
           ))}
         </Segmented>

@@ -8,7 +8,10 @@ import {
   mapTimingNow,
 } from "../debug/mapTiming";
 import { type AircraftGlyphColors, ALT_DISCRETE_BANDS } from "./alt";
-import { ensureAircraftIcons } from "./mapAircraftIcons";
+import {
+  AIRCRAFT_ARROW_ICON_ID,
+  ensureAircraftIcons,
+} from "./mapAircraftIcons";
 import type {
   ExpressionSpecification,
   LayerSpecification,
@@ -21,8 +24,9 @@ export const LYR_AIRCRAFT_HIT = "ident-aircraft-hit";
 export const LYR_AIRCRAFT_SELECTED_PULSE = "ident-aircraft-selected-pulse";
 export const LYR_AIRCRAFT_SELECTED_RING = "ident-aircraft-selected-ring";
 export const LYR_AIRCRAFT_EMERGENCY_RING = "ident-aircraft-emergency-ring";
-export const LYR_AIRCRAFT_DOT = "ident-aircraft-dot";
 export const LYR_AIRCRAFT_ARROW = "ident-aircraft-arrow";
+export const LYR_AIRCRAFT_ICON = "ident-aircraft-icon";
+export const LYR_AIRCRAFT_SELECTED_ICON = "ident-aircraft-selected-icon";
 export const LYR_AIRCRAFT_LABEL = "ident-aircraft-label";
 export const LYR_AIRCRAFT_SELECTED_LABEL = "ident-aircraft-selected-label";
 export const LYR_AIRCRAFT_HOVER_LABEL = "ident-aircraft-hover-label";
@@ -43,8 +47,9 @@ export const LYR_PREDICTOR_LABEL = "ident-predictor-label";
 
 export const AIRCRAFT_PICK_LAYERS = [
   LYR_AIRCRAFT_HIT,
-  LYR_AIRCRAFT_DOT,
   LYR_AIRCRAFT_ARROW,
+  LYR_AIRCRAFT_ICON,
+  LYR_AIRCRAFT_SELECTED_ICON,
 ];
 
 export const MAP_LABEL_FONT_FAMILY = "IBM Plex Mono";
@@ -87,6 +92,24 @@ const SELECTED_LABEL_TEXT_SIZE: SymbolLayout["text-size"] = [
 const LABEL_HALO_WIDTH = 1.8;
 const LABEL_HALO_WIDTH_EMPHASIS = 2.1;
 const LABEL_HALO_BLUR = 0.12;
+const AIRCRAFT_ICON_SIZE: SymbolLayout["icon-size"] = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  8,
+  0.9,
+  12,
+  1,
+];
+const AIRCRAFT_SELECTED_ICON_SIZE: SymbolLayout["icon-size"] = [
+  "interpolate",
+  ["linear"],
+  ["zoom"],
+  8,
+  1,
+  12,
+  1.1,
+];
 const displayControlCache = new WeakMap<MlMap, string>();
 const sourceDataCache = new WeakMap<
   MlMap,
@@ -195,8 +218,9 @@ export function removeMapOverlayLayers(map: MlMap): void {
     LYR_AIRCRAFT_HOVER_LABEL,
     LYR_AIRCRAFT_SELECTED_LABEL,
     LYR_AIRCRAFT_LABEL,
+    LYR_AIRCRAFT_SELECTED_ICON,
+    LYR_AIRCRAFT_ICON,
     LYR_AIRCRAFT_ARROW,
-    LYR_AIRCRAFT_DOT,
     LYR_AIRCRAFT_EMERGENCY_RING,
     LYR_AIRCRAFT_SELECTED_RING,
     LYR_AIRCRAFT_SELECTED_PULSE,
@@ -310,10 +334,44 @@ function applyAircraftDisplayControls(
   }
   displayControlCache.set(map, key);
   const aircraftColor = aircraftGlyphColorExpression(args.palette);
-  setLayerVisibility(map, LYR_AIRCRAFT_DOT, args.labelMode === "dot");
   setLayerVisibility(map, LYR_AIRCRAFT_ARROW, args.labelMode === "arrow");
-  setPaintProperty(map, LYR_AIRCRAFT_DOT, "circle-color", aircraftColor);
+  setLayerVisibility(
+    map,
+    LYR_AIRCRAFT_SELECTED_RING,
+    args.labelMode === "arrow",
+  );
+  setLayerVisibility(map, LYR_AIRCRAFT_ICON, args.labelMode === "icon");
+  setLayerVisibility(
+    map,
+    LYR_AIRCRAFT_SELECTED_ICON,
+    args.labelMode === "icon",
+  );
   setPaintProperty(map, LYR_AIRCRAFT_ARROW, "icon-color", aircraftColor);
+  setPaintProperty(
+    map,
+    LYR_AIRCRAFT_ARROW,
+    "icon-halo-color",
+    args.palette.labelHalo,
+  );
+  setPaintProperty(map, LYR_AIRCRAFT_ICON, "icon-color", aircraftColor);
+  setPaintProperty(
+    map,
+    LYR_AIRCRAFT_ICON,
+    "icon-halo-color",
+    args.palette.labelHalo,
+  );
+  setPaintProperty(
+    map,
+    LYR_AIRCRAFT_SELECTED_ICON,
+    "icon-color",
+    aircraftColor,
+  );
+  setPaintProperty(
+    map,
+    LYR_AIRCRAFT_SELECTED_ICON,
+    "icon-halo-color",
+    args.palette.labelHalo,
+  );
   setTextField(
     map,
     LYR_AIRCRAFT_LABEL,
@@ -524,23 +582,12 @@ function layerSpecs(palette: OverlayPalette): LayerSpecification[] {
       },
     },
     {
-      id: LYR_AIRCRAFT_DOT,
-      type: "circle",
-      source: SRC_AIRCRAFT,
-      paint: {
-        "circle-radius": ["case", ["==", ["get", "selected"], true], 3.5, 2.4],
-        "circle-color": aircraftColor,
-        "circle-stroke-color": palette.labelHalo,
-        "circle-stroke-width": 0.6,
-      },
-    },
-    {
       id: LYR_AIRCRAFT_ARROW,
       type: "symbol",
       source: SRC_AIRCRAFT,
       layout: {
-        "icon-image": ["get", "icon"],
-        "icon-size": ["case", ["==", ["get", "selected"], true], 1.05, 0.9],
+        "icon-image": AIRCRAFT_ARROW_ICON_ID,
+        "icon-size": 0.45,
         "icon-rotate": ["get", "track"],
         "icon-rotation-alignment": "map",
         "icon-allow-overlap": true,
@@ -548,6 +595,49 @@ function layerSpecs(palette: OverlayPalette): LayerSpecification[] {
       },
       paint: {
         "icon-color": aircraftColor,
+        "icon-halo-color": palette.labelHalo,
+        "icon-halo-width": 0,
+        "icon-halo-blur": 0,
+      },
+    },
+    {
+      id: LYR_AIRCRAFT_ICON,
+      type: "symbol",
+      source: SRC_AIRCRAFT,
+      filter: ["==", ["get", "selected"], false],
+      layout: {
+        "icon-image": ["get", "icon"],
+        "icon-size": AIRCRAFT_ICON_SIZE,
+        "icon-rotate": ["get", "track"],
+        "icon-rotation-alignment": "map",
+        "icon-allow-overlap": true,
+        "icon-ignore-placement": true,
+      },
+      paint: {
+        "icon-color": aircraftColor,
+        "icon-halo-color": palette.labelHalo,
+        "icon-halo-width": 1.4,
+        "icon-halo-blur": 0,
+      },
+    },
+    {
+      id: LYR_AIRCRAFT_SELECTED_ICON,
+      type: "symbol",
+      source: SRC_AIRCRAFT,
+      filter: ["==", ["get", "selected"], true],
+      layout: {
+        "icon-image": ["get", "icon"],
+        "icon-size": AIRCRAFT_SELECTED_ICON_SIZE,
+        "icon-rotate": ["get", "track"],
+        "icon-rotation-alignment": "map",
+        "icon-allow-overlap": true,
+        "icon-ignore-placement": false,
+      },
+      paint: {
+        "icon-color": aircraftColor,
+        "icon-halo-color": palette.labelHalo,
+        "icon-halo-width": 1.6,
+        "icon-halo-blur": 0,
       },
     },
     {

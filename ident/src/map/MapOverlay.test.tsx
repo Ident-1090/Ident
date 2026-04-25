@@ -15,12 +15,15 @@ import { MapOverlay } from "./MapOverlay";
 import { AIRCRAFT_ARROW_ICON_ID } from "./mapAircraftIcons";
 import {
   AIRCRAFT_PICK_LAYERS,
-  LYR_AIRCRAFT_DOT,
+  LYR_AIRCRAFT_ARROW,
   LYR_AIRCRAFT_HIT,
   LYR_AIRCRAFT_HOVER_LABEL,
+  LYR_AIRCRAFT_ICON,
   LYR_AIRCRAFT_LABEL,
+  LYR_AIRCRAFT_SELECTED_ICON,
   LYR_AIRCRAFT_SELECTED_LABEL,
   LYR_AIRCRAFT_SELECTED_PULSE,
+  LYR_AIRCRAFT_SELECTED_RING,
   LYR_RANGE_LABELS,
   LYR_STATION_CORE,
   LYR_STATION_LABEL,
@@ -305,6 +308,7 @@ const LIGHT_AIRCRAFT_GLYPH_COLOR_EXPRESSION = [
   "#1F5673",
   ["get", "color"],
 ];
+const LIGHT_LABEL_HALO = "rgba(255, 255, 255, 0.92)";
 
 function renderOverlay(
   root: Root,
@@ -350,7 +354,7 @@ describe("MapOverlay", () => {
       map: {
         ...st.map,
         basemapId: "ident",
-        labelMode: "dot",
+        labelMode: "arrow",
         labelFields: {
           cs: true,
           type: false,
@@ -404,7 +408,8 @@ describe("MapOverlay", () => {
       stub.sources.get(SRC_STATION)?.data.features[0].properties?.label,
     ).toBe("Home Receiver");
     expect(stub.sources.get(SRC_RANGE_LABELS)?.data.features).toHaveLength(5);
-    expect(stub.layers.has(LYR_AIRCRAFT_DOT)).toBe(true);
+    expect(stub.layers.has(LYR_AIRCRAFT_ARROW)).toBe(true);
+    expect(stub.layers.has(LYR_AIRCRAFT_ICON)).toBe(true);
     expect(stub.layers.has(LYR_AIRCRAFT_SELECTED_PULSE)).toBe(true);
     expect(stub.layers.has(LYR_STATION_LABEL)).toBe(true);
     expect(stub.layers.has(LYR_RANGE_LABELS)).toBe(true);
@@ -475,33 +480,74 @@ describe("MapOverlay", () => {
       12,
       4,
     ]);
-    const dotLayer = stub.layers.get(LYR_AIRCRAFT_DOT) as {
-      filter?: unknown;
-      layout?: Record<string, unknown>;
-    };
-    expect(dotLayer.layout?.visibility).toBe("visible");
-    expect(dotLayer.filter).toBeUndefined();
-    const arrowLayer = stub.layers.get("ident-aircraft-arrow") as {
+    const arrowLayer = stub.layers.get(LYR_AIRCRAFT_ARROW) as {
       filter?: unknown;
       layout?: Record<string, unknown>;
       paint?: Record<string, unknown>;
     };
     expect(stub.layers.has("ident-aircraft-arrow-halo")).toBe(false);
-    expect(arrowLayer.layout?.visibility).toBe("none");
+    expect(arrowLayer.layout?.visibility).toBe("visible");
     expect(arrowLayer.filter).toBeUndefined();
-    expect(arrowLayer.layout?.["icon-image"]).toEqual(["get", "icon"]);
-    expect(arrowLayer.layout?.["icon-size"]).toEqual([
-      "case",
-      ["==", ["get", "selected"], true],
-      1.05,
-      0.9,
-    ]);
+    expect(arrowLayer.layout?.["icon-image"]).toBe(AIRCRAFT_ARROW_ICON_ID);
+    expect(arrowLayer.layout?.["icon-size"]).toBe(0.45);
+    expect(arrowLayer.layout?.["icon-allow-overlap"]).toBe(true);
+    expect(arrowLayer.layout?.["icon-ignore-placement"]).toBe(true);
     expect(arrowLayer.paint?.["icon-color"]).toEqual(
       LIGHT_AIRCRAFT_GLYPH_COLOR_EXPRESSION,
     );
-    expect(arrowLayer.paint?.["icon-halo-color"]).toBeUndefined();
-    expect(arrowLayer.paint?.["icon-halo-width"]).toBeUndefined();
-    expect(arrowLayer.paint?.["icon-halo-blur"]).toBeUndefined();
+    expect(arrowLayer.paint?.["icon-halo-color"]).toBe(LIGHT_LABEL_HALO);
+    expect(arrowLayer.paint?.["icon-halo-width"]).toBe(0);
+    expect(arrowLayer.paint?.["icon-halo-blur"]).toBe(0);
+    const iconLayer = stub.layers.get(LYR_AIRCRAFT_ICON) as {
+      filter?: unknown;
+      layout?: Record<string, unknown>;
+      paint?: Record<string, unknown>;
+    };
+    expect(iconLayer.layout?.visibility).toBe("none");
+    expect(iconLayer.filter).toEqual(["==", ["get", "selected"], false]);
+    expect(iconLayer.layout?.["icon-image"]).toEqual(["get", "icon"]);
+    expect(iconLayer.layout?.["icon-size"]).toEqual([
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      8,
+      0.9,
+      12,
+      1,
+    ]);
+    expect(iconLayer.layout?.["icon-allow-overlap"]).toBe(true);
+    expect(iconLayer.layout?.["icon-ignore-placement"]).toBe(true);
+    expect(iconLayer.paint?.["icon-color"]).toEqual(
+      LIGHT_AIRCRAFT_GLYPH_COLOR_EXPRESSION,
+    );
+    expect(iconLayer.paint?.["icon-halo-color"]).toBe(LIGHT_LABEL_HALO);
+    expect(iconLayer.paint?.["icon-halo-width"]).toBe(1.4);
+    expect(iconLayer.paint?.["icon-halo-blur"]).toBe(0);
+    const selectedIconLayer = stub.layers.get(LYR_AIRCRAFT_SELECTED_ICON) as {
+      filter?: unknown;
+      layout?: Record<string, unknown>;
+      paint?: Record<string, unknown>;
+    };
+    expect(selectedIconLayer.layout?.visibility).toBe("none");
+    expect(selectedIconLayer.filter).toEqual(["==", ["get", "selected"], true]);
+    expect(selectedIconLayer.layout?.["icon-image"]).toEqual(["get", "icon"]);
+    expect(selectedIconLayer.layout?.["icon-size"]).toEqual([
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+      8,
+      1,
+      12,
+      1.1,
+    ]);
+    expect(selectedIconLayer.layout?.["icon-allow-overlap"]).toBe(true);
+    expect(selectedIconLayer.layout?.["icon-ignore-placement"]).toBe(false);
+    expect(selectedIconLayer.paint?.["icon-color"]).toEqual(
+      LIGHT_AIRCRAFT_GLYPH_COLOR_EXPRESSION,
+    );
+    expect(selectedIconLayer.paint?.["icon-halo-color"]).toBe(LIGHT_LABEL_HALO);
+    expect(selectedIconLayer.paint?.["icon-halo-width"]).toBe(1.6);
+    expect(selectedIconLayer.paint?.["icon-halo-blur"]).toBe(0);
     const labelLayer = stub.layers.get(LYR_AIRCRAFT_LABEL) as {
       layout?: Record<string, unknown>;
       paint?: Record<string, unknown>;
@@ -583,6 +629,12 @@ describe("MapOverlay", () => {
     expect(layerOrder.indexOf(LYR_AIRCRAFT_HOVER_LABEL)).toBeGreaterThan(
       layerOrder.indexOf(LYR_AIRCRAFT_LABEL),
     );
+    expect(layerOrder.indexOf(LYR_AIRCRAFT_SELECTED_ICON)).toBeLessThan(
+      layerOrder.indexOf(LYR_AIRCRAFT_LABEL),
+    );
+    expect(layerOrder.indexOf(LYR_AIRCRAFT_ICON)).toBeLessThan(
+      layerOrder.indexOf(LYR_AIRCRAFT_LABEL),
+    );
     expect(layerOrder.indexOf(LYR_AIRCRAFT_SELECTED_LABEL)).toBeGreaterThan(
       layerOrder.indexOf(LYR_AIRCRAFT_LABEL),
     );
@@ -612,17 +664,25 @@ describe("MapOverlay", () => {
     }
 
     act(() => {
-      useIdentStore.getState().setLabelMode("arrow");
+      useIdentStore.getState().setLabelMode("icon");
     });
 
-    const dotLayer = stub.layers.get(LYR_AIRCRAFT_DOT) as {
+    const arrowLayer = stub.layers.get(LYR_AIRCRAFT_ARROW) as {
       layout?: Record<string, unknown>;
     };
-    const arrowLayer = stub.layers.get("ident-aircraft-arrow") as {
+    const iconLayer = stub.layers.get(LYR_AIRCRAFT_ICON) as {
       layout?: Record<string, unknown>;
     };
-    expect(dotLayer.layout?.visibility).toBe("none");
-    expect(arrowLayer.layout?.visibility).toBe("visible");
+    const selectedIconLayer = stub.layers.get(LYR_AIRCRAFT_SELECTED_ICON) as {
+      layout?: Record<string, unknown>;
+    };
+    const selectedRingLayer = stub.layers.get(LYR_AIRCRAFT_SELECTED_RING) as {
+      layout?: Record<string, unknown>;
+    };
+    expect(arrowLayer.layout?.visibility).toBe("none");
+    expect(iconLayer.layout?.visibility).toBe("visible");
+    expect(selectedIconLayer.layout?.visibility).toBe("visible");
+    expect(selectedRingLayer.layout?.visibility).toBe("none");
     for (const source of stub.sources.values()) {
       expect(source.setData).not.toHaveBeenCalled();
     }

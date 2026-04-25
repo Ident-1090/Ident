@@ -162,9 +162,9 @@ describe("MobileShell", () => {
     expectTooltipOnFocus(regularMap, "Regular map");
     expectTooltipOnFocus(
       container.querySelector<HTMLButtonElement>(
-        'button[aria-label="Icon Dot"]',
+        'button[aria-label="Icon Type"]',
       )!,
-      "Icon Dot",
+      "Icon Type",
     );
     expectTooltipOnFocus(
       container.querySelector<HTMLButtonElement>(
@@ -240,20 +240,20 @@ describe("MobileShell", () => {
     act(() => settingsTab!.click());
 
     expect(container.textContent).toContain("Labels");
-    const dot = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Icon Dot"]',
+    const icon = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Icon Type"]',
     );
     const route = container.querySelector<HTMLButtonElement>(
       'button[aria-label="Toggle Rt"]',
     );
-    expect(dot).toBeTruthy();
+    expect(icon).toBeTruthy();
     expect(route).toBeTruthy();
-    expect(dot!.parentElement?.parentElement?.className).toContain(
+    expect(icon!.parentElement?.parentElement?.className).toContain(
       "grid-cols-2",
     );
 
-    act(() => dot!.click());
-    expect(useIdentStore.getState().map.labelMode).toBe("dot");
+    act(() => icon!.click());
+    expect(useIdentStore.getState().map.labelMode).toBe("icon");
 
     const before = useIdentStore.getState().map.labelFields.rt;
     act(() => route!.click());

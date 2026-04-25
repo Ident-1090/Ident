@@ -34,12 +34,12 @@ const OTHERS_BASEMAPS: Array<{
   .map((b) => ({ id: b.id, label: b.label, tooltip: b.tooltip }));
 
 const ICON_MODES: Array<{
-  key: Extract<LabelMode, "dot" | "arrow">;
-  glyph: string;
+  key: LabelMode;
+  text: string;
   label: string;
 }> = [
-  { key: "dot", glyph: "●", label: "Dot — minimal" },
-  { key: "arrow", glyph: "➤", label: "Arrow — directional" },
+  { key: "arrow", text: "Arrow", label: "Arrow — directional" },
+  { key: "icon", text: "Type", label: "Type — aircraft silhouette" },
 ];
 
 const LABEL_FIELDS: Array<{
@@ -149,7 +149,7 @@ export function Topbar({ onOpenSettings }: { onOpenSettings: () => void }) {
                 tooltip={m.label}
                 tooltipSide="bottom"
               >
-                {m.glyph}
+                {m.text}
               </SegButton>
             ))}
           </Segmented>

@@ -242,8 +242,8 @@ describe("map setters", () => {
   });
 
   it("setLabelMode updates in place", () => {
-    useIdentStore.getState().setLabelMode("dot");
-    expect(useIdentStore.getState().map.labelMode).toBe("dot");
+    useIdentStore.getState().setLabelMode("icon");
+    expect(useIdentStore.getState().map.labelMode).toBe("icon");
   });
 
   it("toggleLayer handles losRings", () => {

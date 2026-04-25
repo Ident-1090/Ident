@@ -216,7 +216,7 @@ export type LayerKey = "rangeRings" | "rxRange" | "trails" | "losRings";
 
 /** Aircraft glyph shape on the map. Independent of label text content, which
  *  is controlled by MapSlice.labelFields (the topbar's CS/Alt/Sqk/Rt toggles). */
-export type LabelMode = "dot" | "arrow";
+export type LabelMode = "arrow" | "icon";
 
 export interface TrailPoint {
   lat: number;

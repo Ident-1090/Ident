@@ -46,7 +46,7 @@ describe("map overlay feature builders", () => {
     expect(properties.hex).toBe(UAL.hex);
     expect(properties.labelMode).toBeUndefined();
     expect(properties.track).toBe(90);
-    expect(properties.icon).toBe("ident-aircraft-arrow");
+    expect(properties.icon).toBe("ident-ac-airliner-narrow");
     expect(properties.priority).toBe(0);
     expect(properties.label).toBeUndefined();
     expect(properties.labelHead).toBeUndefined();
