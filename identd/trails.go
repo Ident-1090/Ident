@@ -138,6 +138,12 @@ func (s *TrailStore) SnapshotEnvelopes() [][]byte {
 	return [][]byte{append([]byte(nil), s.snapshot...)}
 }
 
+func (s *TrailStore) SnapshotJSON() []byte {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return marshalTrailData(copyTrailAircraft(s.aircraft))
+}
+
 func (s *TrailStore) LoadRestartCache() error {
 	if s.cacheDir == "" {
 		return nil
@@ -358,6 +364,14 @@ func copyTrailAircraft(in map[string][]trailPoint) map[string][]trailPoint {
 }
 
 func marshalTrailEnvelope(aircraft map[string][]trailPoint) []byte {
+	data := marshalTrailData(aircraft)
+	if len(data) == 0 {
+		return nil
+	}
+	return wrapEnvelope("trails", data)
+}
+
+func marshalTrailData(aircraft map[string][]trailPoint) []byte {
 	if len(aircraft) == 0 {
 		return nil
 	}
@@ -365,5 +379,5 @@ func marshalTrailEnvelope(aircraft map[string][]trailPoint) []byte {
 	if err != nil {
 		return nil
 	}
-	return wrapEnvelope("trails", data)
+	return data
 }

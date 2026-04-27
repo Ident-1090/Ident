@@ -28,6 +28,10 @@ type ReplayProvider interface {
 	ServeBlock(http.ResponseWriter, *http.Request, string)
 }
 
+type TrailProvider interface {
+	SnapshotJSON() []byte
+}
+
 type Server struct {
 	ctx      context.Context
 	hub      *Hub
@@ -36,6 +40,7 @@ type Server struct {
 	web      fs.FS
 	updates  *UpdateChecker
 	replay   ReplayProvider
+	trails   TrailProvider
 	ready    atomic.Bool
 }
 
@@ -45,6 +50,7 @@ type ServerOptions struct {
 	Web           fs.FS
 	UpdateChecker *UpdateChecker
 	Replay        ReplayProvider
+	Trails        TrailProvider
 }
 
 func NewServer(ctx context.Context, hub *Hub) *Server {
@@ -64,6 +70,7 @@ func NewServerWithOptions(ctx context.Context, hub *Hub, opts ServerOptions) *Se
 		web:      opts.Web,
 		updates:  opts.UpdateChecker,
 		replay:   opts.Replay,
+		trails:   opts.Trails,
 	}
 }
 
@@ -75,6 +82,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/healthz", s.serveHealthz)
 	mux.HandleFunc("/version", s.serveVersion)
 	mux.HandleFunc("/api/update.json", s.serveUpdateStatus)
+	mux.HandleFunc("/api/trails/recent.json", s.serveRecentTrails)
 	mux.HandleFunc("/api/replay/manifest.json", s.serveReplayManifest)
 	mux.HandleFunc("/api/replay/blocks/", s.serveReplayBlock)
 	if s.dataDir != "" {
@@ -135,6 +143,21 @@ func (s *Server) serveReplayBlock(w http.ResponseWriter, r *http.Request) {
 	}
 	name := strings.TrimPrefix(r.URL.Path, "/api/replay/blocks/")
 	s.replay.ServeBlock(w, r, name)
+}
+
+func (s *Server) serveRecentTrails(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	if s.trails == nil {
+		_, _ = w.Write([]byte(`{"aircraft":{}}`))
+		return
+	}
+	body := s.trails.SnapshotJSON()
+	if len(body) == 0 {
+		_, _ = w.Write([]byte(`{"aircraft":{}}`))
+		return
+	}
+	_, _ = w.Write(body)
 }
 
 func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {

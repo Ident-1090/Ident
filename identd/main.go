@@ -129,10 +129,7 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 		if err := trails.LoadRestartCache(); err != nil {
 			log.Printf("trails restart cache: %v", err)
 		}
-		hub.AddSnapshotProvider(trails.SnapshotEnvelopes)
 		go trails.RunRestartCacheWriter(ctx, cfg.TrailsRestartCacheInterval)
-	} else {
-		hub.AddSnapshotProvider(trails.SnapshotEnvelopes)
 	}
 
 	replay, err := NewReplayStore(ReplayOptions{
@@ -159,6 +156,7 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 		Web:           bundledWeb(),
 		UpdateChecker: NewUpdateChecker(updateCheckerOptions(cfg)),
 		Replay:        replay,
+		Trails:        trails,
 	})
 	httpSrv := &http.Server{
 		Addr:         cfg.Addr,

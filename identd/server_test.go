@@ -351,6 +351,42 @@ func TestServerServesReceiverDataFiles(t *testing.T) {
 	}
 }
 
+func TestServerServesRecentTrailsOverHTTP(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	trails := NewTrailStore(TrailOptions{
+		MemoryWindow:   2 * time.Hour,
+		SampleInterval: time.Second,
+	})
+	trails.IngestAircraftJSON([]byte(`{"now":100,"aircraft":[{"hex":"abc123","lat":34.1,"lon":-118.2,"alt_baro":3000}]}`))
+
+	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{Trails: trails})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := ts.Client().Get(ts.URL + "/api/trails/recent.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("trails status = %d, want 200", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("cache control = %q, want no-store", got)
+	}
+
+	var body trailEnvelopeData
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode trails: %v", err)
+	}
+	points := body.Aircraft["abc123"]
+	if len(points) != 1 || points[0].Ts != 100_000 {
+		t.Fatalf("trail points = %#v", points)
+	}
+}
+
 func TestServerRejectsReceiverDataTraversal(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

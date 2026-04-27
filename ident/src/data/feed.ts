@@ -13,9 +13,11 @@ import { WsClient } from "./ws";
 
 const WS_URL = "api/ws";
 const BASE_HTTP = "api/data";
+const TRAILS_HTTP_URL = "api/trails/recent.json";
 const FALLBACK_AFTER_MS = 15_000;
 const POLL_INTERVAL_MS = 1000;
 const FALLBACK_FETCH_TIMEOUT_MS = 800;
+const TRAIL_SEED_FETCH_TIMEOUT_MS = 30_000;
 const MAX_FALLBACK_FAILURES = 3;
 const TRAIL_POINT_CAP = 1500;
 
@@ -123,21 +125,7 @@ function dispatch(env: Envelope): void {
       break;
     }
     case "trails": {
-      const trails = new Map<string, TrailPoint[]>();
-      for (const [hex, points] of Object.entries(env.data.aircraft ?? {})) {
-        if (!Array.isArray(points)) continue;
-        trails.set(
-          hex,
-          points.filter(
-            (point): point is TrailPoint =>
-              typeof point.lat === "number" &&
-              typeof point.lon === "number" &&
-              (typeof point.alt === "number" || point.alt === "ground") &&
-              typeof point.ts === "number",
-          ),
-        );
-      }
-      applyTrailSeed(trails);
+      applyTrailSeed(normalizeTrailSeed(env.data.aircraft));
       break;
     }
     case "config":
@@ -188,6 +176,50 @@ function applyTrailSeed(trails: Map<string, TrailPoint[]>): void {
   });
 }
 
+function normalizeTrailSeed(
+  aircraft: Record<string, TrailPoint[]> | undefined,
+): Map<string, TrailPoint[]> {
+  const trails = new Map<string, TrailPoint[]>();
+  for (const [hex, points] of Object.entries(aircraft ?? {})) {
+    if (!Array.isArray(points)) continue;
+    trails.set(
+      hex,
+      points.filter(
+        (point): point is TrailPoint =>
+          typeof point.lat === "number" &&
+          typeof point.lon === "number" &&
+          (typeof point.alt === "number" || point.alt === "ground") &&
+          typeof point.ts === "number",
+      ),
+    );
+  }
+  return trails;
+}
+
+async function fetchTrailSeed(signal: AbortSignal): Promise<void> {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  const timeout = setTimeout(abort, TRAIL_SEED_FETCH_TIMEOUT_MS);
+  signal.addEventListener("abort", abort, { once: true });
+  try {
+    if (signal.aborted) return;
+    const res = await fetch(appPath(TRAILS_HTTP_URL), {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!res.ok) return;
+    const data = (await res.json()) as {
+      aircraft?: Record<string, TrailPoint[]>;
+    };
+    applyTrailSeed(normalizeTrailSeed(data.aircraft));
+  } catch {
+    // Trail history is opportunistic; live aircraft downlink must keep priority.
+  } finally {
+    clearTimeout(timeout);
+    signal.removeEventListener("abort", abort);
+  }
+}
+
 async function fetchJsonWithTimeout<T>(url: string): Promise<T> {
   const controller = new AbortController();
   let timeout: ReturnType<typeof setTimeout> | null = null;
@@ -210,6 +242,7 @@ async function fetchJsonWithTimeout<T>(url: string): Promise<T> {
 
 export function startFeed(): () => void {
   const store = useIdentStore.getState();
+  const trailSeedController = new AbortController();
   const client = new WsClient({
     url: appWebSocketUrl(WS_URL),
     onText: (t) => {
@@ -221,6 +254,7 @@ export function startFeed(): () => void {
   });
 
   void refreshReplayManifest();
+  void fetchTrailSeed(trailSeedController.signal);
   client.start();
 
   let pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -243,6 +277,7 @@ export function startFeed(): () => void {
     if (pollTimer) clearInterval(pollTimer);
     store.setConnectionStatus("http", "closed");
     unsub();
+    trailSeedController.abort();
     client.stop();
   };
 }

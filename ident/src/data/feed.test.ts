@@ -213,6 +213,39 @@ describe("startFeed route envelopes", () => {
     stop();
   });
 
+  it("fetches the initial trail seed over HTTP instead of the websocket backlog", async () => {
+    globalThis.fetch = vi.fn(async (url: string) => {
+      if (url.endsWith("/trails/recent.json")) {
+        return {
+          ok: true,
+          json: async () => ({
+            aircraft: {
+              abc123: [{ lat: 34.0, lon: -118.1, alt: 2800, ts: 90_000 }],
+            },
+          }),
+        } as Response;
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    }) as unknown as typeof fetch;
+
+    const stop = startFeed();
+
+    await vi.waitFor(() => {
+      expect(useIdentStore.getState().trailsByHex.abc123).toEqual([
+        { lat: 34.0, lon: -118.1, alt: 2800, ts: 90_000 },
+      ]);
+    });
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/trails/recent.json",
+      expect.objectContaining({
+        cache: "no-store",
+        signal: expect.any(AbortSignal),
+      }),
+    );
+
+    stop();
+  });
+
   it("does not refresh feed freshness from auxiliary websocket envelopes", () => {
     const stop = startFeed();
     wsHarness.instances[0].emitText(
@@ -410,7 +443,7 @@ describe("startFeed route envelopes", () => {
     await vi.advanceTimersByTimeAsync(4_100);
     const callsAfterFailures = vi.mocked(globalThis.fetch).mock.calls.length;
     expect(useIdentStore.getState().connectionStatus.http).toBe("closed");
-    expect(callsAfterFailures).toBe(13);
+    expect(callsAfterFailures).toBe(14);
 
     await vi.advanceTimersByTimeAsync(5_000);
     expect(vi.mocked(globalThis.fetch).mock.calls).toHaveLength(
