@@ -27,6 +27,7 @@ function resetStore() {
       playheadMs: null,
       playing: false,
       speed: 1,
+      lastInteractionAt: null,
       loading: false,
       error: null,
     },
@@ -49,10 +50,10 @@ describe("replay controls", () => {
     host.remove();
   });
 
-  it("desktop transport enters replay and exposes playback controls", () => {
+  it("desktop transport can enter replay behind the live edge and play", () => {
     act(() => root.render(<DesktopReplayTransport />));
     expect(host.textContent).not.toContain("Replay");
-    click("Play replay");
+    click("Jump back 10 minutes");
 
     expect(useIdentStore.getState().replay.mode).toBe("replay");
     expect(host.querySelector('[aria-label="Play replay"]')).not.toBeNull();
@@ -60,7 +61,7 @@ describe("replay controls", () => {
     expect(useIdentStore.getState().replay.playing).toBe(true);
   });
 
-  it("opens replay at the live edge while runtime is mounted", () => {
+  it("labels the live transport as pause", () => {
     act(() =>
       root.render(
         <>
@@ -70,10 +71,8 @@ describe("replay controls", () => {
       ),
     );
 
-    click("Play replay");
-
-    expect(useIdentStore.getState().replay.mode).toBe("replay");
-    expect(useIdentStore.getState().replay.playing).toBe(false);
+    expect(host.querySelector('[aria-label="Pause live feed"]')).not.toBeNull();
+    expect(host.querySelector('[aria-label="Play replay"]')).toBeNull();
   });
 
   it("renders the desktop scrubber as a compact topbar row", () => {
@@ -105,6 +104,21 @@ describe("replay controls", () => {
     expect(useIdentStore.getState().replay.mode).toBe("live");
     expect(useIdentStore.getState().replay.playheadMs).toBeNull();
     expect(input.value).toBe("180000");
+  });
+
+  it("does not reset an in-progress desktop scrub when replay loading changes", () => {
+    useIdentStore.getState().enterReplay(150_000);
+    act(() => root.render(<ReplayScrubber />));
+
+    const input = host.querySelector(
+      '[aria-label="Replay time"]',
+    ) as HTMLInputElement;
+    act(() => {
+      setInputValue(input, "149000");
+      useIdentStore.getState().setReplayLoading(true);
+    });
+
+    expect(input.value).toBe("149000");
   });
 
   it("keeps the live scrubber attached to the moving live edge", () => {

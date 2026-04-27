@@ -1,5 +1,5 @@
 import { Pause, Play, Rewind, SkipBack, SkipForward } from "lucide-react";
-import { useEffect } from "react";
+import { memo, useEffect } from "react";
 import { ensureReplayRange } from "../data/replay";
 import { useIdentStore } from "../data/store";
 import { Tooltip } from "../ui/Tooltip";
@@ -93,7 +93,13 @@ export function DesktopReplayTransport() {
           <SkipBack size={12} aria-hidden="true" />
         </TransportButton>
         <TransportButton
-          label={active && replay.playing ? "Pause replay" : "Play replay"}
+          label={
+            active
+              ? replay.playing
+                ? "Pause replay"
+                : "Play replay"
+              : "Pause live feed"
+          }
           active={active}
           onClick={() => {
             if (!active) {
@@ -103,7 +109,7 @@ export function DesktopReplayTransport() {
             setPlaying(!replay.playing);
           }}
         >
-          {active && replay.playing ? (
+          {!active || replay.playing ? (
             <Pause size={12} aria-hidden="true" />
           ) : (
             <Play size={12} aria-hidden="true" />
@@ -141,22 +147,20 @@ export function DesktopReplayTransport() {
   );
 }
 
-export function ReplayScrubber() {
-  const replay = useIdentStore((s) => s.replay);
+export const ReplayScrubber = memo(function ReplayScrubber() {
+  const enabled = useIdentStore((s) => s.replay.enabled);
+  const availableFrom = useIdentStore((s) => s.replay.availableFrom);
+  const availableTo = useIdentStore((s) => s.replay.availableTo);
+  const mode = useIdentStore((s) => s.replay.mode);
+  const playheadMs = useIdentStore((s) => s.replay.playheadMs);
   const enterReplay = useIdentStore((s) => s.enterReplay);
   const setPlayhead = useIdentStore((s) => s.setReplayPlayhead);
   const goLive = useIdentStore((s) => s.goLive);
-  if (
-    !replay.enabled ||
-    replay.availableFrom == null ||
-    replay.availableTo == null
-  ) {
+  if (!enabled || availableFrom == null || availableTo == null) {
     return null;
   }
-  const availableFrom = replay.availableFrom;
-  const availableTo = replay.availableTo;
-  const active = replay.mode === "replay";
-  const playhead = active ? (replay.playheadMs ?? availableTo) : availableTo;
+  const active = mode === "replay";
+  const playhead = active ? (playheadMs ?? availableTo) : availableTo;
   const pct =
     ((playhead - availableFrom) / Math.max(1, availableTo - availableFrom)) *
     100;
@@ -218,7 +222,7 @@ export function ReplayScrubber() {
             const next = Number(ev.currentTarget.value);
             if (next >= availableTo) {
               goLive();
-            } else if (replay.mode !== "replay") {
+            } else if (mode !== "replay") {
               enterReplay(next);
             } else {
               setPlayhead(next);
@@ -227,21 +231,25 @@ export function ReplayScrubber() {
           className="absolute inset-y-[-8px] left-0 right-0 opacity-0 cursor-pointer"
         />
       </div>
-      <span
-        className={
-          "shrink-0 flex items-center gap-1.5 " +
-          (active
-            ? "font-semibold tracking-[0.08em] text-ink-soft"
-            : "text-ink-faint")
-        }
-      >
-        {active
-          ? replay.loading
-            ? "LOADING"
-            : (replay.error ?? "NOW ->")
-          : "NOW"}
-      </span>
+      <ReplayStatusLabel active={active} />
     </div>
+  );
+});
+
+function ReplayStatusLabel({ active }: { active: boolean }) {
+  const loading = useIdentStore((s) => s.replay.loading);
+  const error = useIdentStore((s) => s.replay.error);
+  return (
+    <span
+      className={
+        "shrink-0 flex items-center gap-1.5 " +
+        (active
+          ? "font-semibold tracking-[0.08em] text-ink-soft"
+          : "text-ink-faint")
+      }
+    >
+      {active ? (loading ? "LOADING" : (error ?? "NOW ->")) : "NOW"}
+    </span>
   );
 }
 

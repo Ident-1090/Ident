@@ -57,6 +57,10 @@ const MAP_ZOOM_EPSILON = 1e-3;
 
 const MPS_BUFFER_LEN = 60;
 const MPS_SAMPLE_INTERVAL_MS = 1000;
+const REPLAY_INTERACTION_GRACE_MS = 10 * 60 * 1000;
+const REPLAY_HEAD_KEEP_MS = 60 * 60 * 1000;
+const REPLAY_PLAYHEAD_KEEP_MS = 60 * 60 * 1000;
+const REPLAY_LOADED_FRAME_CAP = 50_000;
 
 export interface InspectorSlice {
   tab: InspectorTab;
@@ -206,11 +210,13 @@ export interface ReplaySlice {
   availableTo: number | null;
   blockSec: number;
   blocks: ReplayBlockIndex[];
+  recent?: ReplayBlockFile | null;
   cache: Record<string, ReplayBlockFile>;
   mode: ReplayMode;
   playheadMs: number | null;
   playing: boolean;
   speed: 1 | 4 | 16;
+  lastInteractionAt: number | null;
   loading: boolean;
   error: string | null;
 }
@@ -393,6 +399,7 @@ export interface IdentState {
   // Replay.
   setReplayManifest: (manifest: ReplayManifest) => void;
   setReplayBlock: (url: string, block: ReplayBlockFile) => void;
+  setReplayRecent: (block: ReplayBlockFile | null) => void;
   setReplayLoading: (loading: boolean) => void;
   setReplayError: (error: string | null) => void;
   enterReplay: (playheadMs?: number) => void;
@@ -408,6 +415,159 @@ function appendTrimmed(buf: number[] | undefined, value: number): number[] {
   if (next.length > TREND_BUFFER_LEN)
     next.splice(0, next.length - TREND_BUFFER_LEN);
   return next;
+}
+
+function aircraftFrameTimestampMs(frame: AircraftFrame): number {
+  return typeof frame.now === "number" && Number.isFinite(frame.now)
+    ? Math.round(frame.now * 1000)
+    : Date.now();
+}
+
+function replayBlockAvailability(blocks: ReplayBlockIndex[]): {
+  from: number | null;
+  to: number | null;
+} {
+  if (blocks.length === 0) return { from: null, to: null };
+  let from = Number.POSITIVE_INFINITY;
+  let to = Number.NEGATIVE_INFINITY;
+  for (const block of blocks) {
+    from = Math.min(from, block.start);
+    to = Math.max(to, block.end);
+  }
+  return Number.isFinite(from) && Number.isFinite(to)
+    ? { from, to }
+    : { from: null, to: null };
+}
+
+function replayAvailability(
+  remoteFrom: number | null,
+  remoteTo: number | null,
+  recent: ReplayBlockFile | null,
+): { from: number | null; to: number | null } {
+  let from = remoteFrom;
+  let to = remoteTo;
+  if (recent && recent.frames.length > 0) {
+    from = from == null ? recent.start : Math.min(from, recent.start);
+    to = to == null ? recent.end : Math.max(to, recent.end);
+  }
+  return { from, to };
+}
+
+function normalizeReplayBlock(block: ReplayBlockFile): ReplayBlockFile {
+  const frames = Array.isArray(block.frames)
+    ? block.frames
+        .filter((frame) => typeof frame.ts === "number")
+        .slice()
+        .sort((a, b) => a.ts - b.ts)
+    : [];
+  const start = Number.isFinite(block.start)
+    ? block.start
+    : (frames[0]?.ts ?? 0);
+  const end = Number.isFinite(block.end)
+    ? block.end
+    : (frames[frames.length - 1]?.ts ?? start);
+  return {
+    version: 1,
+    start,
+    end,
+    step_ms: Number.isFinite(block.step_ms) ? block.step_ms : 1000,
+    frames,
+  };
+}
+
+function appendRecentReplayFrame(
+  replay: ReplaySlice,
+  frame: ReplayFrame,
+): ReplaySlice {
+  if (!replay.enabled || frame.aircraft.length === 0) return replay;
+  const prev = replay.recent ?? {
+    version: 1 as const,
+    start: frame.ts,
+    end: frame.ts,
+    step_ms: 1000,
+    frames: [],
+  };
+  if (
+    prev.frames.length > 0 &&
+    frame.ts <= prev.frames[prev.frames.length - 1].ts
+  ) {
+    return replay;
+  }
+  const frames = [...prev.frames, frame];
+  const nextRecent = pruneRecentReplayFrames(
+    {
+      version: 1,
+      start: Math.min(prev.start, frame.ts),
+      end: Math.max(prev.end, frame.ts),
+      step_ms: prev.step_ms,
+      frames,
+    },
+    replay,
+    frame.ts,
+  );
+  const remote = replayBlockAvailability(replay.blocks);
+  const available = replayAvailability(remote.from, remote.to, nextRecent);
+  return {
+    ...replay,
+    recent: nextRecent,
+    availableFrom: available.from,
+    availableTo: available.to,
+  };
+}
+
+function pruneRecentReplayFrames(
+  block: ReplayBlockFile,
+  replay: ReplaySlice,
+  headMs: number,
+): ReplayBlockFile {
+  if (block.frames.length <= REPLAY_LOADED_FRAME_CAP) return block;
+  if (
+    replay.lastInteractionAt != null &&
+    Date.now() - replay.lastInteractionAt < REPLAY_INTERACTION_GRACE_MS
+  ) {
+    return block;
+  }
+  const playhead = replay.playheadMs;
+  const headKeepFrom = headMs - REPLAY_HEAD_KEEP_MS;
+  let frames = block.frames;
+  while (frames.length > REPLAY_LOADED_FRAME_CAP) {
+    const idx = frames.findIndex((frame) =>
+      canDropRecentReplayFrame(frame, replay, headKeepFrom, playhead),
+    );
+    if (idx < 0) break;
+    frames = [...frames.slice(0, idx), ...frames.slice(idx + 1)];
+  }
+  if (frames.length === 0) return { ...block, frames: [] };
+  return {
+    ...block,
+    start: frames[0].ts,
+    end: frames[frames.length - 1].ts,
+    frames,
+  };
+}
+
+function canDropRecentReplayFrame(
+  frame: ReplayFrame,
+  replay: ReplaySlice,
+  headKeepFrom: number,
+  playhead: number | null,
+): boolean {
+  if (!replayTimeCoveredByRemote(frame.ts, replay.blocks)) return false;
+  if (frame.ts >= headKeepFrom) return false;
+  if (
+    playhead != null &&
+    Math.abs(frame.ts - playhead) <= REPLAY_PLAYHEAD_KEEP_MS
+  ) {
+    return false;
+  }
+  return true;
+}
+
+function replayTimeCoveredByRemote(
+  ts: number,
+  blocks: ReplayBlockIndex[],
+): boolean {
+  return blocks.some((block) => ts >= block.start && ts <= block.end);
 }
 
 function retainSelectedAircraft(
@@ -494,11 +654,13 @@ const INITIAL_REPLAY_STATE: ReplaySlice = {
   availableTo: null,
   blockSec: 300,
   blocks: [],
+  recent: null,
   cache: {},
   mode: "live",
   playheadMs: null,
   playing: false,
   speed: 1,
+  lastInteractionAt: null,
   loading: false,
   error: null,
 };
@@ -556,6 +718,7 @@ export const useIdentStore = create<IdentState>((set) => ({
       const next = new Map<string, Aircraft>();
       for (const ac of frame.aircraft) next.set(ac.hex, ac);
       retainSelectedAircraft(next, st, frame);
+      const nowMs = aircraftFrameTimestampMs(frame);
 
       // Push sampled numeric values (alt_baro, gs, rssi) into per-hex rolling
       // buffers. Keeping this inside ingestAircraft gives us a single call site
@@ -586,6 +749,10 @@ export const useIdentStore = create<IdentState>((set) => ({
         altTrendsByHex,
         gsTrendsByHex,
         rssiBufByHex,
+        replay: appendRecentReplayFrame(st.replay, {
+          ts: nowMs,
+          aircraft: frame.aircraft,
+        }),
       };
     }),
 
@@ -862,8 +1029,13 @@ export const useIdentStore = create<IdentState>((set) => ({
   setReplayManifest: (manifest) =>
     set((st) => {
       const enabled = manifest.enabled;
-      const availableFrom = manifest.from ?? null;
-      const availableTo = manifest.to ?? null;
+      const available = replayAvailability(
+        manifest.from ?? null,
+        manifest.to ?? null,
+        st.replay.recent ?? null,
+      );
+      const availableFrom = available.from;
+      const availableTo = available.to;
       const mode =
         enabled && st.replay.mode === "replay" && availableFrom != null
           ? "replay"
@@ -884,6 +1056,7 @@ export const useIdentStore = create<IdentState>((set) => ({
           availableTo,
           blockSec: manifest.block_sec || st.replay.blockSec,
           blocks: Array.isArray(manifest.blocks) ? manifest.blocks : [],
+          recent: enabled ? st.replay.recent : null,
           mode,
           playheadMs,
           playing: mode === "replay" ? st.replay.playing : false,
@@ -900,6 +1073,22 @@ export const useIdentStore = create<IdentState>((set) => ({
         error: null,
       },
     })),
+
+  setReplayRecent: (block) =>
+    set((st) => {
+      const recent = block ? normalizeReplayBlock(block) : null;
+      const remote = replayBlockAvailability(st.replay.blocks);
+      const available = replayAvailability(remote.from, remote.to, recent);
+      return {
+        replay: {
+          ...st.replay,
+          recent,
+          availableFrom: available.from,
+          availableTo: available.to,
+          error: null,
+        },
+      };
+    }),
 
   setReplayLoading: (loading) =>
     set((st) => ({ replay: { ...st.replay, loading } })),
@@ -927,6 +1116,7 @@ export const useIdentStore = create<IdentState>((set) => ({
           mode: "replay",
           playheadMs: nextPlayhead,
           playing: false,
+          lastInteractionAt: Date.now(),
           error: null,
         },
       };
@@ -939,6 +1129,7 @@ export const useIdentStore = create<IdentState>((set) => ({
         mode: "live",
         playheadMs: null,
         playing: false,
+        lastInteractionAt: Date.now(),
       },
     })),
 
@@ -954,6 +1145,7 @@ export const useIdentStore = create<IdentState>((set) => ({
             mode: "live",
             playing: false,
             playheadMs: null,
+            lastInteractionAt: Date.now(),
           },
         };
       }
@@ -965,6 +1157,7 @@ export const useIdentStore = create<IdentState>((set) => ({
             st.replay.availableFrom,
             st.replay.availableTo,
           ),
+          lastInteractionAt: Date.now(),
         },
       };
     }),
@@ -974,10 +1167,17 @@ export const useIdentStore = create<IdentState>((set) => ({
       replay: {
         ...st.replay,
         playing: st.replay.mode === "replay" ? playing : false,
+        lastInteractionAt:
+          st.replay.mode === "replay"
+            ? Date.now()
+            : st.replay.lastInteractionAt,
       },
     })),
 
-  setReplaySpeed: (speed) => set((st) => ({ replay: { ...st.replay, speed } })),
+  setReplaySpeed: (speed) =>
+    set((st) => ({
+      replay: { ...st.replay, speed, lastInteractionAt: Date.now() },
+    })),
 }));
 
 function clampReplayPlayhead(
@@ -1000,6 +1200,7 @@ const replayAircraftMapByFrame = new WeakMap<
 >();
 let replayTrailsCache: {
   blocks: Record<string, ReplayBlockFile>;
+  recent: ReplayBlockFile | null | undefined;
   playheadMs: number;
   trails: Record<string, TrailPoint[]>;
 } | null = null;
@@ -1031,17 +1232,19 @@ export function selectDisplayTrailsByHex(
   if (st.replay.mode !== "replay" || st.replay.playheadMs == null) {
     return st.trailsByHex;
   }
-  if (Object.keys(st.replay.cache).length === 0) return EMPTY_REPLAY_TRAILS;
+  const blocks = replayLoadedBlocks(st);
+  if (blocks.length === 0) return EMPTY_REPLAY_TRAILS;
   if (
     replayTrailsCache &&
     replayTrailsCache.blocks === st.replay.cache &&
+    replayTrailsCache.recent === st.replay.recent &&
     replayTrailsCache.playheadMs === st.replay.playheadMs
   ) {
     return replayTrailsCache.trails;
   }
   const since = st.replay.playheadMs - TRAIL_FADE_MAX_SEC * 1000;
   const out: Record<string, TrailPoint[]> = {};
-  for (const block of Object.values(st.replay.cache)) {
+  for (const block of blocks) {
     for (const frame of block.frames) {
       if (frame.ts < since || frame.ts > st.replay.playheadMs) continue;
       for (const ac of frame.aircraft) {
@@ -1068,6 +1271,7 @@ export function selectDisplayTrailsByHex(
   }
   replayTrailsCache = {
     blocks: st.replay.cache,
+    recent: st.replay.recent,
     playheadMs: st.replay.playheadMs,
     trails: out,
   };
@@ -1077,7 +1281,7 @@ export function selectDisplayTrailsByHex(
 function currentReplayFrame(st: IdentState): ReplayFrame | null {
   if (st.replay.mode !== "replay" || st.replay.playheadMs == null) return null;
   let best: ReplayFrame | null = null;
-  for (const block of Object.values(st.replay.cache)) {
+  for (const block of replayLoadedBlocks(st)) {
     if (
       st.replay.playheadMs < block.start ||
       st.replay.playheadMs > block.end
@@ -1090,6 +1294,14 @@ function currentReplayFrame(st: IdentState): ReplayFrame | null {
     }
   }
   return best;
+}
+
+function replayLoadedBlocks(st: IdentState): ReplayBlockFile[] {
+  const blocks = Object.values(st.replay.cache);
+  if (st.replay.recent && st.replay.recent.frames.length > 0) {
+    blocks.push(st.replay.recent);
+  }
+  return blocks;
 }
 
 /**

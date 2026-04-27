@@ -259,6 +259,12 @@ func (s *ReplayStore) Manifest() ReplayManifest {
 	return s.manifestLocked()
 }
 
+func (s *ReplayStore) RecentReplay() (replayBlockFile, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.activeBlockFileLocked()
+}
+
 func (s *ReplayStore) ServeBlock(w http.ResponseWriter, r *http.Request, name string) {
 	if !s.enabled || !replayBlockNameRE.MatchString(name) {
 		http.NotFound(w, r)
@@ -518,6 +524,20 @@ func (s *ReplayStore) manifestLocked() ReplayManifest {
 		BlockSec: int64(s.blockDuration / time.Second),
 		Blocks:   blocks,
 	}
+}
+
+func (s *ReplayStore) activeBlockFileLocked() (replayBlockFile, bool) {
+	if s.active == nil || len(s.active.frames) == 0 {
+		return replayBlockFile{}, false
+	}
+	frames := append([]ReplayFrame(nil), s.active.frames...)
+	return replayBlockFile{
+		Version: replayManifestVersion,
+		Start:   s.active.start,
+		End:     frames[len(frames)-1].Ts,
+		StepMS:  int64(s.sampleInterval / time.Millisecond),
+		Frames:  frames,
+	}, true
 }
 
 func (s *ReplayStore) rebuildLookupLocked() {

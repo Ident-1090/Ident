@@ -139,9 +139,14 @@ func (s *TrailStore) SnapshotEnvelopes() [][]byte {
 }
 
 func (s *TrailStore) SnapshotJSON() []byte {
+	data := s.SnapshotData()
+	return marshalTrailData(data.Aircraft)
+}
+
+func (s *TrailStore) SnapshotData() trailEnvelopeData {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return marshalTrailData(copyTrailAircraft(s.aircraft))
+	return trailEnvelopeData{Aircraft: copyTrailAircraft(s.aircraft)}
 }
 
 func (s *TrailStore) LoadRestartCache() error {

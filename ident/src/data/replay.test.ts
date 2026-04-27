@@ -23,6 +23,7 @@ function resetStore() {
       playheadMs: null,
       playing: false,
       speed: 1,
+      lastInteractionAt: null,
       loading: false,
       error: null,
     },

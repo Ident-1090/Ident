@@ -98,6 +98,128 @@ describe("replay display selectors", () => {
     expect(selectDisplayTrailsByHex(st)).toBe(selectDisplayTrailsByHex(st));
   });
 
+  it("uses recent replay frames beyond finalized blocks", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 200_000,
+        mode: "replay",
+        playheadMs: 195_000,
+        recent: {
+          version: 1,
+          start: 180_000,
+          end: 200_000,
+          step_ms: 5_000,
+          frames: [
+            { ts: 190_000, aircraft: [{ hex: "recent", flight: "RECENT1" }] },
+          ],
+        },
+      },
+    }));
+
+    expect(
+      selectDisplayAircraftMap(useIdentStore.getState()).get("recent"),
+    ).toMatchObject({ flight: "RECENT1" });
+  });
+
+  it("shows an empty replay display for a true gap between segments", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 200_000,
+        mode: "replay",
+        playheadMs: 180_000,
+        cache: {
+          "/api/replay/blocks/120000-170000.json.zst": {
+            version: 1,
+            start: 120_000,
+            end: 170_000,
+            step_ms: 5_000,
+            frames: [
+              { ts: 170_000, aircraft: [{ hex: "old", flight: "OLD1" }] },
+            ],
+          },
+        },
+        recent: {
+          version: 1,
+          start: 190_000,
+          end: 200_000,
+          step_ms: 5_000,
+          frames: [
+            { ts: 195_000, aircraft: [{ hex: "recent", flight: "RECENT1" }] },
+          ],
+        },
+      },
+    }));
+
+    expect([
+      ...selectDisplayAircraftMap(useIdentStore.getState()).keys(),
+    ]).toEqual([]);
+  });
+
+  it("extends the recent replay window from live aircraft frames", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "live",
+      },
+    }));
+
+    useIdentStore.getState().ingestAircraft({
+      now: 190,
+      aircraft: [{ hex: "live", flight: "LIVE1" }],
+    });
+    useIdentStore.getState().enterReplay(190_000);
+
+    const st = useIdentStore.getState();
+    expect(st.replay.availableTo).toBe(190_000);
+    expect(selectDisplayAircraftMap(st).get("live")).toMatchObject({
+      flight: "LIVE1",
+    });
+  });
+
+  it("keeps loaded recent replay frames during broad replay browsing", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 0,
+        availableTo: 1_000,
+        blocks: [
+          {
+            start: 0,
+            end: 1_000,
+            url: "/api/replay/blocks/0-1000.json.zst",
+            bytes: 10,
+          },
+        ],
+        recent: {
+          version: 1,
+          start: 1_000,
+          end: 1_000,
+          step_ms: 1_000,
+          frames: [{ ts: 1_000, aircraft: [{ hex: "kept", flight: "KEEP1" }] }],
+        },
+      },
+    }));
+
+    useIdentStore.getState().ingestAircraft({
+      now: 7_300,
+      aircraft: [{ hex: "head", flight: "HEAD1" }],
+    });
+
+    expect(
+      useIdentStore.getState().replay.recent?.frames.map((frame) => frame.ts),
+    ).toContain(1_000);
+  });
+
   it("returns to live mode when replay playhead reaches the live edge", () => {
     useIdentStore.setState((st) => ({
       replay: {

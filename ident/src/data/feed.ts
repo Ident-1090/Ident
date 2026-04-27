@@ -6,6 +6,7 @@ import type {
   HeyWhatsThatJson,
   OutlineJson,
   ReceiverJson,
+  ReplayBlockFile,
   StatsJson,
   TrailPoint,
 } from "./types";
@@ -37,7 +38,13 @@ type Envelope =
       };
     }
   | { type: "routes"; now?: number; data: RouteEntry[] }
-  | { type: "trails"; data: { aircraft?: Record<string, TrailPoint[]> } }
+  | {
+      type: "trails";
+      data: {
+        aircraft?: Record<string, TrailPoint[]>;
+        replay?: ReplayBlockFile | null;
+      };
+    }
   | { type: "replay.availability"; data: unknown };
 
 function parseJSON<T>(text: string): T | null {
@@ -120,7 +127,7 @@ function dispatch(env: Envelope): void {
       break;
     }
     case "trails": {
-      applyTrailSeed(normalizeTrailSeed(env.data.aircraft));
+      applyRecentSeed(env.data);
       break;
     }
     case "config":
@@ -191,6 +198,25 @@ function normalizeTrailSeed(
   return trails;
 }
 
+function applyRecentSeed(data: {
+  aircraft?: Record<string, TrailPoint[]>;
+  replay?: ReplayBlockFile | null;
+}): void {
+  applyTrailSeed(normalizeTrailSeed(data.aircraft));
+  if (isReplayBlock(data.replay)) {
+    useIdentStore.getState().setReplayRecent(data.replay);
+  }
+}
+
+function isReplayBlock(value: unknown): value is ReplayBlockFile {
+  return (
+    typeof value === "object" &&
+    value != null &&
+    (value as ReplayBlockFile).version === 1 &&
+    Array.isArray((value as ReplayBlockFile).frames)
+  );
+}
+
 async function fetchTrailSeed(signal: AbortSignal): Promise<void> {
   const controller = new AbortController();
   const abort = () => controller.abort();
@@ -205,8 +231,9 @@ async function fetchTrailSeed(signal: AbortSignal): Promise<void> {
     if (!res.ok) return;
     const data = (await res.json()) as {
       aircraft?: Record<string, TrailPoint[]>;
+      replay?: ReplayBlockFile | null;
     };
-    applyTrailSeed(normalizeTrailSeed(data.aircraft));
+    applyRecentSeed(data);
   } catch {
     // Trail history is opportunistic; live aircraft downlink must keep priority.
   } finally {

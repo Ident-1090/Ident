@@ -358,6 +358,49 @@ func TestServerServesRecentTrailsOverHTTP(t *testing.T) {
 	}
 }
 
+func TestServerServesRecentTrailsWithActiveReplaySegment(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	trails := NewTrailStore(TrailOptions{
+		MemoryWindow:   2 * time.Hour,
+		SampleInterval: time.Second,
+	})
+	trails.IngestAircraftJSON([]byte(`{"now":100,"aircraft":[{"hex":"abc123","lat":34.1,"lon":-118.2,"alt_baro":3000}]}`))
+	replay := newTestReplayStore(t, 10_000_000)
+	replay.IngestAircraftJSON(replayFrameJSON(100, "abc123", 34.1, -118.2))
+
+	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{
+		Trails: trails,
+		Replay: replay,
+	})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	resp, err := ts.Client().Get(ts.URL + "/api/trails/recent.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	var body struct {
+		Aircraft map[string][]trailPoint `json:"aircraft"`
+		Replay   *replayBlockFile        `json:"replay"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode recent: %v", err)
+	}
+	if len(body.Aircraft["abc123"]) != 1 {
+		t.Fatalf("trail points = %#v, want one point", body.Aircraft["abc123"])
+	}
+	if body.Replay == nil || len(body.Replay.Frames) != 1 {
+		t.Fatalf("replay = %#v, want one active frame", body.Replay)
+	}
+	if body.Replay.Frames[0].Ts != 100_000 {
+		t.Fatalf("replay frame ts = %d, want 100000", body.Replay.Frames[0].Ts)
+	}
+}
+
 func TestServerServesEmbeddedWebApp(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startFeed } from "./feed";
-import { useIdentStore } from "./store";
+import { selectDisplayAircraftMap, useIdentStore } from "./store";
 
 const wsHarness = vi.hoisted(() => ({
   instances: [] as Array<{ url: string; emitText: (text: string) => void }>,
@@ -67,6 +67,7 @@ function resetStore() {
     alerts: [],
     trailsByHex: {},
     liveState: { lastMsgTs: 0, mpsBuffer: [], routesViaWs: false },
+    replay: useIdentStore.getInitialState().replay,
     settings: {
       trailFadeSec: 180,
       unitMode: "aviation",
@@ -250,6 +251,55 @@ describe("startFeed route envelopes", () => {
         signal: expect.any(AbortSignal),
       }),
     );
+
+    stop();
+  });
+
+  it("seeds recent replay frames through the recent trail endpoint", async () => {
+    globalThis.fetch = vi.fn(async (url: string) => {
+      if (url.endsWith("/replay/manifest.json")) {
+        return {
+          ok: true,
+          json: async () => ({
+            enabled: true,
+            from: 120_000,
+            to: 180_000,
+            block_sec: 60,
+            blocks: [],
+          }),
+        } as Response;
+      }
+      if (url.endsWith("/trails/recent.json")) {
+        return {
+          ok: true,
+          json: async () => ({
+            aircraft: {},
+            replay: {
+              version: 1,
+              start: 180_000,
+              end: 190_000,
+              step_ms: 5_000,
+              frames: [
+                {
+                  ts: 190_000,
+                  aircraft: [{ hex: "recent", flight: "RECENT1" }],
+                },
+              ],
+            },
+          }),
+        } as Response;
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    }) as unknown as typeof fetch;
+
+    const stop = startFeed();
+
+    await vi.waitFor(() => {
+      useIdentStore.getState().enterReplay(190_000);
+      expect(
+        selectDisplayAircraftMap(useIdentStore.getState()).get("recent"),
+      ).toMatchObject({ flight: "RECENT1" });
+    });
 
     stop();
   });

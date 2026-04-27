@@ -25,10 +25,16 @@ var upgrader = websocket.Upgrader{
 type ReplayProvider interface {
 	Manifest() ReplayManifest
 	ServeBlock(http.ResponseWriter, *http.Request, string)
+	RecentReplay() (replayBlockFile, bool)
 }
 
 type TrailProvider interface {
-	SnapshotJSON() []byte
+	SnapshotData() trailEnvelopeData
+}
+
+type recentData struct {
+	Aircraft map[string][]trailPoint `json:"aircraft"`
+	Replay   *replayBlockFile        `json:"replay,omitempty"`
 }
 
 type Server struct {
@@ -141,16 +147,19 @@ func (s *Server) serveReplayBlock(w http.ResponseWriter, r *http.Request) {
 func (s *Server) serveRecentTrails(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	if s.trails == nil {
-		_, _ = w.Write([]byte(`{"aircraft":{}}`))
-		return
+	body := recentData{Aircraft: map[string][]trailPoint{}}
+	if s.trails != nil {
+		body.Aircraft = s.trails.SnapshotData().Aircraft
+		if body.Aircraft == nil {
+			body.Aircraft = map[string][]trailPoint{}
+		}
 	}
-	body := s.trails.SnapshotJSON()
-	if len(body) == 0 {
-		_, _ = w.Write([]byte(`{"aircraft":{}}`))
-		return
+	if s.replay != nil {
+		if replay, ok := s.replay.RecentReplay(); ok {
+			body.Replay = &replay
+		}
 	}
-	_, _ = w.Write(body)
+	writeJSON(w, body)
 }
 
 func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
