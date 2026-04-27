@@ -147,14 +147,15 @@ export function Topbar({ onOpenSettings }: { onOpenSettings: () => void }) {
 
       {/* Health — clock + map-display controls. Hidden on phone; the drawer
           reprises the receiver/filters/theme controls. */}
-      <div className="flex-1 hidden md:flex items-center gap-5.5 px-4.5 min-w-0 overflow-hidden">
-        <div className="flex flex-col items-start leading-[1.1] tabular-nums mr-1.5">
+      <div className="flex-1 hidden md:flex items-center gap-2 xl:gap-5.5 px-2.5 xl:px-4.5 min-w-0 overflow-hidden">
+        <div className="flex shrink-0 flex-col items-start leading-[1.1] tabular-nums mr-1 xl:mr-1.5">
           <b className="font-mono text-[14px] text-(--color-ink) font-medium tracking-[0.02em]">
             {clock.primary}
           </b>
           <span
+            data-testid="topbar-clock-subtitle"
             className={
-              "font-mono text-[9.5px] uppercase tracking-widest mt-0.5 " +
+              "font-mono text-[9.5px] uppercase tracking-widest mt-0.5 whitespace-nowrap " +
               (replay.mode === "replay"
                 ? "text-(--color-warn)"
                 : "text-ink-faint")
@@ -166,7 +167,7 @@ export function Topbar({ onOpenSettings }: { onOpenSettings: () => void }) {
 
         <DesktopReplayTransport />
 
-        <CtrlGroup label="Icon">
+        <CtrlGroup label="Icon" compactLabel>
           <Segmented className="self-center">
             {ICON_MODES.map((m) => (
               <SegButton
@@ -183,7 +184,7 @@ export function Topbar({ onOpenSettings }: { onOpenSettings: () => void }) {
           </Segmented>
         </CtrlGroup>
 
-        <CtrlGroup label="Labels">
+        <CtrlGroup label="Labels" compactLabel>
           <Segmented className="self-center">
             {LABEL_FIELDS.map((f) => (
               <SegButton
@@ -302,13 +303,22 @@ export function Topbar({ onOpenSettings }: { onOpenSettings: () => void }) {
 function CtrlGroup({
   label,
   children,
+  className = "flex",
+  compactLabel = false,
 }: {
   label: string;
   children: React.ReactNode;
+  className?: string;
+  compactLabel?: boolean;
 }) {
   return (
-    <div className="flex items-center gap-1.5">
-      <span className="font-mono text-[9.5px] text-ink-faint uppercase tracking-widest">
+    <div className={`${className} items-center gap-1.5 shrink-0`}>
+      <span
+        className={
+          "font-mono text-[9.5px] text-ink-faint uppercase tracking-widest " +
+          (compactLabel ? "hidden xl:inline" : "")
+        }
+      >
         {label}
       </span>
       {children}

@@ -149,6 +149,24 @@ describe("Topbar basemap picker", () => {
     expect(findButton(container, "Copy share link")).toBeNull();
   });
 
+  it("keeps lower-priority display controls from crowding narrow desktop topbars", () => {
+    const subtitle = container.querySelector(
+      '[data-testid="topbar-clock-subtitle"]',
+    ) as HTMLSpanElement;
+    expect(subtitle.className).toContain("whitespace-nowrap");
+
+    const iconLabel = [...container.querySelectorAll("span")].find(
+      (span) => span.textContent === "Icon",
+    ) as HTMLSpanElement;
+    expect(iconLabel.className).toContain("hidden xl:inline");
+
+    const labelsLabel = [...container.querySelectorAll("span")].find(
+      (span) => span.textContent === "Labels",
+    ) as HTMLSpanElement;
+    expect(labelsLabel.className).toContain("hidden xl:inline");
+    expect(labelsLabel.parentElement?.className).not.toContain("hidden");
+  });
+
   it("links the title brand to the GitHub project", () => {
     const link = container.querySelector<HTMLAnchorElement>(
       'a[aria-label="Open Ident on GitHub"]',

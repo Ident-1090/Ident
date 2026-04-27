@@ -1,5 +1,12 @@
 import { Pause, Play, Rewind, SkipBack, SkipForward } from "lucide-react";
-import { memo, useEffect } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { ensureReplayRange } from "../data/replay";
 import { useIdentStore } from "../data/store";
 import { Tooltip } from "../ui/Tooltip";
@@ -7,13 +14,14 @@ import { Tooltip } from "../ui/Tooltip";
 const PRELOAD_BEHIND_MS = 10 * 60 * 1000;
 const PRELOAD_AHEAD_MS = 5 * 60 * 1000;
 const JUMP_MS = 10 * 60 * 1000;
-const TICK_MS = 250;
 
 export function ReplayRuntime() {
   const replay = useIdentStore((s) => s.replay);
   const setPlayhead = useIdentStore((s) => s.setReplayPlayhead);
   const setPlaying = useIdentStore((s) => s.setReplayPlaying);
   const goLive = useIdentStore((s) => s.goLive);
+  const playbackActive =
+    replay.mode === "replay" && replay.playing && replay.playheadMs != null;
 
   useEffect(() => {
     if (replay.mode !== "replay" || replay.playheadMs == null) return;
@@ -24,24 +32,31 @@ export function ReplayRuntime() {
   }, [replay.mode, replay.playheadMs]);
 
   useEffect(() => {
-    if (
-      replay.mode !== "replay" ||
-      !replay.playing ||
-      replay.playheadMs == null
-    ) {
-      return;
-    }
-    const id = setInterval(() => {
+    if (!playbackActive) return;
+    let frameId = 0;
+    let lastFrame = performance.now();
+    const tick = (timestamp: DOMHighResTimeStamp) => {
       const st = useIdentStore.getState();
-      const next = (st.replay.playheadMs ?? 0) + TICK_MS * st.replay.speed;
+      if (
+        st.replay.mode !== "replay" ||
+        !st.replay.playing ||
+        st.replay.playheadMs == null
+      ) {
+        return;
+      }
+      const elapsedMs = Math.max(0, timestamp - lastFrame);
+      lastFrame = timestamp;
+      const next = st.replay.playheadMs + elapsedMs * st.replay.speed;
       if (st.replay.availableTo != null && next >= st.replay.availableTo) {
         goLive();
         return;
       }
       setPlayhead(next);
-    }, TICK_MS);
-    return () => clearInterval(id);
-  }, [goLive, replay.mode, replay.playheadMs, replay.playing, setPlayhead]);
+      frameId = window.requestAnimationFrame(tick);
+    };
+    frameId = window.requestAnimationFrame(tick);
+    return () => window.cancelAnimationFrame(frameId);
+  }, [goLive, playbackActive, setPlayhead]);
 
   useEffect(() => {
     if (replay.mode !== "replay" || replay.availableTo == null) return;
@@ -80,7 +95,7 @@ export function DesktopReplayTransport() {
     : replay.availableTo;
   const liveEdge = replay.availableTo;
   return (
-    <div className="flex items-center gap-2 min-w-0">
+    <div className="flex items-center gap-2 shrink-0">
       <div className="flex h-[22px] border border-(--color-line) rounded-[4px] overflow-hidden bg-paper-2">
         <TransportButton
           label="Jump back 10 minutes"
@@ -153,25 +168,49 @@ export const ReplayScrubber = memo(function ReplayScrubber() {
   const availableTo = useIdentStore((s) => s.replay.availableTo);
   const mode = useIdentStore((s) => s.replay.mode);
   const playheadMs = useIdentStore((s) => s.replay.playheadMs);
+  const playing = useIdentStore((s) => s.replay.playing);
   const enterReplay = useIdentStore((s) => s.enterReplay);
   const setPlayhead = useIdentStore((s) => s.setReplayPlayhead);
+  const setPlaying = useIdentStore((s) => s.setReplayPlaying);
   const goLive = useIdentStore((s) => s.goLive);
-  if (!enabled || availableFrom == null || availableTo == null) {
+  const active = mode === "replay";
+  const hasWindow = enabled && availableFrom != null && availableTo != null;
+  const playhead = hasWindow
+    ? active
+      ? (playheadMs ?? availableTo)
+      : availableTo
+    : 0;
+  const scrubber = useReplayScrubber({
+    availableFrom: availableFrom ?? 0,
+    availableTo: availableTo ?? 0,
+    playhead,
+    mode,
+    playing,
+    enterReplay,
+    setPlayhead,
+    setPlaying,
+    goLive,
+  });
+  if (!hasWindow) {
     return null;
   }
-  const active = mode === "replay";
-  const playhead = active ? (playheadMs ?? availableTo) : availableTo;
   const pct =
-    ((playhead - availableFrom) / Math.max(1, availableTo - availableFrom)) *
+    ((scrubber.playhead - scrubber.availableFrom) /
+      Math.max(1, scrubber.availableTo - scrubber.availableFrom)) *
     100;
   const tickCount = Math.min(
     24,
-    Math.max(2, Math.round((availableTo - availableFrom) / 3600000)),
+    Math.max(
+      2,
+      Math.round((scrubber.availableTo - scrubber.availableFrom) / 3600000),
+    ),
   );
   const tickPositions = Array.from({ length: tickCount }, (_, i) =>
     ((i / Math.max(1, tickCount - 1)) * 100).toFixed(3),
   );
-  const rangeLabel = rewindRangeLabel(availableTo - availableFrom);
+  const rangeLabel = rewindRangeLabel(
+    scrubber.availableTo - scrubber.availableFrom,
+  );
   return (
     <div
       data-testid="replay-scrubber"
@@ -214,20 +253,16 @@ export const ReplayScrubber = memo(function ReplayScrubber() {
         <input
           aria-label="Replay time"
           type="range"
-          min={availableFrom}
-          max={availableTo}
+          min={scrubber.availableFrom}
+          max={scrubber.availableTo}
           step={1000}
-          value={playhead}
-          onChange={(ev) => {
-            const next = Number(ev.currentTarget.value);
-            if (next >= availableTo) {
-              goLive();
-            } else if (mode !== "replay") {
-              enterReplay(next);
-            } else {
-              setPlayhead(next);
-            }
-          }}
+          defaultValue={scrubber.playhead}
+          ref={scrubber.inputRef}
+          onPointerDown={scrubber.onPointerDown}
+          onPointerUp={scrubber.onPointerEnd}
+          onPointerCancel={scrubber.onPointerEnd}
+          onBlur={scrubber.onPointerEnd}
+          onChange={scrubber.onChange}
           className="absolute inset-y-[-8px] left-0 right-0 opacity-0 cursor-pointer"
         />
       </div>
@@ -241,14 +276,16 @@ function ReplayStatusLabel({ active }: { active: boolean }) {
   const error = useIdentStore((s) => s.replay.error);
   return (
     <span
+      data-testid="replay-status"
+      title={error ?? (loading ? "Loading replay" : undefined)}
       className={
-        "shrink-0 flex items-center gap-1.5 " +
+        "shrink-0 w-[7.75ch] whitespace-nowrap text-right " +
         (active
           ? "font-semibold tracking-[0.08em] text-ink-soft"
           : "text-ink-faint")
       }
     >
-      {active ? (loading ? "LOADING" : (error ?? "NOW ->")) : "NOW"}
+      {active ? (loading ? "LOADING" : (error ?? "NOW ->")) : "NOW ->"}
     </span>
   );
 }
@@ -286,7 +323,19 @@ function TransportButton({
 function MiniScrubber() {
   const replay = useIdentStore((s) => s.replay);
   const setPlayhead = useIdentStore((s) => s.setReplayPlayhead);
+  const setPlaying = useIdentStore((s) => s.setReplayPlaying);
   const goLive = useIdentStore((s) => s.goLive);
+  const playhead = replay.playheadMs ?? replay.availableTo ?? 0;
+  const scrubber = useReplayScrubber({
+    availableFrom: replay.availableFrom ?? 0,
+    availableTo: replay.availableTo ?? 0,
+    playhead,
+    mode: replay.mode,
+    playing: replay.playing,
+    setPlayhead,
+    setPlaying,
+    goLive,
+  });
   if (
     replay.mode !== "replay" ||
     replay.playheadMs == null ||
@@ -295,16 +344,16 @@ function MiniScrubber() {
   ) {
     return null;
   }
-  const availableFrom = replay.availableFrom;
-  const availableTo = replay.availableTo;
   const pct =
-    ((replay.playheadMs - availableFrom) /
-      Math.max(1, availableTo - availableFrom)) *
+    ((scrubber.playhead - scrubber.availableFrom) /
+      Math.max(1, scrubber.availableTo - scrubber.availableFrom)) *
     100;
   const tickPositions = Array.from({ length: 12 }, (_, i) =>
     ((i / 11) * 100).toFixed(3),
   );
-  const rangeLabel = rewindRangeLabel(availableTo - availableFrom);
+  const rangeLabel = rewindRangeLabel(
+    scrubber.availableTo - scrubber.availableFrom,
+  );
   return (
     <div className="grid gap-1">
       <div className="relative h-[7px] rounded-full border border-(--color-line) bg-paper-3">
@@ -330,15 +379,16 @@ function MiniScrubber() {
         <input
           aria-label="Replay time"
           type="range"
-          min={availableFrom}
-          max={availableTo}
+          min={scrubber.availableFrom}
+          max={scrubber.availableTo}
           step={1000}
-          value={replay.playheadMs}
-          onChange={(ev) => {
-            const next = Number(ev.currentTarget.value);
-            if (next >= availableTo) goLive();
-            else setPlayhead(next);
-          }}
+          defaultValue={scrubber.playhead}
+          ref={scrubber.inputRef}
+          onPointerDown={scrubber.onPointerDown}
+          onPointerUp={scrubber.onPointerEnd}
+          onPointerCancel={scrubber.onPointerEnd}
+          onBlur={scrubber.onPointerEnd}
+          onChange={scrubber.onChange}
           className="absolute inset-y-[-8px] left-0 right-0 w-full opacity-0 cursor-pointer"
         />
       </div>
@@ -348,6 +398,103 @@ function MiniScrubber() {
       </div>
     </div>
   );
+}
+
+type ReplayScrubberState = {
+  availableFrom: number;
+  availableTo: number;
+  playhead: number;
+};
+
+function useReplayScrubber({
+  availableFrom,
+  availableTo,
+  playhead,
+  mode,
+  playing,
+  enterReplay,
+  setPlayhead,
+  setPlaying,
+  goLive,
+}: {
+  availableFrom: number;
+  availableTo: number;
+  playhead: number;
+  mode: "live" | "replay";
+  playing: boolean;
+  enterReplay?: (playheadMs?: number) => void;
+  setPlayhead: (playheadMs: number) => void;
+  setPlaying: (playing: boolean) => void;
+  goLive: () => void;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const resumeAfterDragRef = useRef(false);
+  const [drag, setDrag] = useState<ReplayScrubberState | null>(null);
+  const domain = drag ?? { availableFrom, availableTo, playhead };
+
+  useLayoutEffect(() => {
+    if (drag || !inputRef.current) return;
+    inputRef.current.value = String(playhead);
+  }, [drag, playhead]);
+
+  const commit = useCallback(
+    (next: number, limit: number) => {
+      if (next >= limit) {
+        goLive();
+      } else if (mode !== "replay" && enterReplay) {
+        enterReplay(next);
+      } else {
+        setPlayhead(next);
+      }
+    },
+    [enterReplay, goLive, mode, setPlayhead],
+  );
+
+  const finishDrag = useCallback(() => {
+    setDrag(null);
+    if (!resumeAfterDragRef.current) return;
+    resumeAfterDragRef.current = false;
+    setPlaying(true);
+  }, [setPlaying]);
+
+  const onPointerDown = useCallback(
+    (ev: React.PointerEvent<HTMLInputElement>) => {
+      const next = Number(ev.currentTarget.value);
+      if (Number.isFinite(ev.pointerId)) {
+        ev.currentTarget.setPointerCapture?.(ev.pointerId);
+      }
+      resumeAfterDragRef.current = playing;
+      if (resumeAfterDragRef.current) setPlaying(false);
+      setDrag({
+        availableFrom,
+        availableTo,
+        playhead: Number.isFinite(next) ? next : playhead,
+      });
+    },
+    [availableFrom, availableTo, playhead, playing, setPlaying],
+  );
+
+  const onChange = useCallback(
+    (ev: React.ChangeEvent<HTMLInputElement>) => {
+      const next = Number(ev.currentTarget.value);
+      const limit = drag?.availableTo ?? availableTo;
+      setDrag((current) =>
+        current ? { ...current, playhead: next } : current,
+      );
+      commit(next, limit);
+    },
+    [availableTo, commit, drag?.availableTo],
+  );
+
+  return {
+    inputRef,
+    availableFrom: domain.availableFrom,
+    availableTo: domain.availableTo,
+    playhead: domain.playhead,
+    onPointerDown,
+    onPointerEnd: finishDrag,
+    onChange,
+  };
 }
 
 export function MobileReplayFab() {

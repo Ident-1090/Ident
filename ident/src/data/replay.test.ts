@@ -153,6 +153,151 @@ describe("replay data loading", () => {
     expect(globalThis.fetch).toHaveBeenCalledTimes(2);
   });
 
+  it("cancels stale in-flight block requests outside the current range margin", async () => {
+    const requests = new Map<string, PendingBlockRequest>();
+    globalThis.fetch = vi.fn((url: string, init?: RequestInit) => {
+      if (url.includes("manifest")) {
+        return Promise.resolve(responseJson(longManifest()));
+      }
+      const signal = init?.signal;
+      if (!(signal instanceof AbortSignal)) {
+        throw new Error("block request missing abort signal");
+      }
+      return new Promise<Response>((resolve, reject) => {
+        requests.set(url, { signal, resolve });
+        signal.addEventListener("abort", () => reject(abortError()), {
+          once: true,
+        });
+      });
+    }) as never;
+
+    await refreshReplayManifest();
+    const stale = ensureReplayRange(0, 60_000);
+    await vi.waitFor(() => {
+      expect(requests.has("/ident/api/replay/blocks/0-60000.json.zst")).toBe(
+        true,
+      );
+    });
+
+    const current = ensureReplayRange(600_001, 659_999);
+    await vi.waitFor(() => {
+      expect(
+        requests.get("/ident/api/replay/blocks/0-60000.json.zst")?.signal
+          .aborted,
+      ).toBe(true);
+    });
+
+    await stale;
+    expect(useIdentStore.getState().replay.error).toBeNull();
+    expect(useIdentStore.getState().replay.loading).toBe(true);
+    expect(
+      requests.has("/ident/api/replay/blocks/600000-660000.json.zst"),
+    ).toBe(true);
+
+    requests
+      .get("/ident/api/replay/blocks/600000-660000.json.zst")
+      ?.resolve(responseJson(replayBlock()));
+    await current;
+  });
+
+  it("refetches a canceled range when replay returns before abort settlement", async () => {
+    const requests = new Map<string, PendingBlockRequest[]>();
+    globalThis.fetch = vi.fn((url: string, init?: RequestInit) => {
+      if (url.includes("manifest")) {
+        return Promise.resolve(responseJson(longManifest()));
+      }
+      const signal = init?.signal;
+      if (!(signal instanceof AbortSignal)) {
+        throw new Error("block request missing abort signal");
+      }
+      return new Promise<Response>((resolve, reject) => {
+        const request = { signal, resolve };
+        requests.set(url, [...(requests.get(url) ?? []), request]);
+        signal.addEventListener("abort", () => reject(abortError()), {
+          once: true,
+        });
+      });
+    }) as never;
+
+    await refreshReplayManifest();
+    const first = ensureReplayRange(0, 59_999);
+    await vi.waitFor(() => {
+      expect(
+        requests.get("/ident/api/replay/blocks/0-60000.json.zst"),
+      ).toHaveLength(1);
+    });
+
+    const far = ensureReplayRange(600_001, 659_999);
+    await vi.waitFor(() => {
+      expect(
+        requests.get("/ident/api/replay/blocks/0-60000.json.zst")?.[0].signal
+          .aborted,
+      ).toBe(true);
+    });
+
+    const returned = ensureReplayRange(0, 59_999);
+    await vi.waitFor(() => {
+      expect(
+        requests.get("/ident/api/replay/blocks/0-60000.json.zst"),
+      ).toHaveLength(2);
+    });
+
+    requests
+      .get("/ident/api/replay/blocks/0-60000.json.zst")?.[1]
+      .resolve(responseJson(replayBlock()));
+    requests
+      .get("/ident/api/replay/blocks/600000-660000.json.zst")
+      ?.at(0)
+      ?.resolve(responseJson(replayBlock()));
+    await Promise.all([first, far, returned]);
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/ident/api/replay/blocks/0-60000.json.zst",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+  });
+
+  it("keeps in-flight block requests inside the current range margin", async () => {
+    const requests = new Map<string, PendingBlockRequest>();
+    globalThis.fetch = vi.fn((url: string, init?: RequestInit) => {
+      if (url.includes("manifest")) {
+        return Promise.resolve(responseJson(longManifest()));
+      }
+      const signal = init?.signal;
+      if (!(signal instanceof AbortSignal)) {
+        throw new Error("block request missing abort signal");
+      }
+      return new Promise<Response>((resolve, reject) => {
+        requests.set(url, { signal, resolve });
+        signal.addEventListener("abort", () => reject(abortError()), {
+          once: true,
+        });
+      });
+    }) as never;
+
+    await refreshReplayManifest();
+    const first = ensureReplayRange(180_001, 239_999);
+    await vi.waitFor(() => {
+      expect(
+        requests.has("/ident/api/replay/blocks/180000-240000.json.zst"),
+      ).toBe(true);
+    });
+
+    const second = ensureReplayRange(360_001, 419_999);
+
+    expect(
+      requests.get("/ident/api/replay/blocks/180000-240000.json.zst")?.signal
+        .aborted,
+    ).toBe(false);
+    requests
+      .get("/ident/api/replay/blocks/180000-240000.json.zst")
+      ?.resolve(responseJson(replayBlock()));
+    requests
+      .get("/ident/api/replay/blocks/360000-420000.json.zst")
+      ?.resolve(responseJson(replayBlock()));
+    await Promise.all([first, second]);
+  });
+
   it("does not substitute live aircraft while replay history is unavailable", () => {
     useIdentStore.setState((st) => ({
       replay: {
@@ -202,6 +347,25 @@ function manifest() {
   };
 }
 
+function longManifest() {
+  return {
+    enabled: true,
+    from: 0,
+    to: 900_000,
+    block_sec: 60,
+    blocks: Array.from({ length: 15 }, (_, i) => {
+      const start = i * 60_000;
+      const end = start + 60_000;
+      return {
+        start,
+        end,
+        url: `/api/replay/blocks/${start}-${end}.json.zst`,
+        bytes: 200,
+      };
+    }),
+  };
+}
+
 function replayBlock() {
   return {
     version: 1,
@@ -224,3 +388,12 @@ function replayBlock() {
 function responseJson(body: unknown): Response {
   return { ok: true, status: 200, json: async () => body } as Response;
 }
+
+function abortError(): DOMException {
+  return new DOMException("The operation was aborted.", "AbortError");
+}
+
+type PendingBlockRequest = {
+  signal: AbortSignal;
+  resolve: (value: Response) => void;
+};

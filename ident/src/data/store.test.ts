@@ -237,7 +237,7 @@ describe("replay display selectors", () => {
 
     expect(useIdentStore.getState().replay.mode).toBe("live");
     expect(useIdentStore.getState().replay.playheadMs).toBeNull();
-    expect(useIdentStore.getState().replay.playing).toBe(false);
+    expect(useIdentStore.getState().replay.playing).toBe(true);
   });
 
   it("goes live immediately at the current replay live edge", () => {
@@ -257,7 +257,7 @@ describe("replay display selectors", () => {
 
     expect(useIdentStore.getState().replay.mode).toBe("live");
     expect(useIdentStore.getState().replay.playheadMs).toBeNull();
-    expect(useIdentStore.getState().replay.playing).toBe(false);
+    expect(useIdentStore.getState().replay.playing).toBe(true);
   });
 });
 

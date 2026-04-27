@@ -658,7 +658,7 @@ const INITIAL_REPLAY_STATE: ReplaySlice = {
   cache: {},
   mode: "live",
   playheadMs: null,
-  playing: false,
+  playing: true,
   speed: 1,
   lastInteractionAt: null,
   loading: false,
@@ -1059,7 +1059,7 @@ export const useIdentStore = create<IdentState>((set) => ({
           recent: enabled ? st.replay.recent : null,
           mode,
           playheadMs,
-          playing: mode === "replay" ? st.replay.playing : false,
+          playing: mode === "replay" ? st.replay.playing : true,
           error: enabled ? st.replay.error : null,
         },
       };
@@ -1128,7 +1128,7 @@ export const useIdentStore = create<IdentState>((set) => ({
         ...st.replay,
         mode: "live",
         playheadMs: null,
-        playing: false,
+        playing: true,
         lastInteractionAt: Date.now(),
       },
     })),
@@ -1143,7 +1143,7 @@ export const useIdentStore = create<IdentState>((set) => ({
           replay: {
             ...st.replay,
             mode: "live",
-            playing: false,
+            playing: true,
             playheadMs: null,
             lastInteractionAt: Date.now(),
           },
@@ -1166,7 +1166,7 @@ export const useIdentStore = create<IdentState>((set) => ({
     set((st) => ({
       replay: {
         ...st.replay,
-        playing: st.replay.mode === "replay" ? playing : false,
+        playing: st.replay.mode === "replay" ? playing : true,
         lastInteractionAt:
           st.replay.mode === "replay"
             ? Date.now()
