@@ -74,23 +74,30 @@ describe("WsClient status", () => {
   it("marks reconnecting status reports as retries", () => {
     const statuses: Array<{
       status: string;
-      info: { isRetry: boolean } | undefined;
+      info:
+        | { isRetry: boolean; retryDelayMs?: number; nextRetryAt?: number }
+        | undefined;
     }> = [];
+    let now = 10_000;
     const client = new WsClient({
       url: "ws://ident.test/ws",
       baseDelayMs: 1000,
       maxDelayMs: 1000,
+      now: () => now,
       onStatus: (status, info) => statuses.push({ status, info }),
     });
 
     client.start();
     MockWebSocket.instances[0].dispatch("close");
+    now += 1000;
     vi.advanceTimersByTime(1000);
 
     expect(statuses).toEqual([
       { status: "connecting", info: { isRetry: false } },
-      { status: "closed", info: undefined },
-      { status: "connecting", info: { isRetry: true } },
+      {
+        status: "connecting",
+        info: { isRetry: true, retryDelayMs: 1000, nextRetryAt: 11_000 },
+      },
     ]);
 
     client.stop();

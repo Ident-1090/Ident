@@ -9,7 +9,6 @@ import (
 	"log"
 	"net/http"
 	"path"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -36,7 +35,6 @@ type Server struct {
 	ctx      context.Context
 	hub      *Hub
 	basePath string
-	dataDir  string
 	web      fs.FS
 	updates  *UpdateChecker
 	replay   ReplayProvider
@@ -45,7 +43,6 @@ type Server struct {
 }
 
 type ServerOptions struct {
-	DataDir       string
 	BasePath      string
 	Web           fs.FS
 	UpdateChecker *UpdateChecker
@@ -66,7 +63,6 @@ func NewServerWithOptions(ctx context.Context, hub *Hub, opts ServerOptions) *Se
 		ctx:      ctx,
 		hub:      hub,
 		basePath: basePath,
-		dataDir:  opts.DataDir,
 		web:      opts.Web,
 		updates:  opts.UpdateChecker,
 		replay:   opts.Replay,
@@ -85,9 +81,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/trails/recent.json", s.serveRecentTrails)
 	mux.HandleFunc("/api/replay/manifest.json", s.serveReplayManifest)
 	mux.HandleFunc("/api/replay/blocks/", s.serveReplayBlock)
-	if s.dataDir != "" {
-		mux.HandleFunc("/api/data/", s.serveReceiverData)
-	}
 	mux.HandleFunc("/api/", http.NotFound)
 	if s.web != nil {
 		mux.HandleFunc("/", s.serveWeb)
@@ -199,16 +192,6 @@ func (s *Server) readPump(c *Client) {
 	}
 }
 
-func (s *Server) serveReceiverData(w http.ResponseWriter, r *http.Request) {
-	name := strings.TrimPrefix(r.URL.Path, "/api/data/")
-	file, ok := localFilePath(s.dataDir, name, false)
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	http.ServeFile(w, r, file)
-}
-
 func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(r.URL.Path, "/")
 	if name == "" {
@@ -222,14 +205,6 @@ func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.NotFound(w, r)
-}
-
-func localFilePath(root, name string, allowSlash bool) (string, bool) {
-	if root == "" || !cleanRelativePath(name, allowSlash) {
-		return "", false
-	}
-	clean := strings.TrimPrefix(path.Clean("/"+name), "/")
-	return filepath.Join(root, filepath.FromSlash(clean)), true
 }
 
 func normalizeBasePath(raw string) (string, error) {

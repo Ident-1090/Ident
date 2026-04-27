@@ -14,7 +14,11 @@ vi.mock("./ws", () => ({
       onText?: (text: string) => void;
       onStatus?: (
         status: "connecting" | "open" | "closed",
-        info?: { isRetry: boolean },
+        info?: {
+          isRetry: boolean;
+          retryDelayMs?: number;
+          nextRetryAt?: number;
+        },
       ) => void;
     };
 
@@ -23,7 +27,11 @@ vi.mock("./ws", () => ({
       onText?: (text: string) => void;
       onStatus?: (
         status: "connecting" | "open" | "closed",
-        info?: { isRetry: boolean },
+        info?: {
+          isRetry: boolean;
+          retryDelayMs?: number;
+          nextRetryAt?: number;
+        },
       ) => void;
     }) {
       this.url = opts.url;
@@ -270,22 +278,11 @@ describe("startFeed route envelopes", () => {
     stop();
   });
 
-  it("publishes HTTP fallback connection status while polling backup data", async () => {
+  it("does not start receiver JSON polling when the websocket is unavailable", async () => {
     vi.useFakeTimers();
-    let aircraftPolls = 0;
     globalThis.fetch = vi.fn(async (url: string) => {
-      if (url.endsWith("/aircraft.json")) {
-        aircraftPolls++;
-        return { json: async () => ({ now: 1, aircraft: [] }) } as Response;
-      }
-      if (url.endsWith("/receiver.json")) {
-        return { json: async () => ({ lat: 37.4, lon: -122.1 }) } as Response;
-      }
-      if (url.endsWith("/stats.json")) {
-        return { json: async () => ({ now: 1 }) } as Response;
-      }
-      if (url.endsWith("/outline.json")) {
-        return { json: async () => ({ points: [] }) } as Response;
+      if (url.endsWith("/trails/recent.json")) {
+        return { ok: false, status: 404, json: async () => ({}) } as Response;
       }
       return { ok: false, json: async () => ({}) } as Response;
     }) as unknown as typeof fetch;
@@ -293,162 +290,17 @@ describe("startFeed route envelopes", () => {
     const stop = startFeed();
     useIdentStore.getState().setConnectionStatus("ws", "closed");
 
-    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(60_000);
 
-    expect(aircraftPolls).toBe(1);
-    expect(useIdentStore.getState().connectionStatus.http).toBe("open");
-
-    stop();
-  });
-
-  it("does not refresh feed freshness when fallback serves the same aircraft frame again", async () => {
-    vi.useFakeTimers();
-    globalThis.fetch = vi.fn(async (url: string) => {
-      if (url.endsWith("/aircraft.json")) {
-        return { json: async () => ({ now: 42, aircraft: [] }) } as Response;
-      }
-      if (url.endsWith("/receiver.json")) {
-        return { json: async () => ({ lat: 37.4, lon: -122.1 }) } as Response;
-      }
-      if (url.endsWith("/stats.json")) {
-        return { json: async () => ({ now: 42 }) } as Response;
-      }
-      if (url.endsWith("/outline.json")) {
-        return { json: async () => ({ points: [] }) } as Response;
-      }
-      return { ok: false, json: async () => ({}) } as Response;
-    }) as unknown as typeof fetch;
-
-    const stop = startFeed();
-    useIdentStore.getState().setConnectionStatus("ws", "closed");
-
-    await vi.advanceTimersByTimeAsync(15_000);
-    const firstSeenAt = useIdentStore.getState().liveState.lastMsgTs;
-
-    await vi.advanceTimersByTimeAsync(1000);
-    const secondSeenAt = useIdentStore.getState().liveState.lastMsgTs;
-
-    expect(firstSeenAt).toBeGreaterThan(0);
-    expect(secondSeenAt).toBe(firstSeenAt);
-
-    stop();
-  });
-
-  it("records fallback trail samples only when the aircraft frame advances", async () => {
-    vi.useFakeTimers();
-    const frames = [
-      {
-        now: 42,
-        aircraft: [{ hex: "abc123", lat: 37.7, lon: -122.0, alt_baro: 2600 }],
-      },
-      {
-        now: 42,
-        aircraft: [{ hex: "abc123", lat: 37.7, lon: -122.0, alt_baro: 2600 }],
-      },
-      {
-        now: 43,
-        aircraft: [{ hex: "abc123", lat: 37.8, lon: -121.9, alt_baro: 2700 }],
-      },
-    ];
-    let aircraftPolls = 0;
-    globalThis.fetch = vi.fn(async (url: string) => {
-      if (url.endsWith("/aircraft.json")) {
-        return {
-          json: async () =>
-            frames[Math.min(aircraftPolls++, frames.length - 1)],
-        } as Response;
-      }
-      if (url.endsWith("/receiver.json")) {
-        return { json: async () => ({ lat: 37.4, lon: -122.1 }) } as Response;
-      }
-      if (url.endsWith("/stats.json")) {
-        return { json: async () => ({ now: 42 }) } as Response;
-      }
-      if (url.endsWith("/outline.json")) {
-        return { json: async () => ({ points: [] }) } as Response;
-      }
-      return { ok: false, json: async () => ({}) } as Response;
-    }) as unknown as typeof fetch;
-
-    const stop = startFeed();
-    useIdentStore.getState().setConnectionStatus("ws", "closed");
-
-    await vi.advanceTimersByTimeAsync(15_000);
-    const firstSeenAt = useIdentStore.getState().liveState.lastMsgTs;
-    expect(useIdentStore.getState().trailsByHex.abc123).toHaveLength(1);
-
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(useIdentStore.getState().liveState.lastMsgTs).toBe(firstSeenAt);
-    expect(useIdentStore.getState().trailsByHex.abc123).toHaveLength(1);
-
-    await vi.advanceTimersByTimeAsync(1000);
-    const state = useIdentStore.getState();
-    expect(state.liveState.lastMsgTs).toBeGreaterThan(firstSeenAt);
-    expect(state.trailsByHex.abc123).toEqual([
-      expect.objectContaining({ lat: 37.7, lon: -122.0, alt: 2600 }),
-      expect.objectContaining({ lat: 37.8, lon: -121.9, alt: 2700 }),
-    ]);
-
-    stop();
-  });
-
-  it("keeps fallback retrying without freshness when aircraft polling fails", async () => {
-    vi.useFakeTimers();
-    globalThis.fetch = vi.fn(async (url: string) => {
-      if (url.endsWith("/aircraft.json")) {
-        throw new Error("aircraft unavailable");
-      }
-      if (url.endsWith("/receiver.json")) {
-        return { json: async () => ({ lat: 37.4, lon: -122.1 }) } as Response;
-      }
-      if (url.endsWith("/stats.json")) {
-        return { json: async () => ({ now: 1 }) } as Response;
-      }
-      if (url.endsWith("/outline.json")) {
-        return { json: async () => ({ points: [] }) } as Response;
-      }
-      return { ok: false, json: async () => ({}) } as Response;
-    }) as unknown as typeof fetch;
-
-    const stop = startFeed();
-    useIdentStore.getState().setConnectionStatus("ws", "closed");
-
-    await vi.advanceTimersByTimeAsync(15_000);
-
-    const state = useIdentStore.getState();
-    expect(state.receiver?.lat).toBe(37.4);
-    expect(state.stats?.now).toBe(1);
-    expect(state.outline?.points).toEqual([]);
-    expect(state.liveState.lastMsgTs).toBe(0);
-    expect(state.connectionStatus.http).toBe("connecting");
-
-    stop();
-  });
-
-  it("times out fallback attempts and stops polling after repeated aircraft failures", async () => {
-    vi.useFakeTimers();
-    globalThis.fetch = vi.fn(
-      () => new Promise<Response>(() => undefined),
-    ) as unknown as typeof fetch;
-
-    const stop = startFeed();
-    useIdentStore.getState().setConnectionStatus("ws", "closed");
-
-    await vi.advanceTimersByTimeAsync(15_000);
-    expect(useIdentStore.getState().connectionStatus.http).toBe("connecting");
-
-    await vi.advanceTimersByTimeAsync(900);
-    expect(useIdentStore.getState().connectionStatus.http).toBe("connecting");
-
-    await vi.advanceTimersByTimeAsync(4_100);
-    const callsAfterFailures = vi.mocked(globalThis.fetch).mock.calls.length;
-    expect(useIdentStore.getState().connectionStatus.http).toBe("closed");
-    expect(callsAfterFailures).toBe(14);
-
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(vi.mocked(globalThis.fetch).mock.calls).toHaveLength(
-      callsAfterFailures,
+    const requestedUrls = vi
+      .mocked(globalThis.fetch)
+      .mock.calls.map(([url]) => String(url));
+    expect(requestedUrls).toContain("/api/replay/manifest.json");
+    expect(requestedUrls).toContain("/api/trails/recent.json");
+    expect(requestedUrls.some((url) => url.startsWith("/api/data/"))).toBe(
+      false,
     );
+    expect(useIdentStore.getState().connectionStatus.http).toBeUndefined();
 
     stop();
   });

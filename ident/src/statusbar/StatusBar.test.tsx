@@ -117,7 +117,7 @@ describe("StatusBar", () => {
     expect(container.textContent).not.toContain("msg/s");
   });
 
-  it("does not show listening state during websocket retry attempts", () => {
+  it("shows retuning state during websocket retry attempts", () => {
     useIdentStore.setState((state) => ({
       connectionStatus: { ws: "connecting" },
       connectionStatusInfo: { ws: { isRetry: true } },
@@ -128,10 +128,49 @@ describe("StatusBar", () => {
       root.render(<StatusBar />);
     });
 
-    expect(container.textContent).toContain("Offline");
+    expect(container.textContent).toContain("Retuning feed");
     expect(container.textContent).not.toContain("Listening for blips");
-    expect(liveCell()!.getAttribute("data-feed-state")).toBe("offline");
+    expect(liveCell()!.getAttribute("data-feed-state")).toBe("retuning");
     expect(container.textContent).not.toContain("msg/s");
+  });
+
+  it("shows websocket retry timing when the next retry is more than one second away", () => {
+    useIdentStore.setState((state) => ({
+      connectionStatus: { ws: "connecting" },
+      connectionStatusInfo: {
+        ws: {
+          isRetry: true,
+          retryDelayMs: 1500,
+          nextRetryAt: Date.now() + 1500,
+        },
+      },
+      liveState: { ...state.liveState, lastMsgTs: 0, mpsBuffer: [] },
+    }));
+
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    expect(container.textContent).toContain("Retuning feed");
+    expect(container.textContent).toContain("retrying in 2s");
+  });
+
+  it("hides websocket retry timing when the next retry is within one second", () => {
+    useIdentStore.setState((state) => ({
+      connectionStatus: { ws: "connecting" },
+      connectionStatusInfo: {
+        ws: { isRetry: true, retryDelayMs: 800, nextRetryAt: Date.now() + 800 },
+      },
+      liveState: { ...state.liveState, lastMsgTs: 0, mpsBuffer: [] },
+    }));
+
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    expect(container.textContent).toContain("Retuning feed");
+    expect(container.textContent).not.toContain("retrying in");
+    expect(liveCell()!.getAttribute("data-feed-state")).toBe("retuning");
   });
 
   it("shows listening state after websocket opens before the first feed snapshot", () => {
@@ -150,57 +189,10 @@ describe("StatusBar", () => {
     expect(container.textContent).not.toContain("msg/s");
   });
 
-  it("shows retuning state during HTTP fallback", () => {
-    useIdentStore.setState((state) => ({
-      connectionStatus: { ws: "closed", http: "open" },
-      liveState: { ...state.liveState, lastMsgTs: 0, mpsBuffer: [] },
-    }));
-
-    act(() => {
-      root.render(<StatusBar />);
-    });
-
-    expect(container.textContent).toContain("Retuning feed");
-    expect(container.textContent).toContain("Trying backup data source");
-    expect(liveCell()!.getAttribute("data-feed-state")).toBe("retuning");
-    expect(container.textContent).not.toContain("Offline");
-  });
-
-  it("shows retuning while the fallback poll is attempting", () => {
-    useIdentStore.setState((state) => ({
-      connectionStatus: { ws: "closed", http: "connecting" },
-      liveState: { ...state.liveState, lastMsgTs: 0, mpsBuffer: [] },
-    }));
-
-    act(() => {
-      root.render(<StatusBar />);
-    });
-
-    expect(container.textContent).toContain("Retuning feed");
-    expect(container.textContent).toContain("Trying backup data source");
-    expect(liveCell()!.getAttribute("data-feed-state")).toBe("retuning");
-    expect(container.textContent).not.toContain("Offline");
-  });
-
-  it("does not keep listening once fallback polling starts", () => {
-    useIdentStore.setState((state) => ({
-      connectionStatus: { ws: "connecting", http: "connecting" },
-      connectionStatusInfo: { ws: { isRetry: false } },
-      liveState: { ...state.liveState, lastMsgTs: 0, mpsBuffer: [] },
-    }));
-
-    act(() => {
-      root.render(<StatusBar />);
-    });
-
-    expect(container.textContent).toContain("Retuning feed");
-    expect(container.textContent).not.toContain("Listening for blips");
-    expect(container.textContent).not.toContain("Offline");
-  });
-
   it("colors the pulse ring with the current feed status tone", () => {
     useIdentStore.setState((state) => ({
-      connectionStatus: { ws: "closed", http: "open" },
+      connectionStatus: { ws: "connecting" },
+      connectionStatusInfo: { ws: { isRetry: true } },
       liveState: { ...state.liveState, lastMsgTs: 0, mpsBuffer: [] },
     }));
 
@@ -212,35 +204,6 @@ describe("StatusBar", () => {
     expect(dot?.getAttribute("style")).toContain(
       "--feed-pulse-color: var(--color-warn)",
     );
-  });
-
-  it("shows degraded connection msg/s when HTTP fallback is delivering fresh snapshots", () => {
-    useIdentStore.setState((state) => ({
-      connectionStatus: { ws: "closed", http: "open" },
-      liveState: { ...state.liveState, lastMsgTs: Date.now(), mpsBuffer: [7] },
-    }));
-
-    act(() => {
-      root.render(<StatusBar />);
-    });
-
-    expect(container.textContent).toContain("Degraded connection");
-    expect(container.textContent).toContain("7 msg/s");
-    expect(liveCell()!.getAttribute("data-feed-state")).toBe("retuning");
-  });
-
-  it("does not show degraded connection for an in-flight fallback retry", () => {
-    useIdentStore.setState((state) => ({
-      connectionStatus: { ws: "closed", http: "connecting" },
-      liveState: { ...state.liveState, lastMsgTs: Date.now(), mpsBuffer: [7] },
-    }));
-
-    act(() => {
-      root.render(<StatusBar />);
-    });
-
-    expect(container.textContent).not.toContain("Degraded connection");
-    expect(container.textContent).toContain("Live");
   });
 
   it("labels stale snapshots explicitly instead of calling them live", () => {
@@ -291,7 +254,7 @@ describe("StatusBar", () => {
 
   it("keeps stale data stable while reconnect attempts cycle transports", () => {
     useIdentStore.setState((state) => ({
-      connectionStatus: { ws: "closed", http: "closed" },
+      connectionStatus: { ws: "closed" },
       liveState: { ...state.liveState, lastMsgTs: Date.now() - 6000 },
     }));
 
@@ -313,22 +276,11 @@ describe("StatusBar", () => {
 
     expect(container.textContent).toContain("Stale data");
     expect(liveCell()!.getAttribute("data-feed-state")).toBe("stale");
-
-    act(() => {
-      useIdentStore.setState((state) => ({
-        connectionStatus: { ...state.connectionStatus, http: "open" },
-      }));
-      vi.advanceTimersByTime(500);
-    });
-
-    expect(container.textContent).toContain("Stale data");
-    expect(container.textContent).not.toContain("Degraded connection");
-    expect(liveCell()!.getAttribute("data-feed-state")).toBe("stale");
   });
 
-  it("keeps disconnected data stable while fallback retries continue", () => {
+  it("keeps disconnected data stable while websocket retries continue", () => {
     useIdentStore.setState((state) => ({
-      connectionStatus: { ws: "closed", http: "closed" },
+      connectionStatus: { ws: "closed" },
       liveState: { ...state.liveState, lastMsgTs: Date.now() - 31_000 },
     }));
 
@@ -341,24 +293,13 @@ describe("StatusBar", () => {
 
     act(() => {
       useIdentStore.setState((state) => ({
-        connectionStatus: { ...state.connectionStatus, http: "connecting" },
+        connectionStatus: { ...state.connectionStatus, ws: "connecting" },
+        connectionStatusInfo: { ws: { isRetry: true } },
       }));
       vi.advanceTimersByTime(500);
     });
 
     expect(container.textContent).toContain("Disconnected");
-    expect(container.textContent).not.toContain("Degraded connection");
-    expect(liveCell()!.getAttribute("data-feed-state")).toBe("dead");
-
-    act(() => {
-      useIdentStore.setState((state) => ({
-        connectionStatus: { ...state.connectionStatus, http: "open" },
-      }));
-      vi.advanceTimersByTime(500);
-    });
-
-    expect(container.textContent).toContain("Disconnected");
-    expect(container.textContent).not.toContain("Degraded connection");
     expect(liveCell()!.getAttribute("data-feed-state")).toBe("dead");
   });
 });

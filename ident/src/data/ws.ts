@@ -1,5 +1,7 @@
 export interface WsStatusInfo {
   isRetry: boolean;
+  retryDelayMs?: number;
+  nextRetryAt?: number;
 }
 
 export interface WsClientOpts {
@@ -45,9 +47,10 @@ export class WsClient {
     this.ws?.close();
   }
 
-  private connect(): void {
+  private connect(reportStatus = true): void {
     if (this.attempt > 0) console.info("[ident/ws] reconnecting");
-    this.opts.onStatus?.("connecting", { isRetry: this.attempt > 0 });
+    if (reportStatus)
+      this.opts.onStatus?.("connecting", { isRetry: this.attempt > 0 });
     const ws = new WebSocket(this.opts.url);
     ws.binaryType = "arraybuffer";
     this.ws = ws;
@@ -69,13 +72,18 @@ export class WsClient {
 
   private scheduleReconnect(): void {
     if (this.closed) return;
-    this.opts.onStatus?.("closed");
     const delay = this.backoffDelay();
+    const nextRetryAt = this.opts.now() + delay;
     console.info(
       `[ident/ws] connection closed; retrying in ${Math.round(delay)}ms`,
     );
     this.attempt++;
-    this.reconnectTimer = setTimeout(() => this.connect(), delay);
+    this.opts.onStatus?.("connecting", {
+      isRetry: true,
+      retryDelayMs: delay,
+      nextRetryAt,
+    });
+    this.reconnectTimer = setTimeout(() => this.connect(false), delay);
   }
 
   private backoffDelay(): number {

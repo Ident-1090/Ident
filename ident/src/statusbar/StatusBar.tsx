@@ -36,6 +36,16 @@ function formatFeedAge(ageMs: number): string {
   return `${Math.max(0, Math.round(ageMs / 1000))}s old`;
 }
 
+function formatRetryDelay(
+  nextRetryAt: number | undefined,
+  now: number,
+): string | null {
+  if (typeof nextRetryAt !== "number") return null;
+  const remainingMs = nextRetryAt - now;
+  if (remainingMs <= 1000) return null;
+  return `retrying in ${Math.ceil(remainingMs / 1000)}s`;
+}
+
 export interface DiagnosticCell {
   k: string;
   v: string;
@@ -140,21 +150,19 @@ function useLiveStatus(): LiveStatus {
     return () => clearInterval(id);
   }, []);
   const wsStatus = status.ws;
-  const wsRetry = statusInfo.ws?.isRetry === true;
-  const httpStatus = status.http;
+  const wsInfo = statusInfo.ws;
+  const wsRetry = wsInfo?.isRetry === true;
+  const retryDetail = formatRetryDelay(wsInfo?.nextRetryAt, now);
   const transportStatuses = Object.values(status);
   const hasTransportStatus = transportStatuses.length > 0;
   if (lastMsgTs === 0) {
-    if (httpStatus === "connecting" || httpStatus === "open") {
+    if (wsStatus === "connecting" && wsRetry) {
       return {
         tier: "retuning",
         label: "Retuning feed",
-        detail: "Trying backup data source",
+        detail: retryDetail ?? undefined,
         showRate: false,
       };
-    }
-    if (httpStatus === "closed") {
-      return { tier: "offline", label: "Offline", showRate: false };
     }
     if (wsStatus === "open" || (wsStatus === "connecting" && !wsRetry)) {
       return {
@@ -169,6 +177,9 @@ function useLiveStatus(): LiveStatus {
         label: "Warming the scope",
         showRate: false,
       };
+    }
+    if (wsStatus === "closed") {
+      return { tier: "offline", label: "Offline", showRate: false };
     }
     return { tier: "offline", label: "Offline", showRate: false };
   }
@@ -189,9 +200,6 @@ function useLiveStatus(): LiveStatus {
       detail: formatFeedAge(age),
       showRate: false,
     };
-  }
-  if (httpStatus === "open" && wsStatus !== "open") {
-    return { tier: "retuning", label: "Degraded connection", showRate: true };
   }
   return { tier: "fresh", label: "Live", showRate: true };
 }

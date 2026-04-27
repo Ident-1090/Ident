@@ -37,6 +37,8 @@ export type ConnStatus = "connecting" | "open" | "closed";
 
 export interface ConnStatusInfo {
   isRetry?: boolean;
+  retryDelayMs?: number;
+  nextRetryAt?: number;
 }
 
 const TREND_BUFFER_LEN = 60;
@@ -556,8 +558,8 @@ export const useIdentStore = create<IdentState>((set) => ({
       retainSelectedAircraft(next, st, frame);
 
       // Push sampled numeric values (alt_baro, gs, rssi) into per-hex rolling
-      // buffers. Keeping this inside ingestAircraft gives us a single call
-      // site regardless of whether frames arrive via WS or HTTP fallback.
+      // buffers. Keeping this inside ingestAircraft gives us a single call site
+      // for live and replayed aircraft frames.
       const altTrendsByHex: Record<string, number[]> = { ...st.altTrendsByHex };
       const gsTrendsByHex: Record<string, number[]> = { ...st.gsTrendsByHex };
       const rssiBufByHex: Record<string, number[]> = { ...st.rssiBufByHex };

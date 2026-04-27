@@ -156,7 +156,6 @@ describe("MapEngine", () => {
       null,
     );
     expect(container.textContent).not.toContain("Listening for blips");
-    expect(container.textContent).not.toContain("Trying backup data source");
   });
 
   it("unsets remote glyph URLs after style load so overlay web fonts render locally", () => {

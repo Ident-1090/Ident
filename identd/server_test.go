@@ -7,8 +7,6 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -108,10 +106,6 @@ func TestServerMountsEndpointsUnderBasePath(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	dataDir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dataDir, "aircraft.json"), []byte(`{"aircraft":[]}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
 	checker := NewUpdateChecker(UpdateCheckerOptions{Enabled: false})
 	indexHTML := `<html><head><link rel="manifest" href="manifest.webmanifest"></head><body><script type="module" src="./assets/app.js"></script></body></html>`
 	web := fstest.MapFS{
@@ -120,7 +114,6 @@ func TestServerMountsEndpointsUnderBasePath(t *testing.T) {
 	}
 	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{
 		BasePath:      "/ident",
-		DataDir:       dataDir,
 		Web:           fs.FS(web),
 		UpdateChecker: checker,
 	})
@@ -152,8 +145,16 @@ func TestServerMountsEndpointsUnderBasePath(t *testing.T) {
 		t.Fatalf("root data status = %d, want 404", rootResp.StatusCode)
 	}
 
+	dataResp, err := ts.Client().Get(ts.URL + "/ident/api/data/aircraft.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataResp.Body.Close()
+	if dataResp.StatusCode != 404 {
+		t.Fatalf("base data status = %d, want 404", dataResp.StatusCode)
+	}
+
 	for _, path := range []string{
-		"/ident/api/data/aircraft.json",
 		"/ident/api/update.json",
 		"/ident/assets/app.js",
 	} {
@@ -321,36 +322,6 @@ func TestHealthz(t *testing.T) {
 	}
 }
 
-func TestServerServesReceiverDataFiles(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "aircraft.json"), []byte(`{"aircraft":[]}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{DataDir: dir})
-	ts := httptest.NewServer(srv.Handler())
-	defer ts.Close()
-
-	resp, err := ts.Client().Get(ts.URL + "/api/data/aircraft.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.StatusCode != 200 {
-		t.Fatalf("status = %d, want 200", resp.StatusCode)
-	}
-	if string(body) != `{"aircraft":[]}` {
-		t.Fatalf("body = %s", body)
-	}
-}
-
 func TestServerServesRecentTrailsOverHTTP(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -384,24 +355,6 @@ func TestServerServesRecentTrailsOverHTTP(t *testing.T) {
 	points := body.Aircraft["abc123"]
 	if len(points) != 1 || points[0].Ts != 100_000 {
 		t.Fatalf("trail points = %#v", points)
-	}
-}
-
-func TestServerRejectsReceiverDataTraversal(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{DataDir: t.TempDir()})
-	ts := httptest.NewServer(srv.Handler())
-	defer ts.Close()
-
-	resp, err := ts.Client().Get(ts.URL + "/api/data/../server.go")
-	if err != nil {
-		t.Fatal(err)
-	}
-	resp.Body.Close()
-	if resp.StatusCode != 404 {
-		t.Fatalf("status = %d, want 404", resp.StatusCode)
 	}
 }
 

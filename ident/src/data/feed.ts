@@ -12,13 +12,8 @@ import type {
 import { WsClient } from "./ws";
 
 const WS_URL = "api/ws";
-const BASE_HTTP = "api/data";
 const TRAILS_HTTP_URL = "api/trails/recent.json";
-const FALLBACK_AFTER_MS = 15_000;
-const POLL_INTERVAL_MS = 1000;
-const FALLBACK_FETCH_TIMEOUT_MS = 800;
 const TRAIL_SEED_FETCH_TIMEOUT_MS = 30_000;
-const MAX_FALLBACK_FAILURES = 3;
 const TRAIL_POINT_CAP = 1500;
 
 type RouteEntry = {
@@ -220,26 +215,6 @@ async function fetchTrailSeed(signal: AbortSignal): Promise<void> {
   }
 }
 
-async function fetchJsonWithTimeout<T>(url: string): Promise<T> {
-  const controller = new AbortController();
-  let timeout: ReturnType<typeof setTimeout> | null = null;
-  const response = fetch(url, {
-    cache: "no-store",
-    signal: controller.signal,
-  }).then((r) => r.json() as Promise<T>);
-  const timeoutReached = new Promise<never>((_, reject) => {
-    timeout = setTimeout(() => {
-      controller.abort();
-      reject(new Error("fallback request timed out"));
-    }, FALLBACK_FETCH_TIMEOUT_MS);
-  });
-  try {
-    return await Promise.race([response, timeoutReached]);
-  } finally {
-    if (timeout) clearTimeout(timeout);
-  }
-}
-
 export function startFeed(): () => void {
   const store = useIdentStore.getState();
   const trailSeedController = new AbortController();
@@ -257,79 +232,8 @@ export function startFeed(): () => void {
   void fetchTrailSeed(trailSeedController.signal);
   client.start();
 
-  let pollTimer: ReturnType<typeof setInterval> | null = null;
-  const fallbackCheck = setTimeout(() => {
-    if (useIdentStore.getState().connectionStatus.ws !== "open") {
-      pollTimer = startPolling();
-    }
-  }, FALLBACK_AFTER_MS);
-
-  const unsub = useIdentStore.subscribe((st) => {
-    if (pollTimer && st.connectionStatus.ws === "open") {
-      clearInterval(pollTimer);
-      pollTimer = null;
-      useIdentStore.getState().setConnectionStatus("http", "closed");
-    }
-  });
-
   return () => {
-    clearTimeout(fallbackCheck);
-    if (pollTimer) clearInterval(pollTimer);
-    store.setConnectionStatus("http", "closed");
-    unsub();
     trailSeedController.abort();
     client.stop();
   };
-}
-
-function startPolling(): ReturnType<typeof setInterval> {
-  let consecutiveFailures = 0;
-  let inFlight = false;
-  let pollTimer: ReturnType<typeof setInterval> | null = null;
-  const stopPolling = () => {
-    if (!pollTimer) return;
-    clearInterval(pollTimer);
-    pollTimer = null;
-  };
-  const tick = async () => {
-    if (inFlight || consecutiveFailures >= MAX_FALLBACK_FAILURES) return;
-    inFlight = true;
-    useIdentStore.getState().setConnectionStatus("http", "connecting");
-    try {
-      const [ac, rx, st, ol] = await Promise.allSettled([
-        fetchJsonWithTimeout<AircraftFrame>(
-          appPath(`${BASE_HTTP}/aircraft.json`),
-        ),
-        fetchJsonWithTimeout<ReceiverJson>(
-          appPath(`${BASE_HTTP}/receiver.json`),
-        ),
-        fetchJsonWithTimeout<StatsJson>(appPath(`${BASE_HTTP}/stats.json`)),
-        fetchJsonWithTimeout<OutlineJson>(appPath(`${BASE_HTTP}/outline.json`)),
-      ]);
-      const httpOk = ac.status === "fulfilled";
-      // Receiver first so downstream consumers see site coords on the first tick.
-      if (rx.status === "fulfilled")
-        dispatch({ type: "receiver", data: rx.value });
-      if (ac.status === "fulfilled")
-        dispatch({ type: "aircraft", data: ac.value });
-      if (st.status === "fulfilled")
-        dispatch({ type: "stats", data: st.value });
-      if (ol.status === "fulfilled")
-        dispatch({ type: "outline", data: ol.value });
-      consecutiveFailures = httpOk ? 0 : consecutiveFailures + 1;
-      const exhausted = consecutiveFailures >= MAX_FALLBACK_FAILURES;
-      useIdentStore
-        .getState()
-        .setConnectionStatus(
-          "http",
-          httpOk ? "open" : exhausted ? "closed" : "connecting",
-        );
-      if (exhausted) stopPolling();
-    } finally {
-      inFlight = false;
-    }
-  };
-  void tick();
-  pollTimer = setInterval(() => void tick(), POLL_INTERVAL_MS);
-  return pollTimer;
 }

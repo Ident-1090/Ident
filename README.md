@@ -347,8 +347,8 @@ setup works at `/` or behind a prefix such as `/ident`.
 ```text
 browser
   -> /              web UI
-  -> /api/ws        live traffic, config, routes, and trails
-  -> /api/data/*    receiver JSON fallback
+  -> /api/ws        live traffic, config, and routes
+  -> /api/trails/*  recent trail seed
   -> /api/replay/*  replay manifest and finalized replay blocks
   -> /api/update.json
   -> /healthz       service health

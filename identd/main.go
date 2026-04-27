@@ -152,7 +152,6 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 
 	srv := NewServerWithOptions(ctx, hub, ServerOptions{
 		BasePath:      cfg.BasePath,
-		DataDir:       cfg.DataDir,
 		Web:           bundledWeb(),
 		UpdateChecker: NewUpdateChecker(updateCheckerOptions(cfg)),
 		Replay:        replay,
