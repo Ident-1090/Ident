@@ -8,6 +8,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { useIdentStore } from "../data/store";
 import type { Aircraft } from "../data/types";
+import { AIRCRAFT_GLYPH_COLORS_BY_TONE } from "../map/alt";
 import { FiltersPanel } from "./FiltersPanel";
 
 const AIRLINER: Aircraft = {
@@ -73,8 +74,18 @@ describe("FiltersPanel", () => {
       '[data-testid="altitude-scale-gradient"]',
     );
     const style = gradient?.getAttribute("style") ?? "";
-    expect(style).toContain("#69AFCB");
-    expect(style).not.toContain("#1F5673");
+    expect(
+      serializedStyleIncludesColor(
+        style,
+        AIRCRAFT_GLYPH_COLORS_BY_TONE.dark[5],
+      ),
+    ).toBe(true);
+    expect(
+      serializedStyleIncludesColor(
+        style,
+        AIRCRAFT_GLYPH_COLORS_BY_TONE.light[5],
+      ),
+    ).toBe(false);
   });
 
   it("writes altitude slider changes into the filter query", () => {
@@ -201,3 +212,18 @@ describe("FiltersPanel", () => {
     expect(st.filter.altRangeFt).toEqual([5000, 45000]);
   });
 });
+
+function serializedStyleIncludesColor(style: string, hex: string): boolean {
+  return (
+    style.toLowerCase().includes(hex.toLowerCase()) ||
+    style.includes(hexToRgbStyleColor(hex))
+  );
+}
+
+function hexToRgbStyleColor(hex: string): string {
+  const raw = hex.replace("#", "");
+  const r = Number.parseInt(raw.slice(0, 2), 16);
+  const g = Number.parseInt(raw.slice(2, 4), 16);
+  const b = Number.parseInt(raw.slice(4, 6), 16);
+  return `rgb(${r}, ${g}, ${b})`;
+}
