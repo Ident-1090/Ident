@@ -40,7 +40,7 @@
     "@vite-pwa/assets-generator": "^1.0.2",
     "@vitejs/plugin-react": "^4.3.4",
     "husky": "9.1.7",
-    "jsdom": "^25.0.1",
+    "jsdom": "^29.1.0",
     "lint-staged": "16.4.0",
     "maplibre-gl": "^5.24.0",
     "tailwindcss": "^4.2.4",
