@@ -9,6 +9,7 @@ import {
   sampleMpsOnce,
   selectDisplayAircraftMap,
   selectDisplayTrailsByHex,
+  trailPointFromAircraft,
   useIdentStore,
 } from "./store";
 import type { AircraftFrame } from "./types";
@@ -1369,8 +1370,9 @@ describe("recordTrailPoint", () => {
       store.recordTrailPoint("abc123", {
         lat: 0,
         lon: 0,
-        alt: "ground",
+        alt: null,
         ts: base + i * 4000,
+        ground: true,
       });
     }
     const buf = useIdentStore.getState().trailsByHex.abc123;
@@ -1393,7 +1395,7 @@ describe("recordTrailPoint", () => {
     store.recordTrailPoint("abc123", {
       lat: 34.2,
       lon: -118.3,
-      alt: "ground",
+      alt: null,
       ts: 130_000,
       ground: true,
     });
@@ -1414,7 +1416,7 @@ describe("recordTrailPoint", () => {
     store.recordTrailPoint("def456", {
       lat: 35.2,
       lon: -119.3,
-      alt: "ground",
+      alt: null,
       ts: 130_000,
       ground: true,
     });
@@ -1443,7 +1445,7 @@ describe("recordTrailPoint", () => {
     store.recordTrailPoint("abc123", {
       lat: 34.2,
       lon: -118.3,
-      alt: "ground",
+      alt: null,
       ts: 130_000,
       ground: true,
     });
@@ -1490,7 +1492,7 @@ describe("selectDisplayTrailsByHex", () => {
         ...st.trailsByHex,
         abc123: [
           { lat: 1, lon: 1, alt: 1000, ts: 1_000, segment: 0 },
-          { lat: 2, lon: 2, alt: "ground", ts: 2_000, segment: 0 },
+          { lat: 2, lon: 2, alt: null, ground: true, ts: 2_000, segment: 0 },
           { lat: 3, lon: 3, alt: 1500, ts: 3_000, segment: 1 },
         ],
       },
@@ -1576,6 +1578,23 @@ describe("update dismissal persistence", () => {
     const fresh = await import("./preferences");
 
     expect(fresh.usePreferencesStore.getState().updateDismissal).toBeNull();
+  });
+});
+
+describe("trailPointFromAircraft", () => {
+  it("stores upstream ground altitude as null plus ground state", () => {
+    expect(
+      trailPointFromAircraft(
+        { hex: "abc123", lat: 34.1, lon: -118.2, alt_baro: "ground" },
+        100_000,
+      ),
+    ).toMatchObject({
+      lat: 34.1,
+      lon: -118.2,
+      alt: null,
+      ts: 100_000,
+      ground: true,
+    });
   });
 });
 

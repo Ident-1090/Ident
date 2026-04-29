@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { TrailPoint } from "../data/types";
 import { altSamplesFromTrail } from "./Inspector";
 
-function pt(ts: number, alt: number | "ground"): TrailPoint {
-  return { lat: 0, lon: 0, alt, ts, segment: 0 };
+function pt(ts: number, alt: number | null, ground = false): TrailPoint {
+  return { lat: 0, lon: 0, alt, ground, ts, segment: 0 };
 }
 
 describe("altSamplesFromTrail", () => {
@@ -17,12 +17,12 @@ describe("altSamplesFromTrail", () => {
     expect(altSamplesFromTrail(trail)).toEqual([1000, 2000, 3000]);
   });
 
-  it("filters out 'ground' samples but preserves the airborne sequence", () => {
+  it("filters out ground samples but preserves the airborne sequence", () => {
     const trail = [
-      pt(0, "ground"),
+      pt(0, null, true),
       pt(1000, 500),
       pt(2000, 1500),
-      pt(3000, "ground"),
+      pt(3000, null, true),
     ];
     expect(altSamplesFromTrail(trail)).toEqual([500, 1500]);
   });

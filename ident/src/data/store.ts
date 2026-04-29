@@ -1628,11 +1628,10 @@ function aircraftTrailAltitude(
   ac: Aircraft,
   ground: boolean,
 ): { alt: TrailPoint["alt"]; alt_source?: TrailPoint["alt_source"] } {
-  if (ac.alt_baro === "ground") return { alt: "ground" };
   if (typeof ac.alt_baro === "number") {
     return { alt: ac.alt_baro, alt_source: "baro" };
   }
-  if (ground) return { alt: "ground" };
+  if (ground) return { alt: null };
   if (typeof ac.alt_geom === "number") {
     return { alt: ac.alt_geom, alt_source: "geom" };
   }

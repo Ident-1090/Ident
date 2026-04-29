@@ -11,8 +11,8 @@ import {
 
 describe("altColor", () => {
   it("keeps emergency, ground, and missing states on fixed colors", () => {
-    expect(altColor(12_000, "general")).toBe("#FF3900");
-    expect(altColor("ground")).toBe("#929292");
+    expect(altColor(12_000, false, "general")).toBe("#FF3900");
+    expect(altColor(null, true)).toBe("#929292");
     expect(altColor(undefined)).toBe("#6B6F73");
   });
 
@@ -43,8 +43,8 @@ describe("altColor", () => {
 
 describe("altTrailColor", () => {
   it("keeps emergency, ground, and missing states fixed for trails too", () => {
-    expect(altTrailColor(12_000, "general")).toBe("#FF3900");
-    expect(altTrailColor("ground")).toBe("#929292");
+    expect(altTrailColor(12_000, false, "general")).toBe("#FF3900");
+    expect(altTrailColor(null, true)).toBe("#929292");
     expect(altTrailColor(undefined)).toBe("#6B6F73");
   });
 

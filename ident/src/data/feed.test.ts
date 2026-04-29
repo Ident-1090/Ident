@@ -312,35 +312,6 @@ describe("startFeed route envelopes", () => {
     stop();
   });
 
-  it("fills segment zero for legacy trail seed points", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    globalThis.fetch = vi.fn(async (url: string) => {
-      if (url.endsWith("/trails/recent.json")) {
-        return {
-          ok: true,
-          json: async () => ({
-            aircraft: {
-              abc123: [{ lat: 34.0, lon: -118.1, alt: 2800, ts: 90_000 }],
-            },
-          }),
-        } as Response;
-      }
-      return { ok: false, status: 404, json: async () => ({}) } as Response;
-    }) as unknown as typeof fetch;
-
-    const stop = startFeed();
-
-    await vi.waitFor(() => {
-      expect(warn).toHaveBeenCalledWith(
-        "trail seed filled segment=0 for 1 legacy point(s)",
-      );
-    });
-    expect(useIdentStore.getState().trailsByHex.abc123).toEqual([
-      { lat: 34.0, lon: -118.1, alt: 2800, ts: 90_000, segment: 0 },
-    ]);
-    stop();
-  });
-
   it("seeds recent replay frames through the recent trail endpoint", async () => {
     globalThis.fetch = vi.fn(async (url: string) => {
       if (url.endsWith("/replay/manifest.json")) {

@@ -17,7 +17,6 @@ import (
 
 const (
 	restartTrailCacheName = "trails.json.gz"
-	trailCacheVersion     = 2
 	trailSegmentDwell     = time.Minute
 	trailAirborneNoise    = 10 * time.Second
 )
@@ -47,7 +46,7 @@ type TrailStore struct {
 type trailPoint struct {
 	Lat       float64  `json:"lat"`
 	Lon       float64  `json:"lon"`
-	Alt       any      `json:"alt"`
+	Alt       *float64 `json:"alt"`
 	Ts        int64    `json:"ts"`
 	Ground    bool     `json:"ground,omitempty"`
 	Stale     bool     `json:"stale,omitempty"`
@@ -64,7 +63,6 @@ type trailEnvelopeData struct {
 }
 
 type trailCacheFile struct {
-	Version  int                           `json:"version"`
 	Aircraft map[string][]trailPoint       `json:"aircraft"`
 	States   map[string]trailAircraftState `json:"states,omitempty"`
 }
@@ -213,15 +211,14 @@ func (s *TrailStore) LoadRestartCache() error {
 
 	gz, err := gzip.NewReader(f)
 	if err != nil {
-		return err
+		log.Printf("trails: ignoring unreadable cache: %v", err)
+		return nil
 	}
 	defer gz.Close()
 
 	var cached trailCacheFile
 	if err := json.NewDecoder(gz).Decode(&cached); err != nil {
-		return err
-	}
-	if cached.Version != trailCacheVersion {
+		log.Printf("trails: ignoring unreadable cache: %v", err)
 		return nil
 	}
 
@@ -229,9 +226,6 @@ func (s *TrailStore) LoadRestartCache() error {
 	defer s.mu.Unlock()
 	s.aircraft = copyTrailAircraft(cached.Aircraft)
 	s.trailStates = copyTrailStates(cached.States)
-	if len(s.trailStates) == 0 {
-		s.trailStates = rebuildTrailStates(s.aircraft)
-	}
 	if latest := latestTrailTimestamp(s.aircraft); latest > 0 {
 		s.pruneLocked(trailCutoff(latest, s.memoryWindow))
 	}
@@ -252,7 +246,6 @@ func (s *TrailStore) SaveRestartCache() error {
 	}
 	generation := s.cacheGeneration
 	cached := trailCacheFile{
-		Version:  trailCacheVersion,
 		Aircraft: copyTrailAircraft(s.aircraft),
 		States:   copyTrailStates(s.trailStates),
 	}
@@ -355,12 +348,12 @@ func trailGround(ac aircraftTrailInput) bool {
 	return false
 }
 
-func trailAltitude(ac aircraftTrailInput, ground bool) (any, string, bool) {
+func trailAltitude(ac aircraftTrailInput, ground bool) (*float64, string, bool) {
 	if len(ac.AltBaro) > 0 && string(ac.AltBaro) != "null" {
 		var label string
 		if err := json.Unmarshal(ac.AltBaro, &label); err == nil {
 			if label == "ground" {
-				return "ground", "", false
+				return nil, "", false
 			}
 			return nil, "", true
 		}
@@ -371,7 +364,7 @@ func trailAltitude(ac aircraftTrailInput, ground bool) (any, string, bool) {
 		return nil, "", true
 	}
 	if ground {
-		return "ground", "", false
+		return nil, "", false
 	}
 	if ac.AltGeom != nil && numberIsFinite(*ac.AltGeom) {
 		return roundAltitude(*ac.AltGeom), "geom", false
@@ -401,12 +394,12 @@ func (s *TrailStore) logInvalidAltitudeLocked(hex string) {
 	log.Printf("trails: invalid alt_baro for %s", hex)
 }
 
-func roundAltitude(alt float64) any {
+func roundAltitude(alt float64) *float64 {
 	rounded := math.Round(alt)
 	if math.Abs(alt-rounded) < 0.001 {
-		return int(rounded)
+		return &rounded
 	}
-	return alt
+	return &alt
 }
 
 func trailCutoff(nowMs int64, window time.Duration) int64 {
@@ -441,9 +434,6 @@ func (s *TrailStore) pruneLocked(cutoff int64) {
 			continue
 		}
 		s.aircraft[hex] = points
-		if _, ok := s.trailStates[hex]; !ok {
-			s.trailStates[hex] = trailStateFromSeries(points)
-		}
 	}
 }
 
@@ -473,34 +463,6 @@ func (s *TrailStore) assignTrailSegmentLocked(hex string, point trailPoint) trai
 	state.LastGround = point.Ground
 	s.trailStates[hex] = state
 	return point
-}
-
-func trailStateFromSeries(points []trailPoint) trailAircraftState {
-	var state trailAircraftState
-	for _, point := range points {
-		state.Segment = point.Segment
-		state.LastTs = point.Ts
-		state.LastGround = point.Ground
-		if point.Ground {
-			if state.GroundSince == 0 {
-				state.GroundSince = point.Ts
-			}
-		} else {
-			state.GroundSince = 0
-		}
-	}
-	return state
-}
-
-func rebuildTrailStates(aircraft map[string][]trailPoint) map[string]trailAircraftState {
-	out := make(map[string]trailAircraftState, len(aircraft))
-	for hex, points := range aircraft {
-		if len(points) == 0 {
-			continue
-		}
-		out[hex] = trailStateFromSeries(points)
-	}
-	return out
 }
 
 func latestTrailTimestamp(aircraft map[string][]trailPoint) int64 {

@@ -185,30 +185,10 @@ function isTrailPoint(point: unknown): point is TrailPoint {
   return (
     typeof candidate.lat === "number" &&
     typeof candidate.lon === "number" &&
-    (typeof candidate.alt === "number" ||
-      candidate.alt === "ground" ||
-      candidate.alt === null) &&
+    (typeof candidate.alt === "number" || candidate.alt === null) &&
     typeof candidate.ts === "number" &&
     typeof candidate.segment === "number"
   );
-}
-
-function legacyTrailPoint(point: unknown): TrailPoint | null {
-  if (typeof point !== "object" || point == null) return null;
-  const candidate = point as Partial<TrailPoint>;
-  if (
-    typeof candidate.lat !== "number" ||
-    typeof candidate.lon !== "number" ||
-    !(
-      typeof candidate.alt === "number" ||
-      candidate.alt === "ground" ||
-      candidate.alt === null
-    ) ||
-    typeof candidate.ts !== "number"
-  ) {
-    return null;
-  }
-  return { ...candidate, segment: 0 } as TrailPoint;
 }
 
 function normalizeTrailSeed(
@@ -216,27 +196,11 @@ function normalizeTrailSeed(
 ): Map<string, TrailPoint[]> {
   const trails = new Map<string, TrailPoint[]>();
   let dropped = 0;
-  let legacy = 0;
   for (const [hex, points] of Object.entries(aircraft ?? {})) {
     if (!Array.isArray(points)) continue;
-    const valid: TrailPoint[] = [];
-    for (const point of points) {
-      if (isTrailPoint(point)) {
-        valid.push(point);
-        continue;
-      }
-      const compat = legacyTrailPoint(point);
-      if (compat) {
-        legacy += 1;
-        valid.push(compat);
-        continue;
-      }
-      dropped += 1;
-    }
+    const valid = points.filter(isTrailPoint);
+    dropped += points.length - valid.length;
     if (valid.length > 0) trails.set(hex, valid);
-  }
-  if (legacy > 0) {
-    console.warn(`trail seed filled segment=0 for ${legacy} legacy point(s)`);
   }
   if (dropped > 0) {
     console.warn(`trail seed dropped ${dropped} invalid point(s)`);

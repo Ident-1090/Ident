@@ -53,7 +53,11 @@ export function buildAircraftFeatureCollection(
     features.push(
       pointFeature([ac.lon, ac.lat], {
         hex: ac.hex,
-        color: altColor(ac.alt_baro, ac.emergency),
+        color: altColor(
+          aircraftAltitude(ac),
+          aircraftOnGround(ac),
+          ac.emergency,
+        ),
         track: typeof ac.track === "number" ? ac.track : 0,
         icon: aircraftIconId(ac),
         labelCs: labelAtoms.cs,
@@ -218,6 +222,16 @@ function routeInfoFor(
   const cs = ac.flight?.trim();
   if (!cs) return null;
   return routeByCallsign[cs] ?? null;
+}
+
+function aircraftAltitude(ac: Aircraft): number | null {
+  return typeof ac.alt_baro === "number" ? ac.alt_baro : null;
+}
+
+function aircraftOnGround(ac: Aircraft): boolean {
+  return (
+    ac.alt_baro === "ground" || ac.airground === 1 || ac.airground === "ground"
+  );
 }
 
 function routeLabel(route: RouteInfo): string {

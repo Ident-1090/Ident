@@ -26,7 +26,7 @@ const SWA: Aircraft = {
   type: "adsb_icao",
 };
 
-function point(ts: number, alt: number | "ground" = 12000): TrailPoint {
+function point(ts: number, alt: number | null = 12000): TrailPoint {
   return {
     lat: 37 + ts / 100_000,
     lon: -122 - ts / 100_000,

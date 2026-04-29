@@ -221,7 +221,8 @@ export type LabelMode = "arrow" | "icon";
 export interface TrailPoint {
   lat: number;
   lon: number;
-  alt: number | "ground" | null;
+  // Altitude is feet or unknown; ground state is carried by ground.
+  alt: number | null;
   ts: number;
   ground?: boolean;
   stale?: boolean;

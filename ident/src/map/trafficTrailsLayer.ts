@@ -297,7 +297,7 @@ function appendSegmentQuad(
 ): void {
   const start = lngLatToMercator(startPoint.lon, startPoint.lat);
   const end = lngLatToMercator(endPoint.lon, endPoint.lat);
-  const color = rgbaFromHex(altTrailColor(startPoint.alt));
+  const color = rgbaFromHex(altTrailColor(startPoint.alt, startPoint.ground));
   appendTrailVertex(floats, start, end, 0, -1, halfWidth, color, alpha);
   appendTrailVertex(floats, start, end, 0, 1, halfWidth, color, alpha);
   appendTrailVertex(floats, start, end, 1, -1, halfWidth, color, alpha);

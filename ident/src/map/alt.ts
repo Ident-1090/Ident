@@ -50,11 +50,12 @@ const GRADIENT_SEGMENT_STEPS = 6;
 // Original discrete altitude palette for aircraft glyphs, traffic dots, and
 // other non-trail overlays. Emergency and ground keep their fixed semantics.
 export function altColor(
-  alt: number | "ground" | null | undefined,
+  alt: number | null | undefined,
+  ground = false,
   emergency?: string,
 ): string {
   if (emergency && emergency !== "none") return EMERGENCY_COLOR;
-  if (alt === "ground") return GROUND_COLOR;
+  if (ground) return GROUND_COLOR;
   if (alt == null) return UNKNOWN_COLOR;
   for (const band of ALT_DISCRETE_BANDS) {
     if (alt < band.maxAltFt) return band.color;
@@ -66,11 +67,12 @@ export function altColor(
 // airborne anchors in a perceptual color space so transitions stay saturated
 // instead of going muddy in sRGB midpoints.
 export function altTrailColor(
-  alt: number | "ground" | null | undefined,
+  alt: number | null | undefined,
+  ground = false,
   emergency?: string,
 ): string {
   if (emergency && emergency !== "none") return EMERGENCY_COLOR;
-  if (alt === "ground") return GROUND_COLOR;
+  if (ground) return GROUND_COLOR;
   if (alt == null) return UNKNOWN_COLOR;
   const clamped = Math.max(
     TRAIL_COLOR_STOPS[0].altFt,
@@ -88,8 +90,11 @@ export function altTrailColor(
   return TRAIL_COLOR_STOPS[TRAIL_COLOR_STOPS.length - 1].color;
 }
 
-export function altLosColor(alt: number | "ground" | null | undefined): string {
-  return mixHex(altColor(alt), LOS_MUTE_COLOR, 0.42);
+export function altLosColor(
+  alt: number | null | undefined,
+  ground = false,
+): string {
+  return mixHex(altColor(alt, ground), LOS_MUTE_COLOR, 0.42);
 }
 
 export function altGradientCss(): string {

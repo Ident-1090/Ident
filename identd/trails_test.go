@@ -34,6 +34,10 @@ type trailPointForTest struct {
 	AltGeom   float64 `json:"alt_geom"`
 }
 
+func floatPtrForTest(v float64) *float64 {
+	return &v
+}
+
 func decodeTrailEnvelopeForTest(t *testing.T, b []byte) trailEnvelopeForTest {
 	t.Helper()
 	var env trailEnvelopeForTest
@@ -69,7 +73,7 @@ func TestTrailStoreSamplesAndPrunesAircraftPositions(t *testing.T) {
 	delta = store.IngestAircraftJSON([]byte(`{"now":106,"aircraft":[{"hex":"abc123","lat":34.3,"lon":-118.4,"alt_baro":"ground"}]}`))
 	env = decodeTrailEnvelopeForTest(t, delta)
 	points = env.Data.Aircraft["abc123"]
-	if len(points) != 1 || points[0].Alt != "ground" || points[0].Ts != 106_000 {
+	if len(points) != 1 || points[0].Alt != nil || !points[0].Ground || points[0].Ts != 106_000 {
 		t.Fatalf("unexpected sampled point: %#v", points)
 	}
 
@@ -301,25 +305,11 @@ func TestTrailStoreKeepsUnknownAltitudeUnknown(t *testing.T) {
 	}
 }
 
-func TestTrailStoreRejectsOldRestartCacheVersion(t *testing.T) {
+func TestTrailStoreIgnoresUnreadableRestartCache(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, restartTrailCacheName)
-	f, err := os.Create(path)
-	if err != nil {
-		t.Fatalf("create cache: %v", err)
-	}
-	gz := gzip.NewWriter(f)
-	_, writeErr := gz.Write([]byte(`{"version":1,"aircraft":{"abc123":[{"lat":34.1,"lon":-118.2,"alt":3000,"ts":100000}]}}`))
-	closeGzErr := gz.Close()
-	closeFileErr := f.Close()
-	if writeErr != nil {
-		t.Fatalf("write cache: %v", writeErr)
-	}
-	if closeGzErr != nil {
-		t.Fatalf("close gzip: %v", closeGzErr)
-	}
-	if closeFileErr != nil {
-		t.Fatalf("close file: %v", closeFileErr)
+	if err := os.WriteFile(path, []byte(`not gzip`), 0o644); err != nil {
+		t.Fatalf("write cache: %v", err)
 	}
 
 	store := NewTrailStore(TrailOptions{
@@ -331,7 +321,7 @@ func TestTrailStoreRejectsOldRestartCacheVersion(t *testing.T) {
 		t.Fatalf("load restart cache: %v", err)
 	}
 	if snaps := store.SnapshotEnvelopes(); len(snaps) != 0 {
-		t.Fatalf("old cache snapshots = %d, want 0", len(snaps))
+		t.Fatalf("unreadable cache snapshots = %d, want 0", len(snaps))
 	}
 }
 
@@ -377,10 +367,9 @@ func TestTrailStoreRestartCachePreservesActiveGroundDwellState(t *testing.T) {
 	}
 	gz := gzip.NewWriter(f)
 	cache := trailCacheFile{
-		Version: trailCacheVersion,
 		Aircraft: map[string][]trailPoint{
 			"abc123": {
-				{Lat: 34.1, Lon: -118.2, Alt: 3000, Ts: 100_000, Segment: 0},
+				{Lat: 34.1, Lon: -118.2, Alt: floatPtrForTest(3000), Ts: 100_000, Segment: 0},
 			},
 		},
 		States: map[string]trailAircraftState{
