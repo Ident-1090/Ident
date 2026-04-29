@@ -27,7 +27,13 @@ const SWA: Aircraft = {
 };
 
 function point(ts: number, alt: number | "ground" = 12000): TrailPoint {
-  return { lat: 37 + ts / 100_000, lon: -122 - ts / 100_000, alt, ts };
+  return {
+    lat: 37 + ts / 100_000,
+    lon: -122 - ts / 100_000,
+    alt,
+    ts,
+    segment: 0,
+  };
 }
 
 function snapshot(
@@ -126,6 +132,33 @@ describe("buildTrafficTrailsSnapshot", () => {
     });
 
     expect(snap.vertexCount).toBe((selectedTrail.length - 1) * 6);
+  });
+
+  it("does not connect across stale points or segment changes", () => {
+    const trail: TrailPoint[] = [
+      point(1_000),
+      point(2_000),
+      { ...point(3_000), stale: true },
+      { ...point(4_000), segment: 1 },
+      { ...point(5_000), segment: 1 },
+    ];
+    const snap = snapshot({
+      aircraft: [UAL],
+      trailsByHex: { [UAL.hex]: trail },
+      selectedHex: UAL.hex,
+      trailFadeSec: 10,
+      nowMs: 6_000,
+    });
+
+    expect(snap.vertexCount).toBe(12);
+    const first = lngLatToMercator(point(1_000).lon, point(1_000).lat);
+    const second = lngLatToMercator(point(2_000).lon, point(2_000).lat);
+    const fourth = lngLatToMercator(point(4_000).lon, point(4_000).lat);
+    const fifth = lngLatToMercator(point(5_000).lon, point(5_000).lat);
+    expect(snap.vertices[0]).toBeCloseTo(first.x);
+    expect(snap.vertices[2]).toBeCloseTo(second.x);
+    expect(snap.vertices[66]).toBeCloseTo(fourth.x);
+    expect(snap.vertices[68]).toBeCloseTo(fifth.x);
   });
 
   it("returns an empty snapshot when disabled", () => {

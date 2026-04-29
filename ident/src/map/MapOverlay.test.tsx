@@ -787,8 +787,8 @@ describe("MapOverlay", () => {
       selectedHex: UAL.hex,
       trailsByHex: {
         [UAL.hex]: [
-          { lat: 37.1, lon: -122.1, alt: 33000, ts: 1 },
-          { lat: 37.2, lon: -122.2, alt: 33000, ts: 2 },
+          { lat: 37.1, lon: -122.1, alt: 33000, ts: 1, segment: 0 },
+          { lat: 37.2, lon: -122.2, alt: 33000, ts: 2, segment: 0 },
         ],
       },
     });
@@ -1299,8 +1299,14 @@ describe("MapOverlay", () => {
       selectedHex: UAL.hex,
       trailsByHex: {
         [UAL.hex]: [
-          { lat: 37.4, lon: -122.1, alt: 10_000, ts: 1_000 },
-          { lat: 37.42, lon: -122.08, alt: 12_000, ts: 2_000 },
+          { lat: 37.4, lon: -122.1, alt: 10_000, ts: 1_000, segment: 0 },
+          {
+            lat: 37.42,
+            lon: -122.08,
+            alt: 12_000,
+            ts: 2_000,
+            segment: 0,
+          },
         ],
       },
       map: {

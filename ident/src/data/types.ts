@@ -221,9 +221,21 @@ export type LabelMode = "arrow" | "icon";
 export interface TrailPoint {
   lat: number;
   lon: number;
-  alt: number | "ground";
+  alt: number | "ground" | null;
   ts: number;
+  ground?: boolean;
+  stale?: boolean;
+  segment: number;
+  gs?: number;
+  track?: number;
+  source?: AircraftType;
+  alt_source?: "baro" | "geom";
+  alt_geom?: number;
 }
+
+export type TrailPointInput = Omit<TrailPoint, "segment"> & {
+  segment?: number;
+};
 
 export interface ReplayBlockIndex {
   start: number;

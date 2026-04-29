@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { startFeed } from "./feed";
-import { selectDisplayAircraftMap, useIdentStore } from "./store";
+import {
+  __resetTrailDisplayCachesForTests,
+  selectDisplayAircraftMap,
+  useIdentStore,
+} from "./store";
 
 const wsHarness = vi.hoisted(() => ({
   instances: [] as Array<{ url: string; emitText: (text: string) => void }>,
@@ -53,6 +57,7 @@ vi.mock("./ws", () => ({
   },
 }));
 function resetStore() {
+  __resetTrailDisplayCachesForTests();
   useIdentStore.setState({
     aircraft: new Map(),
     receiver: null,
@@ -206,8 +211,8 @@ describe("startFeed route envelopes", () => {
         data: {
           aircraft: {
             abc123: [
-              { lat: 34.0, lon: -118.1, alt: 2800, ts: 90_000 },
-              { lat: 34.2, lon: -118.3, alt: 3200, ts: 110_000 },
+              { lat: 34.0, lon: -118.1, alt: 2800, ts: 90_000, segment: 0 },
+              { lat: 34.2, lon: -118.3, alt: 3200, ts: 110_000, segment: 0 },
             ],
           },
         },
@@ -215,14 +220,100 @@ describe("startFeed route envelopes", () => {
     );
 
     expect(useIdentStore.getState().trailsByHex.abc123).toEqual([
-      { lat: 34.0, lon: -118.1, alt: 2800, ts: 90_000 },
-      { lat: 34.1, lon: -118.2, alt: 3000, ts: 100_000 },
-      { lat: 34.2, lon: -118.3, alt: 3200, ts: 110_000 },
+      { lat: 34.0, lon: -118.1, alt: 2800, ts: 90_000, segment: 0 },
+      { lat: 34.1, lon: -118.2, alt: 3000, ts: 100_000, segment: 0 },
+      { lat: 34.2, lon: -118.3, alt: 3200, ts: 110_000, segment: 0 },
+    ]);
+    stop();
+  });
+
+  it("keeps richer metadata when relay points duplicate local trail points", () => {
+    const stop = startFeed();
+    useIdentStore.getState().recordTrailPoint("abc123", {
+      lat: 34.1,
+      lon: -118.2,
+      alt: 3000,
+      ts: 100_000,
+    });
+
+    wsHarness.instances[0].emitText(
+      JSON.stringify({
+        type: "trails",
+        data: {
+          aircraft: {
+            abc123: [
+              {
+                lat: 34.1,
+                lon: -118.2,
+                alt: 3000,
+                ts: 100_000,
+                segment: 1,
+                stale: true,
+                gs: 155,
+                track: 270,
+                source: "adsb_icao",
+                alt_source: "baro",
+              },
+            ],
+          },
+        },
+      }),
+    );
+
+    expect(useIdentStore.getState().trailsByHex.abc123).toEqual([
+      {
+        lat: 34.1,
+        lon: -118.2,
+        alt: 3000,
+        ts: 100_000,
+        segment: 1,
+        stale: true,
+        gs: 155,
+        track: 270,
+        source: "adsb_icao",
+        alt_source: "baro",
+      },
     ]);
     stop();
   });
 
   it("fetches the initial trail seed over HTTP instead of the websocket backlog", async () => {
+    globalThis.fetch = vi.fn(async (url: string) => {
+      if (url.endsWith("/trails/recent.json")) {
+        return {
+          ok: true,
+          json: async () => ({
+            aircraft: {
+              abc123: [
+                { lat: 34.0, lon: -118.1, alt: 2800, ts: 90_000, segment: 0 },
+              ],
+            },
+          }),
+        } as Response;
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    }) as unknown as typeof fetch;
+
+    const stop = startFeed();
+
+    await vi.waitFor(() => {
+      expect(useIdentStore.getState().trailsByHex.abc123).toEqual([
+        { lat: 34.0, lon: -118.1, alt: 2800, ts: 90_000, segment: 0 },
+      ]);
+    });
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/api/trails/recent.json",
+      expect.objectContaining({
+        cache: "no-store",
+        signal: expect.any(AbortSignal),
+      }),
+    );
+
+    stop();
+  });
+
+  it("fills segment zero for legacy trail seed points", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     globalThis.fetch = vi.fn(async (url: string) => {
       if (url.endsWith("/trails/recent.json")) {
         return {
@@ -240,18 +331,13 @@ describe("startFeed route envelopes", () => {
     const stop = startFeed();
 
     await vi.waitFor(() => {
-      expect(useIdentStore.getState().trailsByHex.abc123).toEqual([
-        { lat: 34.0, lon: -118.1, alt: 2800, ts: 90_000 },
-      ]);
+      expect(warn).toHaveBeenCalledWith(
+        "trail seed filled segment=0 for 1 legacy point(s)",
+      );
     });
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      "/api/trails/recent.json",
-      expect.objectContaining({
-        cache: "no-store",
-        signal: expect.any(AbortSignal),
-      }),
-    );
-
+    expect(useIdentStore.getState().trailsByHex.abc123).toEqual([
+      { lat: 34.0, lon: -118.1, alt: 2800, ts: 90_000, segment: 0 },
+    ]);
     stop();
   });
 

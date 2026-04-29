@@ -3,7 +3,7 @@ import type { TrailPoint } from "../data/types";
 import { altSamplesFromTrail } from "./Inspector";
 
 function pt(ts: number, alt: number | "ground"): TrailPoint {
-  return { lat: 0, lon: 0, alt, ts };
+  return { lat: 0, lon: 0, alt, ts, segment: 0 };
 }
 
 describe("altSamplesFromTrail", () => {

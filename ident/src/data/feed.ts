@@ -1,6 +1,6 @@
 import { appPath, appWebSocketUrl } from "./basePath";
 import { refreshReplayManifest } from "./replay";
-import { useIdentStore } from "./store";
+import { trailPointFromAircraft, useIdentStore } from "./store";
 import type {
   AircraftFrame,
   HeyWhatsThatJson,
@@ -83,15 +83,10 @@ function dispatch(env: Envelope): void {
       const nowMs = aircraftFrameTimestampMs(env.data);
       for (const ac of env.data.aircraft) {
         if (typeof ac.lat !== "number" || typeof ac.lon !== "number") continue;
-        store.recordTrailPoint(ac.hex, {
-          lat: ac.lat,
-          lon: ac.lon,
-          alt:
-            typeof ac.alt_baro === "number" || ac.alt_baro === "ground"
-              ? ac.alt_baro
-              : "ground",
-          ts: nowMs,
-        });
+        store.recordTrailPoint(
+          ac.hex,
+          trailPointFromAircraft({ ...ac, lat: ac.lat, lon: ac.lon }, nowMs),
+        );
       }
       break;
     }
@@ -157,7 +152,13 @@ function mergeTrailSeries(
   let lastKey: string | null = null;
   for (const point of merged) {
     const key = trailPointKey(point);
-    if (key === lastKey) continue;
+    if (key === lastKey) {
+      deduped[deduped.length - 1] = {
+        ...deduped[deduped.length - 1],
+        ...point,
+      };
+      continue;
+    }
     deduped.push(point);
     lastKey = key;
   }
@@ -178,22 +179,67 @@ function applyTrailSeed(trails: Map<string, TrailPoint[]>): void {
   });
 }
 
+function isTrailPoint(point: unknown): point is TrailPoint {
+  if (typeof point !== "object" || point == null) return false;
+  const candidate = point as Partial<TrailPoint>;
+  return (
+    typeof candidate.lat === "number" &&
+    typeof candidate.lon === "number" &&
+    (typeof candidate.alt === "number" ||
+      candidate.alt === "ground" ||
+      candidate.alt === null) &&
+    typeof candidate.ts === "number" &&
+    typeof candidate.segment === "number"
+  );
+}
+
+function legacyTrailPoint(point: unknown): TrailPoint | null {
+  if (typeof point !== "object" || point == null) return null;
+  const candidate = point as Partial<TrailPoint>;
+  if (
+    typeof candidate.lat !== "number" ||
+    typeof candidate.lon !== "number" ||
+    !(
+      typeof candidate.alt === "number" ||
+      candidate.alt === "ground" ||
+      candidate.alt === null
+    ) ||
+    typeof candidate.ts !== "number"
+  ) {
+    return null;
+  }
+  return { ...candidate, segment: 0 } as TrailPoint;
+}
+
 function normalizeTrailSeed(
   aircraft: Record<string, TrailPoint[]> | undefined,
 ): Map<string, TrailPoint[]> {
   const trails = new Map<string, TrailPoint[]>();
+  let dropped = 0;
+  let legacy = 0;
   for (const [hex, points] of Object.entries(aircraft ?? {})) {
     if (!Array.isArray(points)) continue;
-    trails.set(
-      hex,
-      points.filter(
-        (point): point is TrailPoint =>
-          typeof point.lat === "number" &&
-          typeof point.lon === "number" &&
-          (typeof point.alt === "number" || point.alt === "ground") &&
-          typeof point.ts === "number",
-      ),
-    );
+    const valid: TrailPoint[] = [];
+    for (const point of points) {
+      if (isTrailPoint(point)) {
+        valid.push(point);
+        continue;
+      }
+      const compat = legacyTrailPoint(point);
+      if (compat) {
+        legacy += 1;
+        valid.push(compat);
+        continue;
+      }
+      dropped += 1;
+    }
+    if (valid.length > 0) trails.set(hex, valid);
+  }
+  if (legacy > 0) {
+    console.warn(`trail seed filled segment=0 for ${legacy} legacy point(s)`);
+  }
+  if (dropped > 0) {
+    console.warn(`trail seed dropped ${dropped} invalid point(s)`);
   }
   return trails;
 }

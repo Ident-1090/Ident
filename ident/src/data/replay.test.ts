@@ -5,6 +5,7 @@ import {
   refreshReplayManifest,
 } from "./replay";
 import {
+  __resetTrailDisplayCachesForTests,
   selectDisplayAircraftMap,
   selectDisplayTrailsByHex,
   useIdentStore,
@@ -13,6 +14,7 @@ import {
 const originalFetch = globalThis.fetch;
 
 function resetStore() {
+  __resetTrailDisplayCachesForTests();
   useIdentStore.setState({
     aircraft: new Map([["live", { hex: "live", flight: "LIVE1" }]]),
     now: 0,

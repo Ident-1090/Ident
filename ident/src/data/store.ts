@@ -28,6 +28,7 @@ import type {
   StatsJson,
   ThemeMode,
   TrailPoint,
+  TrailPointInput,
   UnitMode,
   UnitOverrides,
 } from "./types";
@@ -45,6 +46,8 @@ export interface ConnStatusInfo {
 const TREND_BUFFER_LEN = 60;
 const ALERT_MAX = 50;
 const ALERT_WINDOW_MS = 30 * 60 * 1000;
+const TRAIL_SEGMENT_GROUND_DWELL_MS = 60_000;
+const TRAIL_SEGMENT_AIRBORNE_NOISE_MS = 10_000;
 
 // Per-hex trail buffer holds full in-range history, bounded only by point count
 // (~1.5 h at 4 s historical cadence + 1 Hz live). settings.trailFadeSec controls
@@ -408,7 +411,7 @@ export interface IdentState {
   setTrailFadeSec: (sec: number) => void;
 
   // Trails.
-  recordTrailPoint: (hex: string, point: TrailPoint) => void;
+  recordTrailPoint: (hex: string, point: TrailPointInput) => void;
 
   // LOS rings.
   setLosData: (data: HeyWhatsThatJson | null) => void;
@@ -1050,7 +1053,7 @@ export const useIdentStore = create<IdentState>((set) => ({
     set((st) => {
       const prev = st.trailsByHex[hex];
       const next = prev ? prev.slice() : [];
-      next.push(point);
+      next.push(assignTrailPointSegment(point, prev));
       if (next.length > TRAIL_POINT_CAP)
         next.splice(0, next.length - TRAIL_POINT_CAP);
       return { trailsByHex: { ...st.trailsByHex, [hex]: next } };
@@ -1484,6 +1487,15 @@ let replayTrailsCache: {
   playheadMs: number;
   trails: Record<string, TrailPoint[]>;
 } | null = null;
+let displayTrailsCache: {
+  source: Record<string, TrailPoint[]>;
+  trails: Record<string, TrailPoint[]>;
+} | null = null;
+
+export function __resetTrailDisplayCachesForTests(): void {
+  replayTrailsCache = null;
+  displayTrailsCache = null;
+}
 
 export function selectDisplayAircraftMap(
   st: IdentState,
@@ -1514,7 +1526,7 @@ export function selectDisplayTrailsByHex(
   st: IdentState,
 ): Record<string, TrailPoint[]> {
   if (st.replay.mode !== "replay" || st.replay.playheadMs == null) {
-    return st.trailsByHex;
+    return displayLatestTrailSegments(st.trailsByHex);
   }
   const blocks = replayLoadedBlocks(st);
   if (blocks.length === 0) return EMPTY_REPLAY_TRAILS;
@@ -1528,6 +1540,7 @@ export function selectDisplayTrailsByHex(
   }
   const since = st.replay.playheadMs - TRAIL_FADE_MAX_SEC * 1000;
   const out: Record<string, TrailPoint[]> = {};
+  const segmentStates = new Map<string, TrailSegmentState>();
   for (const block of blocks) {
     let i = firstFrameAtOrAfter(block.frames, since);
     for (; i < block.frames.length; i += 1) {
@@ -1536,15 +1549,20 @@ export function selectDisplayTrailsByHex(
       for (const ac of frame.aircraft) {
         if (typeof ac.lat !== "number" || typeof ac.lon !== "number") continue;
         const series = out[ac.hex] ?? [];
-        series.push({
-          lat: ac.lat,
-          lon: ac.lon,
-          alt:
-            typeof ac.alt_baro === "number" || ac.alt_baro === "ground"
-              ? ac.alt_baro
-              : "ground",
-          ts: frame.ts,
-        });
+        const segmentState = segmentStates.get(ac.hex) ?? { segment: 0 };
+        const point = assignTrailPointSegment(
+          trailPointFromAircraft(
+            { ...ac, lat: ac.lat, lon: ac.lon },
+            frame.ts,
+            segmentState,
+          ),
+          series,
+        );
+        segmentStates.set(
+          ac.hex,
+          advanceTrailSegmentState(segmentState, point),
+        );
+        series.push(point);
         out[ac.hex] = series;
       }
     }
@@ -1555,13 +1573,162 @@ export function selectDisplayTrailsByHex(
       out[hex] = series.slice(series.length - TRAIL_POINT_CAP);
     }
   }
+  const trails = displayLatestTrailSegments(out);
   replayTrailsCache = {
     blocks: st.replay.cache,
     recent: st.replay.recent,
     playheadMs: st.replay.playheadMs,
-    trails: out,
+    trails,
   };
+  return trails;
+}
+
+interface TrailSegmentState {
+  segment: number;
+  lastGround?: boolean;
+  groundSince?: number;
+  airborneSince?: number;
+}
+
+type PositionedAircraft = Aircraft & { lat: number; lon: number };
+
+export function trailPointFromAircraft(
+  ac: PositionedAircraft,
+  ts: number,
+  segmentState?: TrailSegmentState,
+): TrailPointInput {
+  const ground = aircraftOnGround(ac);
+  const { alt, alt_source } = aircraftTrailAltitude(ac, ground);
+  const point: TrailPointInput = {
+    lat: ac.lat,
+    lon: ac.lon,
+    alt,
+    ts,
+    ground,
+  };
+  if (typeof ac.seen_pos === "number" && ac.seen_pos > 20) point.stale = true;
+  if (typeof ac.gs === "number") point.gs = ac.gs;
+  if (typeof ac.track === "number") point.track = ac.track;
+  if (ac.type) point.source = ac.type;
+  if (alt_source) point.alt_source = alt_source;
+  if (typeof ac.alt_geom === "number") point.alt_geom = ac.alt_geom;
+  if (segmentState) {
+    point.segment = nextTrailSegment(segmentState, point);
+  }
+  return point;
+}
+
+function aircraftOnGround(ac: Aircraft): boolean {
+  return (
+    ac.alt_baro === "ground" || ac.airground === 1 || ac.airground === "ground"
+  );
+}
+
+function aircraftTrailAltitude(
+  ac: Aircraft,
+  ground: boolean,
+): { alt: TrailPoint["alt"]; alt_source?: TrailPoint["alt_source"] } {
+  if (ac.alt_baro === "ground") return { alt: "ground" };
+  if (typeof ac.alt_baro === "number") {
+    return { alt: ac.alt_baro, alt_source: "baro" };
+  }
+  if (ground) return { alt: "ground" };
+  if (typeof ac.alt_geom === "number") {
+    return { alt: ac.alt_geom, alt_source: "geom" };
+  }
+  return { alt: null };
+}
+
+function assignTrailPointSegment(
+  point: TrailPointInput,
+  previous: TrailPoint[] | undefined,
+): TrailPoint {
+  if (point.segment != null) return { ...point, segment: point.segment };
+  const state = trailSegmentStateFromSeries(previous);
+  return { ...point, segment: nextTrailSegment(state, point) };
+}
+
+function trailSegmentStateFromSeries(
+  series: TrailPoint[] | undefined,
+): TrailSegmentState {
+  let state: TrailSegmentState = { segment: 0 };
+  for (const point of series ?? []) {
+    state.segment = point.segment ?? state.segment;
+    state = advanceTrailSegmentState(state, point);
+  }
+  return state;
+}
+
+function nextTrailSegment(
+  state: TrailSegmentState,
+  point: TrailPointInput,
+): number {
+  if (point.ground) return state.segment;
+  if (
+    state.groundSince != null &&
+    point.ts - state.groundSince >= TRAIL_SEGMENT_GROUND_DWELL_MS
+  ) {
+    return state.segment + 1;
+  }
+  return state.segment;
+}
+
+function advanceTrailSegmentState(
+  state: TrailSegmentState,
+  point: TrailPoint,
+): TrailSegmentState {
+  const segment = point.segment ?? state.segment;
+  if (point.ground) {
+    return {
+      segment,
+      lastGround: true,
+      groundSince: state.lastGround ? state.groundSince : point.ts,
+    };
+  }
+  if (state.groundSince == null) return { segment, lastGround: false };
+  if (segment > state.segment) return { segment, lastGround: false };
+  if (state.airborneSince == null) {
+    return {
+      segment,
+      lastGround: false,
+      groundSince: state.groundSince,
+      airborneSince: point.ts,
+    };
+  }
+  if (point.ts - state.airborneSince >= TRAIL_SEGMENT_AIRBORNE_NOISE_MS) {
+    return { segment, lastGround: false };
+  }
+  return {
+    segment,
+    lastGround: false,
+    groundSince: state.groundSince,
+    airborneSince: state.airborneSince,
+  };
+}
+
+function displayLatestTrailSegments(
+  source: Record<string, TrailPoint[]>,
+): Record<string, TrailPoint[]> {
+  if (displayTrailsCache?.source === source) return displayTrailsCache.trails;
+  let changed = false;
+  const trails: Record<string, TrailPoint[]> = {};
+  for (const [hex, points] of Object.entries(source)) {
+    const latest = latestTrailSegment(points);
+    trails[hex] = latest;
+    if (latest !== points) changed = true;
+  }
+  const out = changed ? trails : source;
+  displayTrailsCache = { source, trails: out };
   return out;
+}
+
+function latestTrailSegment(points: TrailPoint[]): TrailPoint[] {
+  if (points.length === 0) return points;
+  const segment = points[points.length - 1].segment;
+  if (segment == null) return points;
+  let start = points.length - 1;
+  while (start > 0 && points[start - 1].segment === segment) start--;
+  return start === 0 ? points : points.slice(start);
 }
 
 function currentReplayFrame(st: IdentState): ReplayFrame | null {

@@ -260,7 +260,12 @@ function appendTrailVertices(
 
   function appendSegment(nextIndex: number): void {
     const next = points[nextIndex];
-    if (next.ts - prev.ts > TRAIL_BREAK_GAP_MS) {
+    if (
+      next.ts - prev.ts > TRAIL_BREAK_GAP_MS ||
+      next.stale ||
+      prev.stale ||
+      next.segment !== prev.segment
+    ) {
       prev = next;
       prevIndex = nextIndex;
       return;

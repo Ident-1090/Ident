@@ -50,7 +50,7 @@ const GRADIENT_SEGMENT_STEPS = 6;
 // Original discrete altitude palette for aircraft glyphs, traffic dots, and
 // other non-trail overlays. Emergency and ground keep their fixed semantics.
 export function altColor(
-  alt: number | "ground" | undefined,
+  alt: number | "ground" | null | undefined,
   emergency?: string,
 ): string {
   if (emergency && emergency !== "none") return EMERGENCY_COLOR;
@@ -66,7 +66,7 @@ export function altColor(
 // airborne anchors in a perceptual color space so transitions stay saturated
 // instead of going muddy in sRGB midpoints.
 export function altTrailColor(
-  alt: number | "ground" | undefined,
+  alt: number | "ground" | null | undefined,
   emergency?: string,
 ): string {
   if (emergency && emergency !== "none") return EMERGENCY_COLOR;
@@ -88,7 +88,7 @@ export function altTrailColor(
   return TRAIL_COLOR_STOPS[TRAIL_COLOR_STOPS.length - 1].color;
 }
 
-export function altLosColor(alt: number | "ground" | undefined): string {
+export function altLosColor(alt: number | "ground" | null | undefined): string {
   return mixHex(altColor(alt), LOS_MUTE_COLOR, 0.42);
 }
 

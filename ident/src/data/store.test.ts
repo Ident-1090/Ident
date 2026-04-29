@@ -5,6 +5,7 @@ import {
   usePreferencesStore,
 } from "./preferences";
 import {
+  __resetTrailDisplayCachesForTests,
   sampleMpsOnce,
   selectDisplayAircraftMap,
   selectDisplayTrailsByHex,
@@ -13,6 +14,7 @@ import {
 import type { AircraftFrame } from "./types";
 
 function resetStore() {
+  __resetTrailDisplayCachesForTests();
   useIdentStore.setState({
     aircraft: new Map(),
     now: 0,
@@ -151,6 +153,123 @@ describe("replay display selectors", () => {
     expect([
       ...selectDisplayAircraftMap(useIdentStore.getState()).keys(),
     ]).toEqual(["now"]);
+  });
+
+  it("builds replay trails from the newest takeoff segment", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 100_000,
+        availableTo: 190_000,
+        mode: "replay",
+        playheadMs: 190_000,
+        cache: {
+          "/api/replay/blocks/100000-190000.json.zst": {
+            version: 1,
+            start: 100_000,
+            end: 190_000,
+            step_ms: 5_000,
+            frames: [
+              {
+                ts: 100_000,
+                aircraft: [
+                  { hex: "abc123", lat: 34.1, lon: -118.2, alt_baro: 3000 },
+                ],
+              },
+              {
+                ts: 130_000,
+                aircraft: [
+                  {
+                    hex: "abc123",
+                    lat: 34.2,
+                    lon: -118.3,
+                    alt_baro: "ground",
+                  },
+                ],
+              },
+              {
+                ts: 190_000,
+                aircraft: [
+                  { hex: "abc123", lat: 34.3, lon: -118.4, alt_baro: 1500 },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    }));
+
+    expect(selectDisplayTrailsByHex(useIdentStore.getState()).abc123).toEqual([
+      {
+        lat: 34.3,
+        lon: -118.4,
+        alt: 1500,
+        ts: 190_000,
+        ground: false,
+        segment: 1,
+        alt_source: "baro",
+      },
+    ]);
+  });
+
+  it("uses airground state when deriving replay trail segments", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 100_000,
+        availableTo: 190_000,
+        mode: "replay",
+        playheadMs: 190_000,
+        cache: {
+          "/api/replay/blocks/100000-190000.json.zst": {
+            version: 1,
+            start: 100_000,
+            end: 190_000,
+            step_ms: 5_000,
+            frames: [
+              {
+                ts: 100_000,
+                aircraft: [
+                  { hex: "abc123", lat: 34.1, lon: -118.2, alt_baro: 3000 },
+                ],
+              },
+              {
+                ts: 130_000,
+                aircraft: [
+                  {
+                    hex: "abc123",
+                    lat: 34.2,
+                    lon: -118.3,
+                    airground: "ground",
+                    alt_geom: 25,
+                  },
+                ],
+              },
+              {
+                ts: 190_000,
+                aircraft: [
+                  { hex: "abc123", lat: 34.3, lon: -118.4, alt_baro: 1500 },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    }));
+
+    expect(selectDisplayTrailsByHex(useIdentStore.getState()).abc123).toEqual([
+      {
+        lat: 34.3,
+        lon: -118.4,
+        alt: 1500,
+        ts: 190_000,
+        ground: false,
+        segment: 1,
+        alt_source: "baro",
+      },
+    ]);
   });
 
   it("shows an empty replay display for a true gap between segments", () => {
@@ -1261,12 +1380,125 @@ describe("recordTrailPoint", () => {
     expect(buf[1499].ts).toBe(base + 1999 * 4000);
   });
 
+  it("assigns live trail segments from ground dwell boundaries", () => {
+    const store = useIdentStore.getState();
+
+    store.recordTrailPoint("abc123", {
+      lat: 34.1,
+      lon: -118.2,
+      alt: 3000,
+      ts: 100_000,
+      ground: false,
+    });
+    store.recordTrailPoint("abc123", {
+      lat: 34.2,
+      lon: -118.3,
+      alt: "ground",
+      ts: 130_000,
+      ground: true,
+    });
+    store.recordTrailPoint("abc123", {
+      lat: 34.25,
+      lon: -118.35,
+      alt: 500,
+      ts: 189_999,
+      ground: false,
+    });
+    store.recordTrailPoint("def456", {
+      lat: 35.1,
+      lon: -119.2,
+      alt: 3000,
+      ts: 100_000,
+      ground: false,
+    });
+    store.recordTrailPoint("def456", {
+      lat: 35.2,
+      lon: -119.3,
+      alt: "ground",
+      ts: 130_000,
+      ground: true,
+    });
+    store.recordTrailPoint("def456", {
+      lat: 35.3,
+      lon: -119.4,
+      alt: 1500,
+      ts: 190_000,
+      ground: false,
+    });
+
+    expect(useIdentStore.getState().trailsByHex.abc123.at(-1)?.segment).toBe(0);
+    expect(useIdentStore.getState().trailsByHex.def456.at(-1)?.segment).toBe(1);
+  });
+
+  it("keeps live trail dwell across repeated airborne blips", () => {
+    const store = useIdentStore.getState();
+
+    store.recordTrailPoint("abc123", {
+      lat: 34.1,
+      lon: -118.2,
+      alt: 3000,
+      ts: 100_000,
+      ground: false,
+    });
+    store.recordTrailPoint("abc123", {
+      lat: 34.2,
+      lon: -118.3,
+      alt: "ground",
+      ts: 130_000,
+      ground: true,
+    });
+    store.recordTrailPoint("abc123", {
+      lat: 34.21,
+      lon: -118.31,
+      alt: 25,
+      ts: 150_000,
+      ground: false,
+    });
+    store.recordTrailPoint("abc123", {
+      lat: 34.22,
+      lon: -118.32,
+      alt: 30,
+      ts: 155_000,
+      ground: false,
+    });
+    store.recordTrailPoint("abc123", {
+      lat: 34.3,
+      lon: -118.4,
+      alt: 1500,
+      ts: 195_000,
+      ground: false,
+    });
+
+    expect(useIdentStore.getState().trailsByHex.abc123.at(-1)?.segment).toBe(1);
+  });
+
   it("setTrailFadeSec clamps to 10..600", () => {
     const store = useIdentStore.getState();
     store.setTrailFadeSec(5);
     expect(useIdentStore.getState().settings.trailFadeSec).toBe(10);
     store.setTrailFadeSec(9999);
     expect(useIdentStore.getState().settings.trailFadeSec).toBe(600);
+  });
+});
+
+describe("selectDisplayTrailsByHex", () => {
+  beforeEach(resetStore);
+
+  it("shows only the newest segment by default", () => {
+    useIdentStore.setState((st) => ({
+      trailsByHex: {
+        ...st.trailsByHex,
+        abc123: [
+          { lat: 1, lon: 1, alt: 1000, ts: 1_000, segment: 0 },
+          { lat: 2, lon: 2, alt: "ground", ts: 2_000, segment: 0 },
+          { lat: 3, lon: 3, alt: 1500, ts: 3_000, segment: 1 },
+        ],
+      },
+    }));
+
+    expect(selectDisplayTrailsByHex(useIdentStore.getState()).abc123).toEqual([
+      { lat: 3, lon: 3, alt: 1500, ts: 3_000, segment: 1 },
+    ]);
   });
 });
 

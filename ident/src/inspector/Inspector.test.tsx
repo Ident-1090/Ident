@@ -504,9 +504,21 @@ describe("Inspector", () => {
       aircraft: new Map([[FAKE.hex, { ...FAKE, nav_altitude_mcp: 36000 }]]),
       trailsByHex: {
         [FAKE.hex]: [
-          { lat: 0, lon: 0, alt: 34000, ts: now.getTime() - 5 * 60_000 },
-          { lat: 0, lon: 0, alt: 34200, ts: now.getTime() - 3 * 60_000 },
-          { lat: 0, lon: 0, alt: 34500, ts: now.getTime() },
+          {
+            lat: 0,
+            lon: 0,
+            alt: 34000,
+            ts: now.getTime() - 5 * 60_000,
+            segment: 0,
+          },
+          {
+            lat: 0,
+            lon: 0,
+            alt: 34200,
+            ts: now.getTime() - 3 * 60_000,
+            segment: 0,
+          },
+          { lat: 0, lon: 0, alt: 34500, ts: now.getTime(), segment: 0 },
         ],
       },
     });
