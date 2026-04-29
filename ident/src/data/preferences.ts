@@ -46,6 +46,20 @@ export interface SettingsPreferences {
   theme: ThemeMode;
 }
 
+export interface ReplayWindowPreferences {
+  rangeId: string;
+  rangeMs: number;
+  fromExpr: string;
+  toExpr: "now";
+  fixedEndMs: null;
+}
+
+export interface ReplayRangeRecent {
+  label: string;
+  from: string;
+  to: string;
+}
+
 export interface ReleaseUpdateDismissal {
   version: string;
   dismissedUntil: number;
@@ -54,10 +68,14 @@ export interface ReleaseUpdateDismissal {
 interface PreferencesState {
   map: MapPreferences;
   settings: SettingsPreferences;
+  replayWindow: ReplayWindowPreferences;
+  replayRangeRecents: ReplayRangeRecent[];
   inspectorTab: InspectorTab;
   updateDismissal: ReleaseUpdateDismissal | null;
   setMapPreferences: (next: Partial<MapPreferences>) => void;
   setSettingsPreferences: (next: SettingsPreferences) => void;
+  setReplayWindow: (next: ReplayWindowPreferences) => void;
+  setReplayRangeRecents: (next: ReplayRangeRecent[]) => void;
   setInspectorTab: (tab: InspectorTab) => void;
   dismissReleaseUpdate: (version: string) => void;
   clearExpiredReleaseUpdateDismissal: (now?: number) => void;
@@ -95,6 +113,16 @@ export const DEFAULT_SETTINGS_PREFERENCES: SettingsPreferences = {
   clock: "utc",
   theme: "system",
 };
+
+export const DEFAULT_REPLAY_WINDOW_PREFERENCES: ReplayWindowPreferences = {
+  rangeId: "8h",
+  rangeMs: 8 * 60 * 60_000,
+  fromExpr: "now-8h",
+  toExpr: "now",
+  fixedEndMs: null,
+};
+
+export const DEFAULT_REPLAY_RANGE_RECENTS: ReplayRangeRecent[] = [];
 
 const VALID_BASEMAP_IDS: BasemapId[] = [
   "ident",
@@ -141,11 +169,16 @@ export const usePreferencesStore = create<PreferencesState>()(
     (set) => ({
       map: DEFAULT_MAP_PREFERENCES,
       settings: DEFAULT_SETTINGS_PREFERENCES,
+      replayWindow: DEFAULT_REPLAY_WINDOW_PREFERENCES,
+      replayRangeRecents: DEFAULT_REPLAY_RANGE_RECENTS,
       inspectorTab: "telemetry",
       updateDismissal: null,
       setMapPreferences: (next) =>
         set((st) => ({ map: normalizeMapPreferences(next, st.map) })),
       setSettingsPreferences: (next) => set({ settings: next }),
+      setReplayWindow: (next) => set({ replayWindow: next }),
+      setReplayRangeRecents: (next) =>
+        set({ replayRangeRecents: normalizeReplayRangeRecents(next) }),
       setInspectorTab: (tab) => set({ inspectorTab: tab }),
       dismissReleaseUpdate: (version) =>
         set(() => {
@@ -171,6 +204,8 @@ export const usePreferencesStore = create<PreferencesState>()(
       partialize: (state) => ({
         map: state.map,
         settings: state.settings,
+        replayWindow: state.replayWindow,
+        replayRangeRecents: state.replayRangeRecents,
         inspectorTab: state.inspectorTab,
         updateDismissal: state.updateDismissal,
       }),
@@ -178,7 +213,12 @@ export const usePreferencesStore = create<PreferencesState>()(
         const saved = persisted as Partial<
           Pick<
             PreferencesState,
-            "map" | "settings" | "inspectorTab" | "updateDismissal"
+            | "map"
+            | "settings"
+            | "replayWindow"
+            | "replayRangeRecents"
+            | "inspectorTab"
+            | "updateDismissal"
           >
         >;
         return {
@@ -187,6 +227,13 @@ export const usePreferencesStore = create<PreferencesState>()(
           settings: normalizeSettingsPreferences(
             saved.settings,
             current.settings,
+          ),
+          replayWindow: normalizeReplayWindowPreferences(
+            saved.replayWindow,
+            current.replayWindow,
+          ),
+          replayRangeRecents: normalizeReplayRangeRecents(
+            saved.replayRangeRecents,
           ),
           inspectorTab: isInspectorTab(saved.inspectorTab)
             ? saved.inspectorTab
@@ -205,6 +252,8 @@ export function resetPreferencesStoreForTests(): void {
   usePreferencesStore.setState({
     map: DEFAULT_MAP_PREFERENCES,
     settings: DEFAULT_SETTINGS_PREFERENCES,
+    replayWindow: DEFAULT_REPLAY_WINDOW_PREFERENCES,
+    replayRangeRecents: DEFAULT_REPLAY_RANGE_RECENTS,
     inspectorTab: "telemetry",
     updateDismissal: null,
   });
@@ -262,6 +311,46 @@ function normalizeSettingsPreferences(
     clock: isClockMode(raw?.clock) ? raw.clock : defaults.clock,
     theme: isThemeMode(raw?.theme) ? raw.theme : defaults.theme,
   };
+}
+
+function normalizeReplayWindowPreferences(
+  raw: Partial<ReplayWindowPreferences> | undefined,
+  defaults: ReplayWindowPreferences,
+): ReplayWindowPreferences {
+  const rangeId = typeof raw?.rangeId === "string" ? raw.rangeId.trim() : "";
+  const fromExpr = typeof raw?.fromExpr === "string" ? raw.fromExpr.trim() : "";
+  return rangeId &&
+    fromExpr &&
+    raw?.toExpr === "now" &&
+    raw.fixedEndMs === null &&
+    typeof raw.rangeMs === "number" &&
+    Number.isFinite(raw.rangeMs) &&
+    raw.rangeMs > 0
+    ? {
+        rangeId,
+        rangeMs: raw.rangeMs,
+        fromExpr,
+        toExpr: "now",
+        fixedEndMs: null,
+      }
+    : defaults;
+}
+
+function normalizeReplayRangeRecents(
+  raw: Partial<ReplayRangeRecent>[] | undefined,
+): ReplayRangeRecent[] {
+  if (!Array.isArray(raw)) return DEFAULT_REPLAY_RANGE_RECENTS;
+  const out: ReplayRangeRecent[] = [];
+  for (const recent of raw) {
+    const label = typeof recent.label === "string" ? recent.label.trim() : "";
+    const from = typeof recent.from === "string" ? recent.from.trim() : "";
+    const to = typeof recent.to === "string" ? recent.to.trim() : "";
+    if (!label || !from || !to) continue;
+    if (out.some((item) => item.from === from && item.to === to)) continue;
+    out.push({ label, from, to });
+    if (out.length === 3) break;
+  }
+  return out;
 }
 
 function normalizeReleaseUpdateDismissal(

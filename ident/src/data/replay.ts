@@ -1,5 +1,5 @@
 import { appPath } from "./basePath";
-import { useIdentStore } from "./store";
+import { replayFollowsLiveEdge, useIdentStore } from "./store";
 import type {
   ReplayBlockFile,
   ReplayBlockIndex,
@@ -12,6 +12,11 @@ const REPLAY_FETCH_KEEP_BLOCK_MARGIN = 3;
 let manifestLoad: Promise<ReplayManifest | null> | null = null;
 const rangeLoads = new Map<string, ReplayRangeLoad>();
 const blockLoads = new Map<string, ReplayBlockLoad>();
+const blockIndexByManifest = new WeakMap<
+  ReplayBlockIndex[],
+  Map<string, number>
+>();
+let foregroundRangeLoadCount = 0;
 
 type ReplayRangeLoad = {
   blocks: ReplayBlockIndex[];
@@ -23,6 +28,14 @@ type ReplayBlockLoad = {
   promise: Promise<void>;
 };
 
+type EnsureReplayRangeOptions = {
+  background?: boolean;
+};
+
+type RefreshReplayManifestOptions = {
+  preserveReplayError?: boolean;
+};
+
 class ReplayLoadCanceled extends Error {
   constructor() {
     super("Replay request canceled");
@@ -30,7 +43,28 @@ class ReplayLoadCanceled extends Error {
   }
 }
 
-export async function refreshReplayManifest(): Promise<ReplayManifest | null> {
+class ReplayBlockFormatError extends Error {
+  constructor(readonly url: string) {
+    super(`Invalid replay block: ${url}`);
+    this.name = "ReplayBlockFormatError";
+  }
+}
+
+class ReplayBlockLoadError extends Error {
+  constructor(
+    readonly url: string,
+    cause: unknown,
+  ) {
+    const message =
+      cause instanceof Error ? cause.message : "Replay block missing";
+    super(`Replay block load failed: ${url}: ${message}`, { cause });
+    this.name = "ReplayBlockLoadError";
+  }
+}
+
+export async function refreshReplayManifest(
+  options: RefreshReplayManifestOptions = {},
+): Promise<ReplayManifest | null> {
   if (manifestLoad) return manifestLoad;
   manifestLoad = (async () => {
     try {
@@ -40,11 +74,13 @@ export async function refreshReplayManifest(): Promise<ReplayManifest | null> {
       useIdentStore.getState().setReplayManifest(normalizeManifest(manifest));
       return manifest;
     } catch (err) {
-      useIdentStore
-        .getState()
-        .setReplayError(
-          err instanceof Error ? err.message : "Replay unavailable",
-        );
+      if (!options.preserveReplayError) {
+        useIdentStore
+          .getState()
+          .setReplayError(
+            err instanceof Error ? err.message : "Replay unavailable",
+          );
+      }
       return null;
     }
   })().finally(() => {
@@ -56,9 +92,16 @@ export async function refreshReplayManifest(): Promise<ReplayManifest | null> {
 export async function ensureReplayRange(
   sinceMs: number,
   untilMs: number,
+  options: EnsureReplayRangeOptions = {},
 ): Promise<void> {
+  const foreground = !options.background;
   const st = useIdentStore.getState();
   if (!st.replay.enabled) return;
+  if (replayFollowsLiveEdge(st.replay)) {
+    abortStaleBlockLoads(st.replay.blocks, []);
+    useIdentStore.getState().setReplayLoading(false);
+    return;
+  }
   const blocks = blocksForRange(st.replay.blocks, sinceMs, untilMs);
   abortStaleBlockLoads(st.replay.blocks, blocks);
   if (blocks.length === 0) return;
@@ -68,28 +111,59 @@ export async function ensureReplayRange(
   if (pending && rangeLoadIsReusable(pending)) return pending.promise;
   if (pending) rangeLoads.delete(key);
 
-  useIdentStore.getState().setReplayLoading(true);
   const load = (async () => {
+    let loading = false;
     try {
       for (const block of blocks) {
-        await loadReplayBlock(block);
+        const blockLoad = loadReplayBlock(block);
+        if (!blockLoad) continue;
+        if (foreground && !loading) {
+          useIdentStore.getState().setReplayLoading(true);
+          foregroundRangeLoadCount += 1;
+          loading = true;
+        }
+        await blockLoad;
       }
     } catch (err) {
       if (err instanceof ReplayLoadCanceled) return;
-      await refreshReplayManifest();
+      if (err instanceof ReplayBlockFormatError) {
+        await refreshReplayManifest({ preserveReplayError: true });
+        useIdentStore.getState().setReplayError(err.message, err.url);
+        return;
+      }
+      if (options.background) {
+        console.warn("[ident replay] background block load failed", err);
+        try {
+          await refreshReplayManifest({ preserveReplayError: true });
+        } catch (manifestErr) {
+          console.warn(
+            "[ident replay] background manifest refresh failed",
+            manifestErr,
+          );
+        }
+        return;
+      }
+      await refreshReplayManifest({ preserveReplayError: true });
       useIdentStore
         .getState()
         .setReplayError(
           err instanceof Error ? err.message : "Replay block missing",
+          err instanceof ReplayBlockLoadError ? err.url : null,
         );
     } finally {
       rangeLoads.delete(key);
-      if (rangeLoads.size === 0) {
+      if (loading) {
+        foregroundRangeLoadCount = Math.max(0, foregroundRangeLoadCount - 1);
+      }
+      if (loading && foregroundRangeLoadCount === 0) {
         useIdentStore.getState().setReplayLoading(false);
       }
     }
   })();
   rangeLoads.set(key, { blocks, promise: load });
+  void load.finally(() => {
+    if (rangeLoads.get(key)?.promise === load) rangeLoads.delete(key);
+  });
   return load;
 }
 
@@ -101,41 +175,46 @@ function rangeLoadIsReusable(load: ReplayRangeLoad): boolean {
   });
 }
 
-function loadReplayBlock(block: ReplayBlockIndex): Promise<void> {
+function loadReplayBlock(block: ReplayBlockIndex): Promise<void> | null {
   if (useIdentStore.getState().replay.cache[block.url]) {
-    return Promise.resolve();
+    return null;
   }
   const pending = blockLoads.get(block.url);
   if (pending && !pending.controller.signal.aborted) return pending.promise;
   if (pending) blockLoads.delete(block.url);
   const controller = new AbortController();
-  const load = (async () => {
-    if (useIdentStore.getState().replay.cache[block.url]) return;
-    const url = appPath(block.url.replace(/^\//, ""));
-    const body = await fetchJson<ReplayBlockFile>(
-      url,
-      {
-        cache: "force-cache",
-      },
-      controller.signal,
-    );
-    if (controller.signal.aborted) throw new ReplayLoadCanceled();
-    if (body.version !== 1 || !Array.isArray(body.frames)) {
-      throw new Error("Invalid replay block");
+  let load!: Promise<void>;
+  load = (async () => {
+    try {
+      if (useIdentStore.getState().replay.cache[block.url]) return;
+      const url = appPath(block.url.replace(/^\//, ""));
+      const body = await fetchJson<ReplayBlockFile>(
+        url,
+        {
+          cache: "force-cache",
+        },
+        controller.signal,
+      );
+      if (controller.signal.aborted) throw new ReplayLoadCanceled();
+      if (body.version !== 1 || !Array.isArray(body.frames)) {
+        throw new ReplayBlockFormatError(block.url);
+      }
+      useIdentStore.getState().setReplayBlock(block.url, body);
+    } catch (err) {
+      if (
+        err instanceof ReplayLoadCanceled ||
+        err instanceof ReplayBlockFormatError
+      ) {
+        throw err;
+      }
+      throw new ReplayBlockLoadError(block.url, err);
+    } finally {
+      if (blockLoads.get(block.url)?.promise === load) {
+        blockLoads.delete(block.url);
+      }
     }
-    useIdentStore.getState().setReplayBlock(block.url, body);
   })();
   blockLoads.set(block.url, { controller, promise: load });
-  load.then(
-    () => {
-      if (blockLoads.get(block.url)?.promise === load)
-        blockLoads.delete(block.url);
-    },
-    () => {
-      if (blockLoads.get(block.url)?.promise === load)
-        blockLoads.delete(block.url);
-    },
-  );
   return load;
 }
 
@@ -146,10 +225,9 @@ function abortStaleBlockLoads(
   if (blockLoads.size === 0) return;
 
   const keep = new Set<string>();
+  const indexByUrl = manifestIndexByUrl(manifestBlocks);
   for (const block of requestedBlocks) {
-    const index = manifestBlocks.findIndex(
-      (candidate) => candidate.url === block.url,
-    );
+    const index = indexByUrl.get(block.url) ?? -1;
     if (index < 0) {
       keep.add(block.url);
       continue;
@@ -177,7 +255,29 @@ export function blocksForRange(
   if (!Number.isFinite(sinceMs) || !Number.isFinite(untilMs)) return [];
   const start = Math.min(sinceMs, untilMs);
   const end = Math.max(sinceMs, untilMs);
-  return blocks.filter((block) => block.end >= start && block.start <= end);
+  const out: ReplayBlockIndex[] = [];
+  let lo = 0;
+  let hi = blocks.length;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (blocks[mid].end < start) lo = mid + 1;
+    else hi = mid;
+  }
+  for (let i = lo; i < blocks.length && blocks[i].start <= end; i += 1) {
+    out.push(blocks[i]);
+  }
+  return out;
+}
+
+function manifestIndexByUrl(blocks: ReplayBlockIndex[]): Map<string, number> {
+  const cached = blockIndexByManifest.get(blocks);
+  if (cached) return cached;
+  const next = new Map<string, number>();
+  blocks.forEach((block, i) => {
+    next.set(block.url, i);
+  });
+  blockIndexByManifest.set(blocks, next);
+  return next;
 }
 
 async function fetchJson<T>(
@@ -224,7 +324,9 @@ function normalizeManifest(manifest: ReplayManifest): ReplayManifest {
       typeof manifest.block_sec === "number" && manifest.block_sec > 0
         ? manifest.block_sec
         : 300,
-    blocks: Array.isArray(manifest.blocks) ? manifest.blocks : [],
+    blocks: Array.isArray(manifest.blocks)
+      ? manifest.blocks.slice().sort((a, b) => a.start - b.start)
+      : [],
   };
 }
 

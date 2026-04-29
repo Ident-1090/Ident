@@ -124,6 +124,35 @@ describe("replay display selectors", () => {
     ).toMatchObject({ flight: "RECENT1" });
   });
 
+  it("normalizes fetched replay blocks before selecting a display frame", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 160_000,
+      },
+    }));
+
+    useIdentStore.getState().setReplayBlock("/api/replay/blocks/a.json.zst", {
+      version: 1,
+      start: 120_000,
+      end: 180_000,
+      step_ms: 5_000,
+      frames: [
+        { ts: 170_000, aircraft: [{ hex: "future", flight: "FUTURE" }] },
+        { ts: 130_000, aircraft: [{ hex: "past", flight: "PAST" }] },
+        { ts: 160_000, aircraft: [{ hex: "now", flight: "NOW" }] },
+      ],
+    });
+
+    expect([
+      ...selectDisplayAircraftMap(useIdentStore.getState()).keys(),
+    ]).toEqual(["now"]);
+  });
+
   it("shows an empty replay display for a true gap between segments", () => {
     useIdentStore.setState((st) => ({
       replay: {
@@ -161,6 +190,113 @@ describe("replay display selectors", () => {
     ]).toEqual([]);
   });
 
+  it("snaps replay playhead to the next available frame in a cached block", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 220_000,
+        mode: "replay",
+        playheadMs: 172_000,
+        cache: {
+          "/api/replay/blocks/120000-170000.json.zst": {
+            version: 1,
+            start: 120_000,
+            end: 170_000,
+            step_ms: 5_000,
+            frames: [
+              { ts: 170_000, aircraft: [{ hex: "old", flight: "OLD1" }] },
+            ],
+          },
+          "/api/replay/blocks/170000-220000.json.zst": {
+            version: 1,
+            start: 170_000,
+            end: 220_000,
+            step_ms: 5_000,
+            frames: [
+              { ts: 175_000, aircraft: [{ hex: "next", flight: "NEXT1" }] },
+            ],
+          },
+        },
+      },
+    }));
+
+    useIdentStore.getState().setReplayPlayhead(172_000);
+
+    expect(useIdentStore.getState().replay.playheadMs).toBe(175_000);
+    expect([
+      ...selectDisplayAircraftMap(useIdentStore.getState()).keys(),
+    ]).toEqual(["next"]);
+  });
+
+  it("snaps replay entry to the next available frame in a cached block", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 220_000,
+        mode: "live",
+        playheadMs: null,
+        cache: {
+          "/api/replay/blocks/170000-220000.json.zst": {
+            version: 1,
+            start: 170_000,
+            end: 220_000,
+            step_ms: 5_000,
+            frames: [
+              { ts: 175_000, aircraft: [{ hex: "next", flight: "NEXT1" }] },
+            ],
+          },
+        },
+      },
+    }));
+
+    useIdentStore.getState().enterReplay(172_000);
+
+    expect(useIdentStore.getState().replay.mode).toBe("replay");
+    expect(useIdentStore.getState().replay.playheadMs).toBe(175_000);
+  });
+
+  it("snaps through an empty cached block to the next loaded frame", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 260_000,
+        mode: "replay",
+        playheadMs: 205_000,
+        cache: {
+          "/api/replay/blocks/200000-220000.json.zst": {
+            version: 1,
+            start: 200_000,
+            end: 220_000,
+            step_ms: 5_000,
+            frames: [],
+          },
+          "/api/replay/blocks/220000-260000.json.zst": {
+            version: 1,
+            start: 220_000,
+            end: 260_000,
+            step_ms: 5_000,
+            frames: [
+              { ts: 225_000, aircraft: [{ hex: "next", flight: "NEXT1" }] },
+            ],
+          },
+        },
+      },
+    }));
+
+    useIdentStore.getState().setReplayPlayhead(205_000);
+
+    expect(useIdentStore.getState().replay.playheadMs).toBe(225_000);
+    expect([
+      ...selectDisplayAircraftMap(useIdentStore.getState()).keys(),
+    ]).toEqual(["next"]);
+  });
+
   it("extends the recent replay window from live aircraft frames", () => {
     useIdentStore.setState((st) => ({
       replay: {
@@ -183,6 +319,31 @@ describe("replay display selectors", () => {
     expect(selectDisplayAircraftMap(st).get("live")).toMatchObject({
       flight: "LIVE1",
     });
+  });
+
+  it("returns to live when live frames extend a replay at the live edge", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 180_000,
+        playing: true,
+      },
+    }));
+
+    useIdentStore.getState().ingestAircraft({
+      now: 181,
+      aircraft: [{ hex: "live", flight: "LIVE1" }],
+    });
+
+    const st = useIdentStore.getState();
+    expect(st.replay.availableTo).toBe(181_000);
+    expect(st.replay.mode).toBe("live");
+    expect(st.replay.playheadMs).toBeNull();
+    expect(st.replay.playing).toBe(true);
   });
 
   it("keeps loaded recent replay frames during broad replay browsing", () => {
@@ -258,6 +419,543 @@ describe("replay display selectors", () => {
     expect(useIdentStore.getState().replay.mode).toBe("live");
     expect(useIdentStore.getState().replay.playheadMs).toBeNull();
     expect(useIdentStore.getState().replay.playing).toBe(true);
+  });
+
+  it("pauses replay while loading and resumes afterward", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 150_000,
+        playing: true,
+      },
+    }));
+
+    useIdentStore.getState().setReplayLoading(true);
+
+    expect(useIdentStore.getState().replay.loading).toBe(true);
+    expect(useIdentStore.getState().replay.playing).toBe(false);
+
+    useIdentStore.getState().setReplayLoading(false);
+
+    expect(useIdentStore.getState().replay.loading).toBe(false);
+    expect(useIdentStore.getState().replay.playing).toBe(true);
+  });
+
+  it("keeps fixed replay windows in replay mode while loading", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 180_000,
+        playing: true,
+        viewWindow: {
+          rangeId: "custom",
+          rangeMs: 60_000,
+          fromExpr: "2026-04-28 00:01",
+          toExpr: "2026-04-28 00:02",
+          fixedEndMs: 150_000,
+        },
+      },
+    }));
+
+    useIdentStore.getState().setReplayLoading(true);
+
+    expect(useIdentStore.getState().replay.mode).toBe("replay");
+    expect(useIdentStore.getState().replay.loading).toBe(true);
+    expect(useIdentStore.getState().replay.playing).toBe(false);
+    expect(useIdentStore.getState().replay.resumeAfterLoading).toBe(true);
+    expect(useIdentStore.getState().replay.viewWindow?.toExpr).toBe(
+      "2026-04-28 00:02",
+    );
+    expect(useIdentStore.getState().replay.viewWindow?.fixedEndMs).toBe(
+      150_000,
+    );
+  });
+
+  it("keeps fixed replay windows during manifest refresh at the live edge", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 180_000,
+        playing: false,
+        viewWindow: {
+          rangeId: "custom",
+          rangeMs: 60_000,
+          fromExpr: "2026-04-28 00:01",
+          toExpr: "2026-04-28 00:02",
+          fixedEndMs: 150_000,
+        },
+      },
+    }));
+
+    useIdentStore.getState().setReplayManifest({
+      enabled: true,
+      from: 120_000,
+      to: 240_000,
+      block_sec: 60,
+      blocks: [],
+    });
+
+    expect(useIdentStore.getState().replay.mode).toBe("replay");
+    expect(useIdentStore.getState().replay.playheadMs).toBe(180_000);
+    expect(useIdentStore.getState().replay.viewWindow?.fixedEndMs).toBe(
+      150_000,
+    );
+  });
+
+  it("keeps fixed replay windows during playing manifest refresh at the live edge", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 180_000,
+        playing: true,
+        viewWindow: {
+          rangeId: "custom",
+          rangeMs: 60_000,
+          fromExpr: "2026-04-28 00:01",
+          toExpr: "2026-04-28 00:02",
+          fixedEndMs: 150_000,
+        },
+      },
+    }));
+
+    useIdentStore.getState().setReplayManifest({
+      enabled: true,
+      from: 120_000,
+      to: 240_000,
+      block_sec: 60,
+      blocks: [],
+    });
+
+    expect(useIdentStore.getState().replay.mode).toBe("replay");
+    expect(useIdentStore.getState().replay.playheadMs).toBe(180_000);
+    expect(useIdentStore.getState().replay.playing).toBe(true);
+    expect(useIdentStore.getState().replay.viewWindow?.fixedEndMs).toBe(
+      150_000,
+    );
+  });
+
+  it("clears resolved wall-clock range ends when returning live", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        viewWindow: {
+          rangeId: "custom",
+          rangeMs: 60_000,
+          fromExpr: "now-1m",
+          toExpr: "now",
+          fixedEndMs: null,
+          requestedEndMs: 180_000,
+        },
+      },
+    }));
+
+    useIdentStore.getState().goLive();
+
+    expect(useIdentStore.getState().replay.viewWindow?.toExpr).toBe("now");
+    expect(useIdentStore.getState().replay.viewWindow?.fixedEndMs).toBeNull();
+    expect(
+      useIdentStore.getState().replay.viewWindow?.requestedEndMs,
+    ).toBeNull();
+  });
+
+  it.each([
+    { fixedEndMs: null, requestedEndMs: Number.POSITIVE_INFINITY },
+    { fixedEndMs: null, requestedEndMs: Number.NaN },
+    { fixedEndMs: null, requestedEndMs: -1 },
+    { fixedEndMs: null, requestedEndMs: 30_000 },
+    { fixedEndMs: Number.NEGATIVE_INFINITY, requestedEndMs: null },
+  ])("strips invalid resolved replay window bounds at the store boundary %#", ({
+    fixedEndMs,
+    requestedEndMs,
+  }) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    useIdentStore.getState().setReplayViewWindow({
+      rangeId: "custom",
+      rangeMs: 60_000,
+      fromExpr: "now-1m",
+      toExpr: "now",
+      fixedEndMs,
+      requestedEndMs,
+    });
+
+    expect(warn).toHaveBeenCalledWith(
+      "[ident replay] invalid replay view window",
+      expect.objectContaining({
+        fixedEndMs,
+        rangeMs: 60_000,
+        requestedEndMs,
+      }),
+    );
+    expect(useIdentStore.getState().replay.viewWindow?.fixedEndMs).toBeNull();
+    expect(
+      useIdentStore.getState().replay.viewWindow?.requestedEndMs,
+    ).toBeNull();
+    warn.mockRestore();
+  });
+
+  it("keeps fixed replay windows when the store playhead is moved past global availability", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 130_000,
+        playing: false,
+        viewWindow: {
+          rangeId: "custom",
+          rangeMs: 40_000,
+          fromExpr: "2026-04-28 00:02",
+          toExpr: "2026-04-28 00:03",
+          fixedEndMs: 160_000,
+        },
+      },
+    }));
+
+    useIdentStore.getState().setReplayPlayhead(181_000);
+
+    expect(useIdentStore.getState().replay.mode).toBe("replay");
+    expect(useIdentStore.getState().replay.playheadMs).toBe(160_000);
+    expect(useIdentStore.getState().replay.viewWindow?.fixedEndMs).toBe(
+      160_000,
+    );
+  });
+
+  it("clamps replay playhead when manifest availability shrinks below it", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 240_000,
+        mode: "replay",
+        playheadMs: 220_000,
+        playing: false,
+      },
+    }));
+
+    useIdentStore.getState().setReplayManifest({
+      enabled: true,
+      from: 120_000,
+      to: 180_000,
+      block_sec: 60,
+      blocks: [],
+    });
+
+    expect(useIdentStore.getState().replay.mode).toBe("replay");
+    expect(useIdentStore.getState().replay.playheadMs).toBe(180_000);
+  });
+
+  it("keeps replay loading state when entering another replay time while waiting to resume", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 130_000,
+        playing: false,
+        loading: true,
+        resumeAfterLoading: true,
+      },
+    }));
+
+    useIdentStore.getState().enterReplay(150_000);
+
+    expect(useIdentStore.getState().replay.mode).toBe("replay");
+    expect(useIdentStore.getState().replay.playheadMs).toBe(150_000);
+    expect(useIdentStore.getState().replay.loading).toBe(true);
+    expect(useIdentStore.getState().replay.resumeAfterLoading).toBe(true);
+    expect(useIdentStore.getState().replay.playing).toBe(false);
+  });
+
+  it("does not clear a URL-less replay error when a block loads", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        error: "Replay request failed: 404",
+        errorUrl: null,
+      },
+    }));
+
+    useIdentStore.getState().setReplayBlock("/api/replay/blocks/a.json.zst", {
+      version: 1,
+      start: 120_000,
+      end: 180_000,
+      step_ms: 5_000,
+      frames: [],
+    });
+
+    expect(useIdentStore.getState().replay.error).toBe(
+      "Replay request failed: 404",
+    );
+    expect(useIdentStore.getState().replay.errorUrl).toBeNull();
+  });
+
+  it("does not clear an existing replay error when only the message text matches", () => {
+    const loadedUrl = "/api/replay/blocks/a.json.zst";
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        error: `Replay block load failed: ${loadedUrl}: Failed to fetch`,
+        errorUrl: "/api/replay/blocks/b.json.zst",
+      },
+    }));
+
+    useIdentStore.getState().setReplayBlock(loadedUrl, {
+      version: 1,
+      start: 120_000,
+      end: 180_000,
+      step_ms: 5_000,
+      frames: [],
+    });
+
+    expect(useIdentStore.getState().replay.error).toContain(loadedUrl);
+    expect(useIdentStore.getState().replay.errorUrl).toBe(
+      "/api/replay/blocks/b.json.zst",
+    );
+  });
+
+  it("clears an existing replay error when the matching block loads", () => {
+    const url = "/api/replay/blocks/a.json.zst";
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        error: `Replay block load failed: ${url}: Failed to fetch`,
+        errorUrl: url,
+      },
+    }));
+
+    useIdentStore.getState().setReplayBlock(url, {
+      version: 1,
+      start: 120_000,
+      end: 180_000,
+      step_ms: 5_000,
+      frames: [],
+    });
+
+    expect(useIdentStore.getState().replay.error).toBeNull();
+    expect(useIdentStore.getState().replay.errorUrl).toBeNull();
+  });
+
+  it("does not clear a matching replay error when all input frames are dropped", () => {
+    const url = "/api/replay/blocks/a.json.zst";
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        error: `Replay block load failed: ${url}: Failed to fetch`,
+        errorUrl: url,
+      },
+    }));
+
+    useIdentStore.getState().setReplayBlock(url, {
+      version: 1,
+      start: 120_000,
+      end: 180_000,
+      step_ms: 5_000,
+      frames: [{ ts: "bad", aircraft: [] }] as never,
+    });
+
+    expect(useIdentStore.getState().replay.cache[url]?.frames).toEqual([]);
+    expect(useIdentStore.getState().replay.error).toContain(url);
+    expect(useIdentStore.getState().replay.errorUrl).toBe(url);
+  });
+
+  it("does not clear a URL-tagged replay error when live replay recent arrives", () => {
+    const url = "/api/replay/blocks/a.json.zst";
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        error: `Replay block load failed: ${url}: Failed to fetch`,
+        errorUrl: url,
+      },
+    }));
+
+    useIdentStore.getState().setReplayRecent({
+      version: 1,
+      start: 180_000,
+      end: 180_000,
+      step_ms: 1_000,
+      frames: [{ ts: 180_000, aircraft: [] }],
+    });
+
+    expect(useIdentStore.getState().replay.error).toContain(url);
+    expect(useIdentStore.getState().replay.errorUrl).toBe(url);
+  });
+
+  it("keeps playback active when pause is requested at the live edge", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 180_000,
+        playing: true,
+      },
+    }));
+
+    useIdentStore.getState().setReplayPlaying(false);
+
+    expect(useIdentStore.getState().replay.playing).toBe(true);
+  });
+
+  it("clears pending replay resume when a replay error is set", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 150_000,
+        loading: true,
+        resumeAfterLoading: true,
+      },
+    }));
+
+    useIdentStore.getState().setReplayError("Replay block missing");
+
+    expect(useIdentStore.getState().replay.loading).toBe(false);
+    expect(useIdentStore.getState().replay.resumeAfterLoading).toBe(false);
+  });
+
+  it("enters live mode when replay entry snaps to the live edge", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "live",
+        playheadMs: null,
+      },
+    }));
+
+    useIdentStore.getState().enterReplay(180_000);
+
+    expect(useIdentStore.getState().replay.mode).toBe("live");
+    expect(useIdentStore.getState().replay.playheadMs).toBeNull();
+    expect(useIdentStore.getState().replay.playing).toBe(true);
+  });
+
+  it("clamps replay playhead below available history", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 150_000,
+      },
+    }));
+
+    useIdentStore.getState().setReplayPlayhead(1);
+
+    expect(useIdentStore.getState().replay.playheadMs).toBe(120_000);
+  });
+
+  it("does not resume replay after loading when it was already paused", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 150_000,
+        playing: false,
+      },
+    }));
+
+    useIdentStore.getState().setReplayLoading(true);
+    useIdentStore.getState().setReplayLoading(false);
+
+    expect(useIdentStore.getState().replay.playing).toBe(false);
+  });
+
+  it("persists replay windows that end at now and restores them on store init", async () => {
+    resetPreferencesStoreForTests();
+    const viewWindow = {
+      rangeId: "custom",
+      rangeMs: 6 * 60 * 60_000,
+      fromExpr: "now-6h",
+      toExpr: "now",
+      fixedEndMs: null,
+      requestedEndMs: 48 * 60 * 60_000,
+    };
+    const persistedWindow = {
+      rangeId: viewWindow.rangeId,
+      rangeMs: viewWindow.rangeMs,
+      fromExpr: viewWindow.fromExpr,
+      toExpr: viewWindow.toExpr,
+      fixedEndMs: viewWindow.fixedEndMs,
+    };
+
+    useIdentStore.getState().setReplayViewWindow(viewWindow);
+
+    expect(
+      (
+        usePreferencesStore.getState() as unknown as {
+          replayWindow?: typeof persistedWindow;
+        }
+      ).replayWindow,
+    ).toEqual(persistedWindow);
+
+    vi.resetModules();
+    const fresh = await import("./store");
+    expect(fresh.useIdentStore.getState().replay.viewWindow).toEqual(
+      persistedWindow,
+    );
+  });
+
+  it("does not persist replay windows with a fixed end time", () => {
+    resetPreferencesStoreForTests();
+    const saved = {
+      rangeId: "1h",
+      rangeMs: 60 * 60_000,
+      fromExpr: "now-1h",
+      toExpr: "now",
+      fixedEndMs: null,
+    };
+    useIdentStore.getState().setReplayViewWindow(saved);
+
+    useIdentStore.getState().setReplayViewWindow({
+      rangeId: "custom",
+      rangeMs: 12 * 60 * 60_000,
+      fromExpr: "now-24h",
+      toExpr: "now-12h",
+      fixedEndMs: 36 * 60 * 60_000,
+    });
+
+    expect(
+      (
+        usePreferencesStore.getState() as unknown as {
+          replayWindow?: typeof saved;
+        }
+      ).replayWindow,
+    ).toEqual(saved);
   });
 });
 

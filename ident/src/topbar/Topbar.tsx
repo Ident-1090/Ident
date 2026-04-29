@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { formatSiteTag } from "../data/siteTag";
 import type { LabelFields } from "../data/store";
 import { useIdentStore } from "../data/store";
-import type { LabelMode, ThemeMode } from "../data/types";
+import type { ClockMode, LabelMode, ThemeMode } from "../data/types";
 import { BASEMAPS, type BasemapId } from "../map/styles";
 import {
   DesktopReplayTransport,
@@ -74,6 +74,7 @@ export function Topbar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const setBasemap = useIdentStore((s) => s.setBasemap);
   const updateAvailable = useIdentStore((s) => s.update.status === "available");
   const replay = useIdentStore((s) => s.replay);
+  const wsStatus = useIdentStore((s) => s.connectionStatus.ws ?? "connecting");
 
   function cycleTheme() {
     const i = THEME_CYCLE.indexOf(theme);
@@ -113,43 +114,71 @@ export function Topbar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const othersLabel = othersActive ? BASEMAPS[basemapId].label : "OTHERS";
 
   const liveClock = formatTopbarClock(now, clockMode);
-  const clock =
+  const replayClock =
     replay.mode === "replay" && replay.playheadMs != null
+      ? formatReplayClock(
+          replay.playheadMs,
+          clockMode,
+          replay.viewWindow?.rangeMs ??
+            Math.max(
+              0,
+              (replay.availableTo ?? 0) - (replay.availableFrom ?? 0),
+            ),
+          replay.viewWindow?.fixedEndMs != null &&
+            replay.availableTo != null &&
+            replay.viewWindow.fixedEndMs < replay.availableTo - 1000,
+        )
+      : null;
+  const clock =
+    replayClock != null && replay.playheadMs != null
       ? {
-          primary: `${new Date(replay.playheadMs).toISOString().slice(11, 19)}Z`,
+          primary: replay.loading ? "Loading..." : replayClock,
           subtitle: replayDeltaLabel(replay.playheadMs, replay.availableTo),
         }
       : liveClock;
   const site = formatSiteTag(receiver, stationOverride);
+  const initialLoading =
+    receiver == null && stationOverride == null && wsStatus === "connecting";
+
+  if (initialLoading) {
+    return (
+      <header className="[grid-area:topbar] flex items-stretch overflow-hidden min-w-0 bg-paper border-b border-(--color-line) text-[13px]">
+        <TopbarBrand site={site} />
+        <TopbarSkeleton />
+        <div className="flex items-stretch shrink-0">
+          <Toggle label={THEME_LABEL[theme]} onClick={cycleTheme} tooltip>
+            <ThemeIcon size={15} strokeWidth={1.75} aria-hidden="true" />
+          </Toggle>
+          <Toggle
+            label="Settings"
+            onClick={onOpenSettings}
+            mdOnly
+            indicator={updateAvailable}
+          >
+            <Settings2 size={15} strokeWidth={1.75} aria-hidden="true" />
+          </Toggle>
+        </div>
+      </header>
+    );
+  }
 
   return (
     <header className="[grid-area:topbar] flex items-stretch overflow-hidden min-w-0 bg-paper border-b border-(--color-line) text-[13px]">
-      {/* Brand */}
-      <div className="flex items-center gap-2.5 px-4 border-r border-(--color-line) shrink-0">
-        <div className="w-5.5 h-5.5 rounded-sm bg-(--color-ink) text-bg grid place-items-center">
-          <Plane className="w-3.25 h-3.25" strokeWidth={2.25} />
-        </div>
-        <a
-          href={IDENT_GITHUB_URL}
-          target="_blank"
-          rel="noopener noreferrer"
-          aria-label="Open Ident on GitHub"
-          className="font-semibold tracking-[-0.01em] text-[13.5px] text-(--color-ink) no-underline hover:text-(--color-accent)"
-        >
-          Ident
-        </a>
-        {site != null && (
-          <div className="font-mono text-[11px] font-medium text-ink-soft border border-line-strong rounded-[3px] px-1.5 py-px">
-            {site}
-          </div>
-        )}
-      </div>
+      <TopbarBrand site={site} />
 
       {/* Health — clock + map-display controls. Hidden on phone; the drawer
           reprises the receiver/filters/theme controls. */}
       <div className="flex-1 hidden md:flex items-center gap-2 xl:gap-5.5 px-2.5 xl:px-4.5 min-w-0 overflow-hidden">
         <div className="flex shrink-0 flex-col items-start leading-[1.1] tabular-nums mr-1 xl:mr-1.5">
-          <b className="font-mono text-[14px] text-(--color-ink) font-medium tracking-[0.02em]">
+          <b
+            data-testid="topbar-clock-primary"
+            className={
+              "font-mono text-[14px] font-medium tracking-[0.02em] " +
+              (replayClock != null
+                ? "text-(--color-warn)"
+                : "text-(--color-ink)")
+            }
+          >
             {clock.primary}
           </b>
           <span
@@ -300,6 +329,58 @@ export function Topbar({ onOpenSettings }: { onOpenSettings: () => void }) {
   );
 }
 
+function TopbarBrand({ site }: { site: string | null }) {
+  return (
+    <div className="flex items-center gap-2.5 px-4 border-r border-(--color-line) shrink-0">
+      <div className="w-5.5 h-5.5 rounded-sm bg-(--color-ink) text-bg grid place-items-center">
+        <Plane className="w-3.25 h-3.25" strokeWidth={2.25} />
+      </div>
+      <a
+        href={IDENT_GITHUB_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Open Ident on GitHub"
+        className="font-semibold tracking-[-0.01em] text-[13.5px] text-(--color-ink) no-underline hover:text-(--color-accent)"
+      >
+        Ident
+      </a>
+      {site != null && (
+        <div className="font-mono text-[11px] font-medium text-ink-soft border border-line-strong rounded-[3px] px-1.5 py-px">
+          {site}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TopbarSkeleton() {
+  return (
+    <div
+      data-testid="topbar-skeleton"
+      className="flex-1 hidden md:flex items-center gap-5 px-4 min-w-0 overflow-hidden"
+    >
+      <div className="grid gap-1.25 shrink-0 animate-pulse">
+        <div className="h-3.5 w-18 rounded-[2px] bg-paper-3" />
+        <div className="h-2.5 w-22 rounded-[2px] bg-paper-2 border border-line-soft" />
+      </div>
+      <div className="flex h-[22px] w-28 rounded-[4px] border border-(--color-line) bg-paper overflow-hidden animate-pulse">
+        <div className="flex-1 border-r border-(--color-line)" />
+        <div className="flex-1 border-r border-(--color-line)" />
+        <div className="flex-1" />
+      </div>
+      <div className="hidden lg:flex items-center gap-1.5">
+        <div className="h-2.5 w-8 rounded-[2px] bg-paper-3 animate-pulse" />
+        <div className="h-[22px] w-29 rounded-[3px] border border-(--color-line) bg-paper animate-pulse" />
+      </div>
+      <div className="hidden xl:flex items-center gap-1.5">
+        <div className="h-2.5 w-10 rounded-[2px] bg-paper-3 animate-pulse" />
+        <div className="h-[22px] w-36 rounded-[3px] border border-(--color-line) bg-paper animate-pulse" />
+      </div>
+      <div className="flex-1" />
+    </div>
+  );
+}
+
 function CtrlGroup({
   label,
   children,
@@ -389,6 +470,33 @@ export function formatTopbarClock(
     return { primary: `${localFull} ${tz}`, subtitle: `ZULU ${utcShort}` };
   }
   return { primary: utcFull, subtitle: `LOCAL ${localShort} ${tz}` };
+}
+
+function formatReplayClock(
+  playheadMs: number,
+  clockMode: ClockMode,
+  rangeMs: number,
+  pastWindow: boolean,
+): string {
+  const d = new Date(playheadMs);
+  const hh = twoDigit(clockMode === "utc" ? d.getUTCHours() : d.getHours());
+  const mm = twoDigit(clockMode === "utc" ? d.getUTCMinutes() : d.getMinutes());
+  const ss = twoDigit(clockMode === "utc" ? d.getUTCSeconds() : d.getSeconds());
+  if (rangeMs > 24 * 60 * 60_000 || pastWindow) {
+    const monthDay = d
+      .toLocaleString("en", {
+        month: "short",
+        day: "numeric",
+        timeZone: clockMode === "utc" ? "UTC" : undefined,
+      })
+      .toUpperCase();
+    return `${monthDay} ${hh}:${mm}:${ss}${clockMode === "utc" ? "Z" : ` ${localTzAbbrev(d)}`}`;
+  }
+  return `${hh}:${mm}:${ss}${clockMode === "utc" ? "Z" : ` ${localTzAbbrev(d)}`}`;
+}
+
+function twoDigit(value: number): string {
+  return String(value).padStart(2, "0");
 }
 
 function localTzAbbrev(date: Date): string {

@@ -523,6 +523,49 @@ describe("Inspector", () => {
     expect(container.textContent).toContain("Altitude · from 5 minutes ago");
   });
 
+  it("labels replay altitude history relative to the playback head", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-04-23T12:00:00Z"));
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 150_000,
+        cache: {
+          "/api/replay/blocks/120000-180000.json.zst": {
+            version: 1,
+            start: 120_000,
+            end: 180_000,
+            step_ms: 5_000,
+            frames: [
+              {
+                ts: 140_000,
+                aircraft: [{ ...FAKE, alt_baro: 34_000 }],
+              },
+              {
+                ts: 145_000,
+                aircraft: [{ ...FAKE, alt_baro: 34_200 }],
+              },
+              {
+                ts: 150_000,
+                aircraft: [{ ...FAKE, alt_baro: 34_500 }],
+              },
+            ],
+          },
+        },
+      },
+    }));
+
+    act(() => {
+      root.render(<Inspector />);
+    });
+
+    expect(container.textContent).toContain("Altitude · from 10 seconds ago");
+  });
+
   it("falls back to hex in the header when registration is missing", () => {
     act(() => {
       useIdentStore.setState({

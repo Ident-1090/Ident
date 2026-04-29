@@ -35,3 +35,29 @@ Use placeholders such as `receiver.local`, `YOUR_LAT`, `YOUR_LON`, and
 - Update docs when configuration, install shape, privacy behavior, or network
   access changes.
 - Do not choose or change the project license without maintainer approval.
+
+## State and Data Rules
+
+- Keep domain invariants in shared state and data helpers, not only in UI event
+  handlers. UI guards are useful, but reducers and loaders must still protect
+  the same contracts.
+- Do not duplicate predicates or state-machine decisions across modules. Extract
+  one helper when multiple call sites need the same meaning.
+- Preserve user intent separately from data availability. If a user asks for a
+  time range that partly lacks data, keep the requested range visible and show
+  unavailable portions as unavailable instead of silently redefining the range.
+- Treat words such as "now" according to user intent at the input boundary. If a
+  typed expression is wall-clock-relative, resolve it against wall clock and let
+  availability clamping happen as a separate step.
+- Distinguish transient background failures from structural data failures.
+  Background network misses may stay quiet, but malformed or corrupted data must
+  produce a visible diagnostic.
+- Do not clear user-visible errors as a side effect of unrelated successful
+  work. Clear an error only when the action actually addresses that error.
+- Reject invalid numeric input at the boundary. Do not let `NaN`, `Infinity`, or
+  invalid zero-duration values flow into reducers where they can be silently
+  converted into plausible state.
+- Add reducer-level tests for state-machine invariants, not only component tests.
+  Components can clamp or hide paths that other callers can still reach.
+- Add multi-step tests for loops and schedulers. A single tick does not prove
+  repeated playback, retry, or cleanup behavior.

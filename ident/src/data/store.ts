@@ -5,6 +5,7 @@ import { deriveFilterFromQuery } from "../omnibox/grammar";
 import {
   type LabelFields,
   normalizeUnitOverrides,
+  type ReplayWindowPreferences,
   usePreferencesStore,
 } from "./preferences";
 import type {
@@ -61,6 +62,10 @@ const REPLAY_INTERACTION_GRACE_MS = 10 * 60 * 1000;
 const REPLAY_HEAD_KEEP_MS = 60 * 60 * 1000;
 const REPLAY_PLAYHEAD_KEEP_MS = 60 * 60 * 1000;
 const REPLAY_LOADED_FRAME_CAP = 50_000;
+
+export function getNow(): number {
+  return Date.now();
+}
 
 export interface InspectorSlice {
   tab: InspectorTab;
@@ -204,6 +209,15 @@ export interface UpdateSlice {
 
 export type ReplayMode = "live" | "replay";
 
+export interface ReplayViewWindow {
+  rangeId: string;
+  rangeMs: number;
+  fromExpr: string;
+  toExpr: string;
+  fixedEndMs: number | null;
+  requestedEndMs?: number | null;
+}
+
 export interface ReplaySlice {
   enabled: boolean;
   availableFrom: number | null;
@@ -216,10 +230,19 @@ export interface ReplaySlice {
   playheadMs: number | null;
   playing: boolean;
   speed: 1 | 4 | 16;
+  viewWindow?: ReplayViewWindow;
+  followLiveEdge: boolean;
   lastInteractionAt: number | null;
   loading: boolean;
+  resumeAfterLoading: boolean;
   error: string | null;
+  errorUrl: string | null;
 }
+
+export type ReplayFollowState = Pick<
+  ReplaySlice,
+  "mode" | "playheadMs" | "availableTo" | "viewWindow" | "followLiveEdge"
+>;
 
 const DEFAULT_FILTER: FilterSlice = {
   categories: {
@@ -401,12 +424,13 @@ export interface IdentState {
   setReplayBlock: (url: string, block: ReplayBlockFile) => void;
   setReplayRecent: (block: ReplayBlockFile | null) => void;
   setReplayLoading: (loading: boolean) => void;
-  setReplayError: (error: string | null) => void;
+  setReplayError: (error: string | null, url?: string | null) => void;
   enterReplay: (playheadMs?: number) => void;
   goLive: () => void;
   setReplayPlayhead: (playheadMs: number) => void;
   setReplayPlaying: (playing: boolean) => void;
   setReplaySpeed: (speed: 1 | 4 | 16) => void;
+  setReplayViewWindow: (window: ReplayViewWindow) => void;
 }
 
 function appendTrimmed(buf: number[] | undefined, value: number): number[] {
@@ -470,7 +494,10 @@ function normalizeReplayBlock(block: ReplayBlockFile): ReplayBlockFile {
     version: 1,
     start,
     end,
-    step_ms: Number.isFinite(block.step_ms) ? block.step_ms : 1000,
+    step_ms:
+      Number.isFinite(block.step_ms) && block.step_ms > 0
+        ? block.step_ms
+        : 1000,
     frames,
   };
 }
@@ -480,6 +507,7 @@ function appendRecentReplayFrame(
   frame: ReplayFrame,
 ): ReplaySlice {
   if (!replay.enabled || frame.aircraft.length === 0) return replay;
+  const followsLiveEdge = replayFollowsLiveEdge(replay);
   const prev = replay.recent ?? {
     version: 1 as const,
     start: frame.ts,
@@ -512,6 +540,12 @@ function appendRecentReplayFrame(
     recent: nextRecent,
     availableFrom: available.from,
     availableTo: available.to,
+    mode: followsLiveEdge ? "live" : replay.mode,
+    playheadMs: followsLiveEdge ? null : replay.playheadMs,
+    playing: followsLiveEdge ? true : replay.playing,
+    followLiveEdge: false,
+    loading: followsLiveEdge ? false : replay.loading,
+    resumeAfterLoading: followsLiveEdge ? false : replay.resumeAfterLoading,
   };
 }
 
@@ -523,7 +557,7 @@ function pruneRecentReplayFrames(
   if (block.frames.length <= REPLAY_LOADED_FRAME_CAP) return block;
   if (
     replay.lastInteractionAt != null &&
-    Date.now() - replay.lastInteractionAt < REPLAY_INTERACTION_GRACE_MS
+    getNow() - replay.lastInteractionAt < REPLAY_INTERACTION_GRACE_MS
   ) {
     return block;
   }
@@ -660,9 +694,13 @@ const INITIAL_REPLAY_STATE: ReplaySlice = {
   playheadMs: null,
   playing: true,
   speed: 1,
+  viewWindow: usePreferencesStore.getState().replayWindow,
+  followLiveEdge: false,
   lastInteractionAt: null,
   loading: false,
+  resumeAfterLoading: false,
   error: null,
+  errorUrl: null,
 };
 
 export const useIdentStore = create<IdentState>((set) => ({
@@ -954,7 +992,7 @@ export const useIdentStore = create<IdentState>((set) => ({
 
   recordMapInteraction: (interaction) =>
     set((st) => {
-      const at = interaction.at ?? Date.now();
+      const at = interaction.at ?? getNow();
       return {
         camera: {
           ...st.camera,
@@ -1036,10 +1074,11 @@ export const useIdentStore = create<IdentState>((set) => ({
       );
       const availableFrom = available.from;
       const availableTo = available.to;
-      const mode =
-        enabled && st.replay.mode === "replay" && availableFrom != null
-          ? "replay"
-          : "live";
+      const requestedReplay =
+        enabled && st.replay.mode === "replay" && availableFrom != null;
+      const followsLiveEdge =
+        requestedReplay && replayFollowsLiveEdge(st.replay);
+      const mode = requestedReplay && !followsLiveEdge ? "replay" : "live";
       const playheadMs =
         mode === "replay"
           ? clampReplayPlayhead(
@@ -1054,47 +1093,122 @@ export const useIdentStore = create<IdentState>((set) => ({
           enabled,
           availableFrom,
           availableTo,
-          blockSec: manifest.block_sec || st.replay.blockSec,
+          blockSec:
+            manifest.block_sec > 0 ? manifest.block_sec : st.replay.blockSec,
           blocks: Array.isArray(manifest.blocks) ? manifest.blocks : [],
           recent: enabled ? st.replay.recent : null,
           mode,
           playheadMs,
           playing: mode === "replay" ? st.replay.playing : true,
+          viewWindow:
+            mode === "live"
+              ? liveReplayWindow(st.replay.viewWindow)
+              : st.replay.viewWindow,
+          followLiveEdge: false,
+          loading: followsLiveEdge ? false : st.replay.loading,
+          resumeAfterLoading: followsLiveEdge
+            ? false
+            : st.replay.resumeAfterLoading,
           error: enabled ? st.replay.error : null,
+          errorUrl: enabled ? st.replay.errorUrl : null,
         },
       };
     }),
 
   setReplayBlock: (url, block) =>
-    set((st) => ({
-      replay: {
-        ...st.replay,
-        cache: { ...st.replay.cache, [url]: block },
-        error: null,
-      },
-    })),
+    set((st) => {
+      const normalized = normalizeReplayBlock(block);
+      const clearError = shouldClearReplayBlockError(
+        st.replay,
+        url,
+        block,
+        normalized,
+      );
+      return {
+        replay: {
+          ...st.replay,
+          cache: { ...st.replay.cache, [url]: normalized },
+          error: clearError ? null : st.replay.error,
+          errorUrl: clearError ? null : st.replay.errorUrl,
+        },
+      };
+    }),
 
   setReplayRecent: (block) =>
     set((st) => {
       const recent = block ? normalizeReplayBlock(block) : null;
       const remote = replayBlockAvailability(st.replay.blocks);
       const available = replayAvailability(remote.from, remote.to, recent);
+      const clearError = st.replay.errorUrl == null;
       return {
         replay: {
           ...st.replay,
           recent,
           availableFrom: available.from,
           availableTo: available.to,
-          error: null,
+          error: clearError ? null : st.replay.error,
+          errorUrl: clearError ? null : st.replay.errorUrl,
         },
       };
     }),
 
   setReplayLoading: (loading) =>
-    set((st) => ({ replay: { ...st.replay, loading } })),
+    set((st) => {
+      if (replayFollowsLiveEdge(st.replay)) {
+        return {
+          replay: {
+            ...st.replay,
+            mode: "live",
+            playheadMs: null,
+            loading: false,
+            playing: true,
+            viewWindow: liveReplayWindow(st.replay.viewWindow),
+            resumeAfterLoading: false,
+            followLiveEdge: false,
+          },
+        };
+      }
+      if (loading) {
+        const shouldResume = st.replay.mode === "replay" && st.replay.playing;
+        if (
+          st.replay.loading &&
+          !shouldResume &&
+          !st.replay.resumeAfterLoading
+        ) {
+          return st;
+        }
+        return {
+          replay: {
+            ...st.replay,
+            loading: true,
+            playing: shouldResume ? false : st.replay.playing,
+            resumeAfterLoading: st.replay.resumeAfterLoading || shouldResume,
+          },
+        };
+      }
+      const shouldResume =
+        st.replay.mode === "replay" && st.replay.resumeAfterLoading;
+      if (!st.replay.loading && !shouldResume) return st;
+      return {
+        replay: {
+          ...st.replay,
+          loading: false,
+          playing: shouldResume ? true : st.replay.playing,
+          resumeAfterLoading: false,
+        },
+      };
+    }),
 
-  setReplayError: (error) =>
-    set((st) => ({ replay: { ...st.replay, error, loading: false } })),
+  setReplayError: (error, url = null) =>
+    set((st) => ({
+      replay: {
+        ...st.replay,
+        error,
+        errorUrl: error ? url : null,
+        loading: false,
+        resumeAfterLoading: false,
+      },
+    })),
 
   enterReplay: (playheadMs) =>
     set((st) => {
@@ -1110,14 +1224,40 @@ export const useIdentStore = create<IdentState>((set) => ({
         st.replay.availableFrom,
         st.replay.availableTo,
       );
+      const snappedPlayhead = snapReplayPlayheadToLoadedFrame(
+        st.replay,
+        nextPlayhead,
+      );
+      const followLiveEdge = snappedPlayhead >= st.replay.availableTo - 1;
+      if (followLiveEdge) {
+        return {
+          replay: {
+            ...st.replay,
+            mode: "live",
+            playheadMs: null,
+            playing: true,
+            viewWindow: liveReplayWindow(st.replay.viewWindow),
+            followLiveEdge: false,
+            loading: false,
+            resumeAfterLoading: false,
+            lastInteractionAt: getNow(),
+            error: null,
+            errorUrl: null,
+          },
+        };
+      }
       return {
         replay: {
           ...st.replay,
           mode: "replay",
-          playheadMs: nextPlayhead,
+          playheadMs: snappedPlayhead,
           playing: false,
-          lastInteractionAt: Date.now(),
+          followLiveEdge: false,
+          loading: st.replay.loading,
+          resumeAfterLoading: st.replay.resumeAfterLoading,
+          lastInteractionAt: getNow(),
           error: null,
+          errorUrl: null,
         },
       };
     }),
@@ -1129,7 +1269,11 @@ export const useIdentStore = create<IdentState>((set) => ({
         mode: "live",
         playheadMs: null,
         playing: true,
-        lastInteractionAt: Date.now(),
+        viewWindow: liveReplayWindow(st.replay.viewWindow),
+        followLiveEdge: false,
+        loading: false,
+        resumeAfterLoading: false,
+        lastInteractionAt: getNow(),
       },
     })),
 
@@ -1138,26 +1282,38 @@ export const useIdentStore = create<IdentState>((set) => ({
       if (st.replay.availableFrom == null || st.replay.availableTo == null) {
         return st;
       }
-      if (playheadMs >= st.replay.availableTo) {
+      const fixedEndMs = st.replay.viewWindow?.fixedEndMs;
+      const effectiveTo =
+        fixedEndMs == null
+          ? st.replay.availableTo
+          : Math.min(st.replay.availableTo, fixedEndMs);
+      const nextPlayhead = snapReplayPlayheadToLoadedFrame(
+        st.replay,
+        clampReplayPlayhead(playheadMs, st.replay.availableFrom, effectiveTo),
+      );
+      if (fixedEndMs == null && nextPlayhead >= st.replay.availableTo) {
         return {
           replay: {
             ...st.replay,
             mode: "live",
             playing: true,
             playheadMs: null,
-            lastInteractionAt: Date.now(),
+            viewWindow: liveReplayWindow(st.replay.viewWindow),
+            followLiveEdge: false,
+            loading: false,
+            resumeAfterLoading: false,
+            lastInteractionAt: getNow(),
           },
         };
       }
       return {
         replay: {
           ...st.replay,
-          playheadMs: clampReplayPlayhead(
-            playheadMs,
-            st.replay.availableFrom,
-            st.replay.availableTo,
-          ),
-          lastInteractionAt: Date.now(),
+          playheadMs: nextPlayhead,
+          followLiveEdge: false,
+          loading: false,
+          resumeAfterLoading: false,
+          lastInteractionAt: getNow(),
         },
       };
     }),
@@ -1166,18 +1322,42 @@ export const useIdentStore = create<IdentState>((set) => ({
     set((st) => ({
       replay: {
         ...st.replay,
-        playing: st.replay.mode === "replay" ? playing : true,
+        playing: replayFollowsLiveEdge(st.replay)
+          ? true
+          : st.replay.mode === "replay"
+            ? playing
+            : true,
+        resumeAfterLoading: false,
         lastInteractionAt:
-          st.replay.mode === "replay"
-            ? Date.now()
-            : st.replay.lastInteractionAt,
+          st.replay.mode === "replay" ? getNow() : st.replay.lastInteractionAt,
       },
     })),
 
   setReplaySpeed: (speed) =>
     set((st) => ({
-      replay: { ...st.replay, speed, lastInteractionAt: Date.now() },
+      replay: { ...st.replay, speed, lastInteractionAt: getNow() },
     })),
+
+  setReplayViewWindow: (window) => {
+    const nextWindow = normalizeReplayViewWindow(window);
+    if (isPersistableReplayWindow(nextWindow)) {
+      usePreferencesStore.getState().setReplayWindow({
+        rangeId: nextWindow.rangeId,
+        rangeMs: nextWindow.rangeMs,
+        fromExpr: nextWindow.fromExpr,
+        toExpr: "now",
+        fixedEndMs: null,
+      });
+    }
+    set((st) => ({
+      replay: {
+        ...st.replay,
+        viewWindow: nextWindow,
+        followLiveEdge:
+          st.replay.followLiveEdge && nextWindow.fixedEndMs == null,
+      },
+    }));
+  },
 }));
 
 function clampReplayPlayhead(
@@ -1190,6 +1370,106 @@ function clampReplayPlayhead(
   if (from != null) out = Math.max(from, out);
   if (to != null) out = Math.min(to, out);
   return out;
+}
+
+function shouldClearReplayBlockError(
+  replay: ReplaySlice,
+  url: string,
+  original: ReplayBlockFile,
+  normalized: ReplayBlockFile,
+): boolean {
+  if (replay.errorUrl !== url) return false;
+  return !(
+    Array.isArray(original.frames) &&
+    original.frames.length > 0 &&
+    normalized.frames.length === 0
+  );
+}
+
+export function replayFollowsLiveEdge(replay: ReplayFollowState): boolean {
+  return (
+    replay.mode === "replay" &&
+    replay.playheadMs != null &&
+    replay.availableTo != null &&
+    replay.viewWindow?.fixedEndMs == null &&
+    (replay.followLiveEdge || replay.playheadMs >= replay.availableTo - 1)
+  );
+}
+
+function snapReplayPlayheadToLoadedFrame(
+  replay: ReplaySlice,
+  playheadMs: number,
+): number {
+  const blocks = replayLoadedBlocksFromReplay(replay);
+  let hasContainingBlock = false;
+  let nextFrame: ReplayFrame | null = null;
+  for (const block of blocks) {
+    if (playheadMs < block.start || playheadMs > block.end) continue;
+    hasContainingBlock = true;
+    if (frameAtOrBefore(block.frames, playheadMs)) return playheadMs;
+    const frame = frameAtOrAfter(block.frames, playheadMs);
+    if (frame && (!nextFrame || frame.ts < nextFrame.ts)) nextFrame = frame;
+  }
+  if (!hasContainingBlock) return playheadMs;
+  if (!nextFrame) {
+    for (const block of blocks) {
+      if (playheadMs > block.end) continue;
+      const frame = frameAtOrAfter(block.frames, playheadMs);
+      if (frame && (!nextFrame || frame.ts < nextFrame.ts)) nextFrame = frame;
+    }
+  }
+  return nextFrame && nextFrame.ts > playheadMs ? nextFrame.ts : playheadMs;
+}
+
+function liveReplayWindow(window: ReplayViewWindow | undefined) {
+  if (!window) return window;
+  return {
+    ...window,
+    toExpr: "now",
+    fixedEndMs: null,
+    requestedEndMs: null,
+  };
+}
+
+function normalizeReplayViewWindow(window: ReplayViewWindow): ReplayViewWindow {
+  const fixedEndMsValid =
+    window.fixedEndMs != null &&
+    Number.isFinite(window.fixedEndMs) &&
+    window.fixedEndMs > 0;
+  const requestedEndMsValid =
+    window.requestedEndMs != null &&
+    Number.isFinite(window.requestedEndMs) &&
+    window.requestedEndMs > 0 &&
+    Number.isFinite(window.rangeMs) &&
+    window.rangeMs > 0 &&
+    window.requestedEndMs - window.rangeMs >= 0;
+  if (
+    (window.fixedEndMs != null && !fixedEndMsValid) ||
+    (window.requestedEndMs != null && !requestedEndMsValid)
+  ) {
+    console.warn("[ident replay] invalid replay view window", {
+      fixedEndMs: window.fixedEndMs,
+      rangeMs: window.rangeMs,
+      requestedEndMs: window.requestedEndMs,
+    });
+  }
+  const fixedEndMs =
+    window.fixedEndMs != null && fixedEndMsValid ? window.fixedEndMs : null;
+  const requestedEndMs =
+    window.requestedEndMs != null && requestedEndMsValid
+      ? window.requestedEndMs
+      : null;
+  return {
+    ...window,
+    fixedEndMs,
+    requestedEndMs,
+  };
+}
+
+function isPersistableReplayWindow(
+  window: ReplayViewWindow,
+): window is ReplayWindowPreferences {
+  return window.fixedEndMs === null && window.toExpr.trim() === "now";
 }
 
 const EMPTY_REPLAY_AIRCRAFT = new Map<string, Aircraft>();
@@ -1221,9 +1501,13 @@ export function selectDisplayAircraftMap(
 }
 
 export function selectDisplayNow(st: IdentState): number {
+  return selectDisplayNowMs(st) / 1000;
+}
+
+export function selectDisplayNowMs(st: IdentState): number {
   return st.replay.mode === "replay" && st.replay.playheadMs != null
-    ? st.replay.playheadMs / 1000
-    : st.now;
+    ? st.replay.playheadMs
+    : st.now * 1000;
 }
 
 export function selectDisplayTrailsByHex(
@@ -1245,8 +1529,10 @@ export function selectDisplayTrailsByHex(
   const since = st.replay.playheadMs - TRAIL_FADE_MAX_SEC * 1000;
   const out: Record<string, TrailPoint[]> = {};
   for (const block of blocks) {
-    for (const frame of block.frames) {
-      if (frame.ts < since || frame.ts > st.replay.playheadMs) continue;
+    let i = firstFrameAtOrAfter(block.frames, since);
+    for (; i < block.frames.length; i += 1) {
+      const frame = block.frames[i];
+      if (frame.ts > st.replay.playheadMs) break;
       for (const ac of frame.aircraft) {
         if (typeof ac.lat !== "number" || typeof ac.lon !== "number") continue;
         const series = out[ac.hex] ?? [];
@@ -1282,24 +1568,63 @@ function currentReplayFrame(st: IdentState): ReplayFrame | null {
   if (st.replay.mode !== "replay" || st.replay.playheadMs == null) return null;
   let best: ReplayFrame | null = null;
   for (const block of replayLoadedBlocks(st)) {
-    if (
-      st.replay.playheadMs < block.start ||
-      st.replay.playheadMs > block.end
-    ) {
-      continue;
-    }
-    for (const frame of block.frames) {
-      if (frame.ts > st.replay.playheadMs) break;
-      if (!best || frame.ts > best.ts) best = frame;
-    }
+    if (st.replay.playheadMs > block.end) continue;
+    if (st.replay.playheadMs < block.start) continue;
+    const frame = frameAtOrBefore(block.frames, st.replay.playheadMs);
+    if (frame && (!best || frame.ts > best.ts)) best = frame;
   }
   return best;
 }
 
+function frameAtOrBefore(
+  frames: ReplayFrame[],
+  timestampMs: number,
+): ReplayFrame | null {
+  const index = firstFrameAfter(frames, timestampMs) - 1;
+  return index >= 0 ? frames[index] : null;
+}
+
+function frameAtOrAfter(
+  frames: ReplayFrame[],
+  timestampMs: number,
+): ReplayFrame | null {
+  const index = firstFrameAtOrAfter(frames, timestampMs);
+  return index < frames.length ? frames[index] : null;
+}
+
+function firstFrameAtOrAfter(
+  frames: ReplayFrame[],
+  timestampMs: number,
+): number {
+  let lo = 0;
+  let hi = frames.length;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (frames[mid].ts < timestampMs) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
+function firstFrameAfter(frames: ReplayFrame[], timestampMs: number): number {
+  let lo = 0;
+  let hi = frames.length;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (frames[mid].ts <= timestampMs) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo;
+}
+
 function replayLoadedBlocks(st: IdentState): ReplayBlockFile[] {
-  const blocks = Object.values(st.replay.cache);
-  if (st.replay.recent && st.replay.recent.frames.length > 0) {
-    blocks.push(st.replay.recent);
+  return replayLoadedBlocksFromReplay(st.replay);
+}
+
+function replayLoadedBlocksFromReplay(replay: ReplaySlice): ReplayBlockFile[] {
+  const blocks = Object.values(replay.cache);
+  if (replay.recent && replay.recent.frames.length > 0) {
+    blocks.push(replay.recent);
   }
   return blocks;
 }

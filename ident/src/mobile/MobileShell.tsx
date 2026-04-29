@@ -90,6 +90,7 @@ export function MobileShell({
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [drawerTab, setDrawerTab] = useState<DrawerTab>("traffic");
   const [snap, setSnap] = useState<SheetSnap>("half");
+  const [replayDockOpen, setReplayDockOpen] = useState(false);
   const selectedHex = useIdentStore((s) => s.selectedHex);
   const aircraft = useIdentStore(selectDisplayAircraftMap);
   const select = useIdentStore((s) => s.select);
@@ -121,10 +122,13 @@ export function MobileShell({
         >
           <Search size={18} strokeWidth={1.75} aria-hidden="true" />
         </button>
-        <MobileReplayFab />
+        <MobileReplayFab
+          open={replayDockOpen}
+          onOpenChange={setReplayDockOpen}
+        />
       </div>
 
-      <MobileReplayDock />
+      <MobileReplayDock open={replayDockOpen} />
 
       {hasSelected && (
         <BottomSheet

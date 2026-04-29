@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { haversineNm } from "../data/derive";
 import {
   selectDisplayAircraftMap,
+  selectDisplayNowMs,
   selectDisplayTrailsByHex,
   useIdentStore,
 } from "../data/store";
@@ -59,6 +60,9 @@ export function Inspector({ variant = "docked" }: InspectorProps) {
   const rssiBufs = useIdentStore((s) => s.rssiBufByHex);
   const replaying = useIdentStore((s) => s.replay.mode === "replay");
   const trails = useIdentStore(selectDisplayTrailsByHex);
+  const replayDisplayNowMs = useIdentStore((s) =>
+    s.replay.mode === "replay" ? selectDisplayNowMs(s) : null,
+  );
 
   if (!selectedHex) return null;
   const ac = aircraft.get(selectedHex);
@@ -78,7 +82,11 @@ export function Inspector({ variant = "docked" }: InspectorProps) {
       />
       <PhotoCard hex={ac.hex} reg={ac.r} type={ac.t} />
       <TelemetryGrid aircraft={ac} />
-      <TrendSection aircraft={ac} trace={altTraceFromTrail(trails[ac.hex])} />
+      <TrendSection
+        aircraft={ac}
+        trace={altTraceFromTrail(trails[ac.hex])}
+        nowMs={replayDisplayNowMs ?? Date.now()}
+      />
       <Tabs tab={tab} onSelect={setInspectorTab} />
       <div className="flex-1 min-h-0 overflow-y-auto px-3.5 py-2.5 font-mono text-[10.5px] text-ink-soft">
         {tab === "telemetry" && (
@@ -474,9 +482,11 @@ export function altSamplesFromTrail(trail: TrailPoint[] | undefined): number[] {
 function TrendSection({
   aircraft,
   trace,
+  nowMs,
 }: {
   aircraft: Aircraft;
   trace: AltitudeTrace;
+  nowMs: number;
 }) {
   const samples = trace.samples;
   const rate = aircraft.baro_rate ?? 0;
@@ -488,7 +498,7 @@ function TrendSection({
       : rate < -100
         ? "text-(--color-warn)"
         : "text-ink-faint";
-  const altitudeWindowLabel = altitudeWindowTitle(trace);
+  const altitudeWindowLabel = altitudeWindowTitle(trace, nowMs);
   return (
     <div className="px-3 py-1.5 border-b border-(--color-line)">
       <div className="flex items-center gap-2 font-mono text-[9px] uppercase tracking-widest text-ink-faint mb-[2px]">
@@ -503,12 +513,12 @@ function TrendSection({
   );
 }
 
-function altitudeWindowTitle(trace: AltitudeTrace): string {
+function altitudeWindowTitle(trace: AltitudeTrace, nowMs: number): string {
   if (trace.samples.length < 2) return "Altitude · collecting";
   const window = altitudeSparklineWindow(trace.samples);
   const startTs = trace.ts[window.startIndex];
   if (typeof startTs !== "number") return "Altitude";
-  return `Altitude · from ${relativeTimeFromNow(startTs)}`;
+  return `Altitude · from ${relativeTimeFromNow(startTs, nowMs)}`;
 }
 
 const RELATIVE_TIME_FORMAT = new Intl.RelativeTimeFormat(undefined, {

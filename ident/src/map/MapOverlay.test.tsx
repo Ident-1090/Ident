@@ -805,6 +805,51 @@ describe("MapOverlay", () => {
     expect(selectedAircraft?.properties?.selected).toBe(true);
   });
 
+  it("tracks a selected aircraft at its rendered trail point when its current position is missing", () => {
+    const stub = createStubMap();
+    useIdentStore.setState((st) => ({
+      aircraft: new Map([
+        [UAL.hex, { ...UAL, lat: undefined, lon: undefined }],
+      ]),
+      selectedHex: UAL.hex,
+      camera: { ...st.camera, trackSelected: true },
+      trailsByHex: {
+        [UAL.hex]: [
+          { lat: 37.1, lon: -122.1, alt: 33000, ts: 1 },
+          { lat: 37.2, lon: -122.2, alt: 33000, ts: 2 },
+        ],
+      },
+    }));
+
+    renderOverlay(root, stub, true);
+
+    expect(stub.easeTo).toHaveBeenCalledWith({
+      center: [-122.2, 37.2],
+      duration: 350,
+      offset: [0, 0],
+    });
+  });
+
+  it("does not recenter selected aircraft when unrelated aircraft update", () => {
+    const stub = createStubMap();
+    useIdentStore.setState((st) => ({
+      selectedHex: UAL.hex,
+      camera: { ...st.camera, trackSelected: true },
+    }));
+    renderOverlay(root, stub, true);
+    expect(stub.easeTo).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      useIdentStore.setState((st) => {
+        const aircraft = new Map(st.aircraft);
+        aircraft.set(SWA.hex, { ...SWA, lat: 37.8, lon: -122.4 });
+        return { aircraft };
+      });
+    });
+
+    expect(stub.easeTo).toHaveBeenCalledTimes(1);
+  });
+
   it("defers missing selected layers during style load and restores them once loaded", () => {
     const stub = createStubMap();
     renderOverlay(root, stub, true);

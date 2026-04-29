@@ -11,7 +11,7 @@ import {
 import { matchesFilter } from "../data/predicates";
 import {
   selectDisplayAircraftMap,
-  selectDisplayNow,
+  selectDisplayNowMs,
   selectDisplayTrailsByHex,
   useIdentStore,
 } from "../data/store";
@@ -76,7 +76,7 @@ export function MapOverlay() {
   const viewportHexes = useIdentStore((s) => s.map.viewportHexes);
   const trailsByHex = useIdentStore(selectDisplayTrailsByHex);
   const trailFadeSec = useIdentStore((s) => s.settings.trailFadeSec);
-  const dataNow = useIdentStore(selectDisplayNow);
+  const dataNowMs = useIdentStore(selectDisplayNowMs);
   const hoveredHex = useIdentStore((s) => s.labels.hoveredHex);
   const setHoveredHex = useIdentStore((s) => s.setHoveredHex);
   const setMapViewportHexes = useIdentStore((s) => s.setMapViewportHexes);
@@ -158,7 +158,7 @@ export function MapOverlay() {
       selectedTrackingOffset.current = null;
       return;
     }
-    const ac = aircraft.get(selectedHex);
+    const ac = selectedMapAircraft;
     if (!ac || ac.lat == null || ac.lon == null) return;
     const position = { lat: ac.lat, lon: ac.lon };
     if (!trackSelected) {
@@ -204,7 +204,7 @@ export function MapOverlay() {
       offsetY: offset[1],
     });
     map.easeTo({ center: [ac.lon, ac.lat], duration: SELECT_EASE_MS, offset });
-  }, [selectedHex, trackSelected, aircraft, map]);
+  }, [selectedHex, trackSelected, selectedMapAircraft, map]);
 
   const filteredAircraft = useMemo(() => {
     const out: Aircraft[] = [];
@@ -308,7 +308,7 @@ export function MapOverlay() {
         trailsByHex,
         selectedHex,
         trailFadeSec,
-        nowMs: currentFrameNowMs(dataNow),
+        nowMs: dataNowMs,
         enabled: layersOn.trails,
       }),
     [
@@ -316,7 +316,7 @@ export function MapOverlay() {
       trailsByHex,
       selectedHex,
       trailFadeSec,
-      dataNow,
+      dataNowMs,
       layersOn.trails,
     ],
   );
@@ -792,12 +792,6 @@ function measuredMobileSheetHeight(sheet: HTMLElement): number {
         : 0;
 
   return Math.max(rectHeight, targetHeight);
-}
-
-function currentFrameNowMs(now: number): number {
-  return typeof now === "number" && Number.isFinite(now) && now > 0
-    ? Math.round(now * 1000)
-    : Date.now();
 }
 
 function visibleAircraftHexes(map: MlMap, aircraft: Aircraft[]): Set<string> {

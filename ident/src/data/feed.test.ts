@@ -281,7 +281,7 @@ describe("startFeed route envelopes", () => {
               step_ms: 5_000,
               frames: [
                 {
-                  ts: 190_000,
+                  ts: 185_000,
                   aircraft: [{ hex: "recent", flight: "RECENT1" }],
                 },
               ],
@@ -295,7 +295,7 @@ describe("startFeed route envelopes", () => {
     const stop = startFeed();
 
     await vi.waitFor(() => {
-      useIdentStore.getState().enterReplay(190_000);
+      useIdentStore.getState().enterReplay(185_000);
       expect(
         selectDisplayAircraftMap(useIdentStore.getState()).get("recent"),
       ).toMatchObject({ flight: "RECENT1" });

@@ -35,6 +35,8 @@ describe("Topbar basemap picker", () => {
     document.body.appendChild(container);
     root = createRoot(container);
     useIdentStore.setState((st) => ({
+      receiver: { lat: 0, lon: 0, version: "readsb" },
+      connectionStatus: { ...st.connectionStatus, ws: "open" },
       map: { ...st.map, basemapId: "ident" },
       update: { ...st.update, status: "current" },
     }));
@@ -167,6 +169,89 @@ describe("Topbar basemap picker", () => {
     expect(labelsLabel.parentElement?.className).not.toContain("hidden");
   });
 
+  it("uses the warn replay clock with date context for long replay windows", () => {
+    act(() => {
+      useIdentStore.setState((st) => ({
+        settings: { ...st.settings, clock: "utc" },
+        replay: {
+          ...st.replay,
+          enabled: true,
+          availableFrom: Date.parse("2026-04-25T00:00:00Z"),
+          availableTo: Date.parse("2026-04-28T00:00:00Z"),
+          mode: "replay",
+          playheadMs: Date.parse("2026-04-26T14:30:00Z"),
+          viewWindow: {
+            rangeId: "custom",
+            rangeMs: 36 * 60 * 60_000,
+            fromExpr: "now-48h",
+            toExpr: "now-12h",
+            fixedEndMs: Date.parse("2026-04-27T12:00:00Z"),
+          },
+        },
+      }));
+      root.render(<Topbar onOpenSettings={() => {}} />);
+    });
+
+    const primary = container.querySelector(
+      '[data-testid="topbar-clock-primary"]',
+    ) as HTMLSpanElement;
+    expect(primary.textContent).toBe("APR 26 14:30:00Z");
+    expect(primary.className).toContain("text-(--color-warn)");
+  });
+
+  it("formats the replay clock with the local clock setting", () => {
+    act(() => {
+      useIdentStore.setState((st) => ({
+        settings: { ...st.settings, clock: "local" },
+        replay: {
+          ...st.replay,
+          enabled: true,
+          availableFrom: Date.parse("2026-04-26T00:00:00Z"),
+          availableTo: Date.parse("2026-04-26T18:00:00Z"),
+          mode: "replay",
+          playheadMs: Date.parse("2026-04-26T14:30:00Z"),
+          viewWindow: {
+            rangeId: "8h",
+            rangeMs: 8 * 60 * 60_000,
+            fromExpr: "now-8h",
+            toExpr: "now",
+            fixedEndMs: null,
+          },
+        },
+      }));
+      root.render(<Topbar onOpenSettings={() => {}} />);
+    });
+
+    const primary = container.querySelector(
+      '[data-testid="topbar-clock-primary"]',
+    ) as HTMLSpanElement;
+    expect(primary.textContent).toMatch(/^\d{2}:\d{2}:\d{2} [A-Z]{2,5}$/);
+    expect(primary.textContent).not.toBe("14:30:00Z");
+  });
+
+  it("shows loading in the replay clock while replay data is loading", () => {
+    act(() => {
+      useIdentStore.setState((st) => ({
+        replay: {
+          ...st.replay,
+          enabled: true,
+          availableFrom: Date.parse("2026-04-26T00:00:00Z"),
+          availableTo: Date.parse("2026-04-26T18:00:00Z"),
+          mode: "replay",
+          playheadMs: Date.parse("2026-04-26T14:30:00Z"),
+          loading: true,
+        },
+      }));
+      root.render(<Topbar onOpenSettings={() => {}} />);
+    });
+
+    const primary = container.querySelector(
+      '[data-testid="topbar-clock-primary"]',
+    ) as HTMLSpanElement;
+    expect(primary.textContent).toBe("Loading...");
+    expect(primary.className).toContain("text-(--color-warn)");
+  });
+
   it("links the title brand to the GitHub project", () => {
     const link = container.querySelector<HTMLAnchorElement>(
       'a[aria-label="Open Ident on GitHub"]',
@@ -187,6 +272,50 @@ describe("Topbar basemap picker", () => {
 
     const settings = findButton(container, "Settings")!;
     expect(settings.querySelector("span[aria-hidden='true']")).toBeTruthy();
+  });
+
+  it("renders a structured skeleton while the receiver is loading", () => {
+    act(() => {
+      useIdentStore.setState((st) => ({
+        receiver: null,
+        config: { ...st.config, station: null },
+        connectionStatus: { ...st.connectionStatus, ws: "connecting" },
+      }));
+      root.render(<Topbar onOpenSettings={() => {}} />);
+    });
+
+    expect(
+      container.querySelector('[data-testid="topbar-skeleton"]'),
+    ).toBeTruthy();
+    expect(
+      container.querySelector('[data-testid="topbar-clock-primary"]'),
+    ).toBeNull();
+    expect(findButton(container, "Settings")).toBeTruthy();
+  });
+
+  it("updates the loading skeleton when the WebSocket status changes", () => {
+    act(() => {
+      useIdentStore.setState((st) => ({
+        receiver: null,
+        config: { ...st.config, station: null },
+        connectionStatus: { ...st.connectionStatus, ws: "open" },
+      }));
+      root.render(<Topbar onOpenSettings={() => {}} />);
+    });
+
+    expect(
+      container.querySelector('[data-testid="topbar-skeleton"]'),
+    ).toBeNull();
+
+    act(() => {
+      useIdentStore.setState((st) => ({
+        connectionStatus: { ...st.connectionStatus, ws: "connecting" },
+      }));
+    });
+
+    expect(
+      container.querySelector('[data-testid="topbar-skeleton"]'),
+    ).toBeTruthy();
   });
 
   it("shows UTC time with an explicit local companion time", () => {

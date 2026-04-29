@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ensureReplayRange, refreshReplayManifest } from "./replay";
+import {
+  blocksForRange,
+  ensureReplayRange,
+  refreshReplayManifest,
+} from "./replay";
 import {
   selectDisplayAircraftMap,
   selectDisplayTrailsByHex,
@@ -23,9 +27,12 @@ function resetStore() {
       playheadMs: null,
       playing: false,
       speed: 1,
+      followLiveEdge: false,
       lastInteractionAt: null,
       loading: false,
+      resumeAfterLoading: false,
       error: null,
+      errorUrl: null,
     },
     trailsByHex: {},
   });
@@ -59,6 +66,39 @@ describe("replay data loading", () => {
     expect(useIdentStore.getState().replay.blocks).toHaveLength(1);
   });
 
+  it("normalizes manifest block order for bounded range lookup", async () => {
+    globalThis.fetch = vi.fn(async () =>
+      responseJson({
+        ...longManifest(),
+        blocks: [...longManifest().blocks].reverse(),
+      }),
+    ) as never;
+
+    await refreshReplayManifest();
+
+    expect(
+      blocksForRange(
+        useIdentStore.getState().replay.blocks,
+        180_001,
+        239_999,
+      ).map((block) => block.url),
+    ).toEqual(["/api/replay/blocks/180000-240000.json.zst"]);
+  });
+
+  it("handles empty and single-block manifests in bounded range lookup", () => {
+    const block = {
+      start: 120_000,
+      end: 180_000,
+      url: "/api/replay/blocks/120000-180000.json.zst",
+      bytes: 200,
+    };
+
+    expect(blocksForRange([], 120_000, 180_000)).toEqual([]);
+    expect(blocksForRange([block], 0, 119_999)).toEqual([]);
+    expect(blocksForRange([block], 180_001, 240_000)).toEqual([]);
+    expect(blocksForRange([block], 130_000, 140_000)).toEqual([block]);
+  });
+
   it("deduplicates concurrent manifest refreshes", async () => {
     let resolveManifest: ((value: Response) => void) | null = null;
     globalThis.fetch = vi.fn(
@@ -89,9 +129,9 @@ describe("replay data loading", () => {
     await ensureReplayRange(120_000, 180_000);
 
     const st = useIdentStore.getState();
-    expect(st.replay.cache["/api/replay/blocks/120000-180000.json.zst"]).toBe(
-      block,
-    );
+    expect(
+      st.replay.cache["/api/replay/blocks/120000-180000.json.zst"],
+    ).toStrictEqual(block);
     expect(selectDisplayAircraftMap(st).get("abc123")?.flight).toBe("UAL123");
     expect(selectDisplayTrailsByHex(st).abc123).toHaveLength(2);
   });
@@ -107,6 +147,104 @@ describe("replay data loading", () => {
     await ensureReplayRange(120_000, 180_000);
 
     expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not toggle loading for blocks that are already loaded", async () => {
+    const block = replayBlock();
+    globalThis.fetch = vi.fn(async (url: string) =>
+      url.includes("manifest") ? responseJson(manifest()) : responseJson(block),
+    ) as never;
+
+    await refreshReplayManifest();
+    await ensureReplayRange(120_000, 180_000);
+    const loadingStates: boolean[] = [];
+    const unsubscribe = useIdentStore.subscribe((state) => {
+      loadingStates.push(state.replay.loading);
+    });
+
+    await ensureReplayRange(120_000, 180_000);
+    unsubscribe();
+
+    expect(loadingStates).toEqual([]);
+    expect(useIdentStore.getState().replay.loading).toBe(false);
+  });
+
+  it("does not keep replay loading for pending background preload blocks", async () => {
+    const requests = new Map<string, PendingBlockRequest>();
+    globalThis.fetch = vi.fn((url: string, init?: RequestInit) => {
+      if (url.includes("manifest")) {
+        return Promise.resolve(responseJson(longManifest()));
+      }
+      const signal = init?.signal;
+      if (!(signal instanceof AbortSignal)) {
+        throw new Error("block request missing abort signal");
+      }
+      return new Promise<Response>((resolve, reject) => {
+        requests.set(url, { signal, resolve });
+        signal.addEventListener("abort", () => reject(abortError()), {
+          once: true,
+        });
+      });
+    }) as never;
+
+    await refreshReplayManifest();
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        mode: "replay",
+        playheadMs: 30_000,
+        playing: true,
+        cache: {
+          "/api/replay/blocks/0-60000.json.zst": {
+            version: 1,
+            start: 0,
+            end: 60_000,
+            step_ms: 1000,
+            frames: [],
+          },
+        },
+      },
+    }));
+
+    const preload = ensureReplayRange(0, 119_999, { background: true });
+    await vi.waitFor(() => {
+      expect(
+        requests.has("/ident/api/replay/blocks/60000-120000.json.zst"),
+      ).toBe(true);
+    });
+
+    expect(useIdentStore.getState().replay.loading).toBe(false);
+    expect(useIdentStore.getState().replay.playing).toBe(true);
+    expect(
+      requests.get("/ident/api/replay/blocks/60000-120000.json.zst")?.signal
+        .aborted,
+    ).toBe(false);
+
+    requests
+      .get("/ident/api/replay/blocks/60000-120000.json.zst")
+      ?.resolve(responseJson(replayBlock()));
+    await preload;
+  });
+
+  it("does not leave a completed cached range reusable after state changes", async () => {
+    const block = replayBlock();
+    globalThis.fetch = vi.fn(async (url: string) =>
+      url.includes("manifest") ? responseJson(manifest()) : responseJson(block),
+    ) as never;
+
+    await refreshReplayManifest();
+    await ensureReplayRange(120_000, 180_000);
+    await ensureReplayRange(120_000, 180_000);
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        cache: {},
+      },
+    }));
+
+    await ensureReplayRange(120_000, 180_000);
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
   });
 
   it("deduplicates overlapping requests for the same block", async () => {
@@ -198,6 +336,49 @@ describe("replay data loading", () => {
       .get("/ident/api/replay/blocks/600000-660000.json.zst")
       ?.resolve(responseJson(replayBlock()));
     await current;
+  });
+
+  it("cancels stale in-flight block requests when replay returns to the live edge", async () => {
+    const requests = new Map<string, PendingBlockRequest>();
+    globalThis.fetch = vi.fn((url: string, init?: RequestInit) => {
+      if (url.includes("manifest")) {
+        return Promise.resolve(responseJson(longManifest()));
+      }
+      const signal = init?.signal;
+      if (!(signal instanceof AbortSignal)) {
+        throw new Error("block request missing abort signal");
+      }
+      return new Promise<Response>((resolve, reject) => {
+        requests.set(url, { signal, resolve });
+        signal.addEventListener("abort", () => reject(abortError()), {
+          once: true,
+        });
+      });
+    }) as never;
+
+    await refreshReplayManifest();
+    const stale = ensureReplayRange(0, 59_999);
+    await vi.waitFor(() => {
+      expect(requests.has("/ident/api/replay/blocks/0-60000.json.zst")).toBe(
+        true,
+      );
+    });
+
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        mode: "replay",
+        playheadMs: st.replay.availableTo,
+        playing: true,
+      },
+    }));
+    await ensureReplayRange(180_000, 180_000);
+
+    expect(
+      requests.get("/ident/api/replay/blocks/0-60000.json.zst")?.signal.aborted,
+    ).toBe(true);
+    await stale;
+    expect(useIdentStore.getState().replay.loading).toBe(false);
   });
 
   it("refetches a canceled range when replay returns before abort settlement", async () => {
@@ -327,6 +508,100 @@ describe("replay data loading", () => {
 
     expect(globalThis.fetch).toHaveBeenCalledTimes(3);
     expect(useIdentStore.getState().replay.error).toContain("404");
+  });
+
+  it("keeps the block error tag when recovery manifest refresh also fails", async () => {
+    let manifestCalls = 0;
+    globalThis.fetch = vi.fn(async (url: string) => {
+      if (url.includes("manifest")) {
+        manifestCalls += 1;
+        if (manifestCalls === 1) return responseJson(manifest());
+        return { ok: false, status: 503, json: async () => ({}) } as Response;
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    }) as never;
+
+    await refreshReplayManifest();
+    await ensureReplayRange(120_000, 180_000);
+
+    expect(useIdentStore.getState().replay.error).toContain("404");
+    expect(useIdentStore.getState().replay.errorUrl).toBe(
+      "/api/replay/blocks/120000-180000.json.zst",
+    );
+  });
+
+  it("refreshes the manifest and logs background replay block failures", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    globalThis.fetch = vi.fn(async (url: string) =>
+      url.includes("manifest")
+        ? responseJson(manifest())
+        : ({ ok: false, status: 404, json: async () => ({}) } as Response),
+    ) as never;
+
+    await refreshReplayManifest();
+    await ensureReplayRange(120_000, 180_000, { background: true });
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+    expect(warn).toHaveBeenCalledWith(
+      "[ident replay] background block load failed",
+      expect.any(Error),
+    );
+    expect(useIdentStore.getState().replay.error).toBeNull();
+  });
+
+  it("surfaces malformed replay blocks from background loads", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    globalThis.fetch = vi.fn(async (url: string) =>
+      url.includes("manifest")
+        ? responseJson(manifest())
+        : responseJson({ version: 1, frames: null }),
+    ) as never;
+
+    await refreshReplayManifest();
+    await ensureReplayRange(120_000, 180_000, { background: true });
+
+    expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+    expect(warn).not.toHaveBeenCalledWith(
+      "[ident replay] background block load failed",
+      expect.any(Error),
+    );
+    expect(useIdentStore.getState().replay.error).toContain(
+      "Invalid replay block",
+    );
+    expect(useIdentStore.getState().replay.error).toContain(
+      "/api/replay/blocks/120000-180000.json.zst",
+    );
+    expect(useIdentStore.getState().replay.errorUrl).toBe(
+      "/api/replay/blocks/120000-180000.json.zst",
+    );
+  });
+
+  it("retries malformed replay blocks and clears the matching error after recovery", async () => {
+    let malformed = true;
+    globalThis.fetch = vi.fn(async (url: string) => {
+      if (url.includes("manifest")) return responseJson(manifest());
+      if (malformed) {
+        malformed = false;
+        return responseJson({ version: 1, frames: null });
+      }
+      return responseJson(replayBlock());
+    }) as never;
+
+    await refreshReplayManifest();
+    await ensureReplayRange(120_000, 180_000, { background: true });
+    await ensureReplayRange(120_000, 180_000);
+
+    expect(globalThis.fetch).toHaveBeenCalledWith(
+      "/ident/api/replay/blocks/120000-180000.json.zst",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(useIdentStore.getState().replay.error).toBeNull();
+    expect(useIdentStore.getState().replay.errorUrl).toBeNull();
+    expect(
+      useIdentStore.getState().replay.cache[
+        "/api/replay/blocks/120000-180000.json.zst"
+      ],
+    ).toBeTruthy();
   });
 });
 
