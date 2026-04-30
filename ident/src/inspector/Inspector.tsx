@@ -2,6 +2,10 @@ import { X } from "lucide-react";
 import type { ReactNode } from "react";
 import { haversineNm } from "../data/derive";
 import {
+  aircraftRecency as aircraftRecencyTier,
+  type RecencyTier,
+} from "../data/recency";
+import {
   selectDisplayAircraftMap,
   selectDisplayNowMs,
   selectDisplayTrailsByHex,
@@ -185,12 +189,13 @@ function aircraftRecency(
   replaying: boolean,
 ): {
   label: "LIVE" | "STALE" | "LOST" | "REPLAY";
-  tier: "live" | "stale" | "lost" | "replay";
+  tier: RecencyTier;
   tooltip: string;
   className: string;
 } {
   const seenSec = aircraft.seen;
-  if (replaying) {
+  const tier = aircraftRecencyTier(aircraft, replaying);
+  if (tier === "replay") {
     return {
       label: "REPLAY",
       tier: "replay",
@@ -199,7 +204,7 @@ function aircraftRecency(
         "text-(--color-warn) bg-[color-mix(in_oklch,var(--color-warn)_12%,var(--color-paper))]",
     };
   }
-  if (seenSec != null && seenSec <= 2) {
+  if (tier === "live") {
     return {
       label: "LIVE",
       tier: "live",
@@ -208,7 +213,7 @@ function aircraftRecency(
         "text-(--color-live) bg-[color-mix(in_oklch,var(--color-live)_12%,var(--color-paper))]",
     };
   }
-  if (seenSec != null && seenSec <= 30) {
+  if (tier === "stale") {
     return {
       label: "STALE",
       tier: "stale",

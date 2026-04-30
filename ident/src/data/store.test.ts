@@ -1188,7 +1188,7 @@ describe("ingestAircraft rolling buffers", () => {
     expect(state.aircraft.get("abc123")?.seen_pos).toBeUndefined();
   });
 
-  it("drops trail points for aircraft missing from the latest frame", () => {
+  it("retains stale aircraft and trail points across missing frames", () => {
     const store = useIdentStore.getState();
     store.recordTrailPoint("abc123", {
       lat: 34.1,
@@ -1202,12 +1202,71 @@ describe("ingestAircraft rolling buffers", () => {
       alt: 4000,
       ts: 100_000,
     });
+    useIdentStore.setState({
+      aircraft: new Map([
+        ["abc123", { hex: "abc123", alt_baro: 3000, seen: 1 }],
+        ["def456", { hex: "def456", alt_baro: 4000, seen: 0 }],
+      ]),
+      now: 100,
+    });
 
     store.ingestAircraft({
-      now: 110,
+      now: 105,
       aircraft: [{ hex: "def456", alt_baro: 4000 }],
     });
 
+    expect(useIdentStore.getState().aircraft.get("abc123")).toMatchObject({
+      hex: "abc123",
+      seen: 6,
+    });
+    expect(useIdentStore.getState().trailsByHex.abc123).toEqual([
+      {
+        lat: 34.1,
+        lon: -118.2,
+        alt: 3000,
+        ts: 100_000,
+        segment: 0,
+      },
+    ]);
+    expect(useIdentStore.getState().trailsByHex.def456).toEqual([
+      {
+        lat: 35.1,
+        lon: -119.2,
+        alt: 4000,
+        ts: 100_000,
+        segment: 0,
+      },
+    ]);
+  });
+
+  it("drops non-selected aircraft and trail points after they become lost", () => {
+    const store = useIdentStore.getState();
+    store.recordTrailPoint("abc123", {
+      lat: 34.1,
+      lon: -118.2,
+      alt: 3000,
+      ts: 100_000,
+    });
+    store.recordTrailPoint("def456", {
+      lat: 35.1,
+      lon: -119.2,
+      alt: 4000,
+      ts: 100_000,
+    });
+    useIdentStore.setState({
+      aircraft: new Map([
+        ["abc123", { hex: "abc123", alt_baro: 3000, seen: 1 }],
+        ["def456", { hex: "def456", alt_baro: 4000, seen: 0 }],
+      ]),
+      now: 100,
+    });
+
+    store.ingestAircraft({
+      now: 131,
+      aircraft: [{ hex: "def456", alt_baro: 4000 }],
+    });
+
+    expect(useIdentStore.getState().aircraft.has("abc123")).toBe(false);
     expect(useIdentStore.getState().trailsByHex).toEqual({
       def456: [
         {
@@ -1219,6 +1278,45 @@ describe("ingestAircraft rolling buffers", () => {
         },
       ],
     });
+  });
+
+  it("retains selected aircraft and trail points after they become lost", () => {
+    const store = useIdentStore.getState();
+    store.recordTrailPoint("abc123", {
+      lat: 34.1,
+      lon: -118.2,
+      alt: 3000,
+      ts: 100_000,
+    });
+    useIdentStore.setState({
+      aircraft: new Map([
+        [
+          "abc123",
+          { hex: "abc123", alt_baro: 3000, lat: 34.1, lon: -118.2, seen: 1 },
+        ],
+      ]),
+      selectedHex: "abc123",
+      now: 100,
+    });
+
+    store.ingestAircraft({
+      now: 131,
+      aircraft: [],
+    });
+
+    expect(useIdentStore.getState().aircraft.get("abc123")).toMatchObject({
+      hex: "abc123",
+      seen: 32,
+    });
+    expect(useIdentStore.getState().trailsByHex.abc123).toEqual([
+      {
+        lat: 34.1,
+        lon: -118.2,
+        alt: 3000,
+        ts: 100_000,
+        segment: 0,
+      },
+    ]);
   });
 
   it("preserves selectedHex when the selected aircraft is still present", () => {

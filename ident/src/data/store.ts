@@ -8,6 +8,7 @@ import {
   type ReplayWindowPreferences,
   usePreferencesStore,
 } from "./preferences";
+import { aircraftRecency } from "./recency";
 import type {
   Aircraft,
   AircraftFrame,
@@ -606,19 +607,19 @@ function replayTimeCoveredByRemote(
   return blocks.some((block) => ts >= block.start && ts <= block.end);
 }
 
-function retainSelectedAircraft(
+function retainAgedAircraft(
   next: Map<string, Aircraft>,
   previous: IdentState,
   frame: AircraftFrame,
 ): void {
-  const selectedHex = previous.selectedHex;
-  if (!selectedHex || next.has(selectedHex)) return;
-  const selectedAircraft = previous.aircraft.get(selectedHex);
-  if (!selectedAircraft) return;
-  next.set(
-    selectedHex,
-    ageAircraft(selectedAircraft, frame.now - previous.now),
-  );
+  const elapsedSec = frame.now - previous.now;
+  for (const [hex, aircraft] of previous.aircraft) {
+    if (next.has(hex)) continue;
+    const aged = ageAircraft(aircraft, elapsedSec);
+    const isSelected = hex === previous.selectedHex;
+    if (!isSelected && aircraftRecency(aged, false) === "lost") continue;
+    next.set(hex, aged);
+  }
 }
 
 function ageAircraft(aircraft: Aircraft, deltaSec: number): Aircraft {
@@ -757,12 +758,11 @@ export const useIdentStore = create<IdentState>((set) => ({
   ingestAircraft: (frame) =>
     set((st) => {
       const next = new Map<string, Aircraft>();
-      const activeHexes = new Set<string>();
       for (const ac of frame.aircraft) {
         next.set(ac.hex, ac);
-        activeHexes.add(ac.hex);
       }
-      retainSelectedAircraft(next, st, frame);
+      retainAgedAircraft(next, st, frame);
+      const retainedHexes = new Set(next.keys());
       const nowMs = aircraftFrameTimestampMs(frame);
 
       // Push sampled numeric values (alt_baro, gs, rssi) into per-hex rolling
@@ -794,7 +794,7 @@ export const useIdentStore = create<IdentState>((set) => ({
         altTrendsByHex,
         gsTrendsByHex,
         rssiBufByHex,
-        trailsByHex: retainTrailsForAircraft(st.trailsByHex, activeHexes),
+        trailsByHex: retainTrailsForAircraft(st.trailsByHex, retainedHexes),
         replay: appendRecentReplayFrame(st.replay, {
           ts: nowMs,
           aircraft: frame.aircraft,
