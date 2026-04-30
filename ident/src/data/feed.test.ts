@@ -277,6 +277,32 @@ describe("startFeed route envelopes", () => {
     stop();
   });
 
+  it("retains relay trail points for the current leg before selection", () => {
+    const stop = startFeed();
+    const points = Array.from({ length: 1600 }, (_, i) => ({
+      lat: 34 + i / 10_000,
+      lon: -118 - i / 10_000,
+      alt: 2800 + i,
+      ts: 90_000 + i * 1000,
+      segment: 0,
+    }));
+
+    wsHarness.instances[0].emitText(
+      JSON.stringify({
+        type: "trails",
+        data: {
+          aircraft: {
+            abc123: points,
+          },
+        },
+      }),
+    );
+
+    useIdentStore.setState({ selectedHex: "abc123" });
+    expect(useIdentStore.getState().trailsByHex.abc123).toHaveLength(1600);
+    stop();
+  });
+
   it("fetches the initial trail seed over HTTP instead of the websocket backlog", async () => {
     globalThis.fetch = vi.fn(async (url: string) => {
       if (url.endsWith("/trails/recent.json")) {

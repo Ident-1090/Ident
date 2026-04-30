@@ -1,6 +1,10 @@
 import { appPath, appWebSocketUrl } from "./basePath";
 import { refreshReplayManifest } from "./replay";
-import { trailPointFromAircraft, useIdentStore } from "./store";
+import {
+  pruneRetainedTrail,
+  trailPointFromAircraft,
+  useIdentStore,
+} from "./store";
 import type {
   AircraftFrame,
   HeyWhatsThatJson,
@@ -15,7 +19,6 @@ import { WsClient } from "./ws";
 const WS_URL = "api/ws";
 const TRAILS_HTTP_URL = "api/trails/recent.json";
 const TRAIL_SEED_FETCH_TIMEOUT_MS = 30_000;
-const TRAIL_POINT_CAP = 1500;
 
 type RouteEntry = {
   callsign: string;
@@ -162,10 +165,7 @@ function mergeTrailSeries(
     deduped.push(point);
     lastKey = key;
   }
-  if (deduped.length > TRAIL_POINT_CAP) {
-    deduped.splice(0, deduped.length - TRAIL_POINT_CAP);
-  }
-  return deduped;
+  return pruneRetainedTrail(deduped);
 }
 
 function applyTrailSeed(trails: Map<string, TrailPoint[]>): void {

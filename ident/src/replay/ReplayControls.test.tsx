@@ -33,6 +33,7 @@ function resetStore() {
       cache: {},
       mode: "live",
       playheadMs: null,
+      trailStartMs: null,
       playing: true,
       speed: 1,
       followLiveEdge: false,

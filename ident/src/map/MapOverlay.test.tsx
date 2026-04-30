@@ -815,8 +815,8 @@ describe("MapOverlay", () => {
       camera: { ...st.camera, trackSelected: true },
       trailsByHex: {
         [UAL.hex]: [
-          { lat: 37.1, lon: -122.1, alt: 33000, ts: 1 },
-          { lat: 37.2, lon: -122.2, alt: 33000, ts: 2 },
+          { lat: 37.1, lon: -122.1, alt: 33000, ts: 1, segment: 0 },
+          { lat: 37.2, lon: -122.2, alt: 33000, ts: 2, segment: 0 },
         ],
       },
     }));

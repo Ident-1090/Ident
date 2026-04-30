@@ -49,9 +49,8 @@ const ALERT_WINDOW_MS = 30 * 60 * 1000;
 const TRAIL_SEGMENT_GROUND_DWELL_MS = 60_000;
 const TRAIL_SEGMENT_AIRBORNE_NOISE_MS = 10_000;
 
-// Per-hex trail buffer holds full in-range history, bounded only by point count
-// (~1.5 h at 4 s historical cadence + 1 Hz live). settings.trailFadeSec controls
-// how much of that buffer is drawn for UNSELECTED aircraft; selected renders all.
+// Per-hex trail buffer keeps the current leg. settings.trailFadeSec controls how
+// much of that buffer is drawn for UNSELECTED aircraft; selected renders all.
 const TRAIL_POINT_CAP = 1500;
 const TRAIL_FADE_MIN_SEC = 10;
 const TRAIL_FADE_MAX_SEC = 600;
@@ -231,6 +230,7 @@ export interface ReplaySlice {
   cache: Record<string, ReplayBlockFile>;
   mode: ReplayMode;
   playheadMs: number | null;
+  trailStartMs: number | null;
   playing: boolean;
   speed: 1 | 4 | 16;
   viewWindow?: ReplayViewWindow;
@@ -319,9 +319,8 @@ export interface IdentState {
   // Settings slice.
   settings: SettingsSlice;
 
-  // Per-aircraft position trails (ring buffer bounded by TRAIL_POINT_CAP).
-  // Holds the aircraft's full in-range history; render path decides how much
-  // of it to draw based on settings.trailFadeSec and selection.
+  // Per-aircraft position trails for the current leg. The render path decides
+  // how much of it to draw based on settings.trailFadeSec and selection.
   trailsByHex: Record<string, TrailPoint[]>;
 
   // Relay-supplied line-of-sight rings from the config snapshot.
@@ -695,6 +694,7 @@ const INITIAL_REPLAY_STATE: ReplaySlice = {
   cache: {},
   mode: "live",
   playheadMs: null,
+  trailStartMs: null,
   playing: true,
   speed: 1,
   viewWindow: usePreferencesStore.getState().replayWindow,
@@ -757,7 +757,11 @@ export const useIdentStore = create<IdentState>((set) => ({
   ingestAircraft: (frame) =>
     set((st) => {
       const next = new Map<string, Aircraft>();
-      for (const ac of frame.aircraft) next.set(ac.hex, ac);
+      const activeHexes = new Set<string>();
+      for (const ac of frame.aircraft) {
+        next.set(ac.hex, ac);
+        activeHexes.add(ac.hex);
+      }
       retainSelectedAircraft(next, st, frame);
       const nowMs = aircraftFrameTimestampMs(frame);
 
@@ -790,6 +794,7 @@ export const useIdentStore = create<IdentState>((set) => ({
         altTrendsByHex,
         gsTrendsByHex,
         rssiBufByHex,
+        trailsByHex: retainTrailsForAircraft(st.trailsByHex, activeHexes),
         replay: appendRecentReplayFrame(st.replay, {
           ts: nowMs,
           aircraft: frame.aircraft,
@@ -1053,10 +1058,14 @@ export const useIdentStore = create<IdentState>((set) => ({
     set((st) => {
       const prev = st.trailsByHex[hex];
       const next = prev ? prev.slice() : [];
-      next.push(assignTrailPointSegment(point, prev));
-      if (next.length > TRAIL_POINT_CAP)
-        next.splice(0, next.length - TRAIL_POINT_CAP);
-      return { trailsByHex: { ...st.trailsByHex, [hex]: next } };
+      const assigned = assignTrailPointSegment(point, prev);
+      next.push(assigned);
+      return {
+        trailsByHex: {
+          ...st.trailsByHex,
+          [hex]: trailWithAppendedPoint(prev, next, assigned),
+        },
+      };
     }),
 
   setLosData: (data) => set({ losData: data }),
@@ -1102,6 +1111,8 @@ export const useIdentStore = create<IdentState>((set) => ({
           recent: enabled ? st.replay.recent : null,
           mode,
           playheadMs,
+          trailStartMs:
+            mode === "replay" ? (st.replay.trailStartMs ?? playheadMs) : null,
           playing: mode === "replay" ? st.replay.playing : true,
           viewWindow:
             mode === "live"
@@ -1163,6 +1174,7 @@ export const useIdentStore = create<IdentState>((set) => ({
             ...st.replay,
             mode: "live",
             playheadMs: null,
+            trailStartMs: null,
             loading: false,
             playing: true,
             viewWindow: liveReplayWindow(st.replay.viewWindow),
@@ -1238,6 +1250,7 @@ export const useIdentStore = create<IdentState>((set) => ({
             ...st.replay,
             mode: "live",
             playheadMs: null,
+            trailStartMs: null,
             playing: true,
             viewWindow: liveReplayWindow(st.replay.viewWindow),
             followLiveEdge: false,
@@ -1254,6 +1267,7 @@ export const useIdentStore = create<IdentState>((set) => ({
           ...st.replay,
           mode: "replay",
           playheadMs: snappedPlayhead,
+          trailStartMs: snappedPlayhead,
           playing: false,
           followLiveEdge: false,
           loading: st.replay.loading,
@@ -1271,6 +1285,7 @@ export const useIdentStore = create<IdentState>((set) => ({
         ...st.replay,
         mode: "live",
         playheadMs: null,
+        trailStartMs: null,
         playing: true,
         viewWindow: liveReplayWindow(st.replay.viewWindow),
         followLiveEdge: false,
@@ -1301,6 +1316,7 @@ export const useIdentStore = create<IdentState>((set) => ({
             mode: "live",
             playing: true,
             playheadMs: null,
+            trailStartMs: null,
             viewWindow: liveReplayWindow(st.replay.viewWindow),
             followLiveEdge: false,
             loading: false,
@@ -1485,6 +1501,8 @@ let replayTrailsCache: {
   blocks: Record<string, ReplayBlockFile>;
   recent: ReplayBlockFile | null | undefined;
   playheadMs: number;
+  trailStartMs: number | null;
+  selectedHex: string | null;
   trails: Record<string, TrailPoint[]>;
 } | null = null;
 let displayTrailsCache: {
@@ -1526,7 +1544,7 @@ export function selectDisplayTrailsByHex(
   st: IdentState,
 ): Record<string, TrailPoint[]> {
   if (st.replay.mode !== "replay" || st.replay.playheadMs == null) {
-    return displayLatestTrailSegments(st.trailsByHex);
+    return st.trailsByHex;
   }
   const blocks = replayLoadedBlocks(st);
   if (blocks.length === 0) return EMPTY_REPLAY_TRAILS;
@@ -1534,19 +1552,27 @@ export function selectDisplayTrailsByHex(
     replayTrailsCache &&
     replayTrailsCache.blocks === st.replay.cache &&
     replayTrailsCache.recent === st.replay.recent &&
-    replayTrailsCache.playheadMs === st.replay.playheadMs
+    replayTrailsCache.playheadMs === st.replay.playheadMs &&
+    replayTrailsCache.trailStartMs === st.replay.trailStartMs &&
+    replayTrailsCache.selectedHex === st.selectedHex
   ) {
     return replayTrailsCache.trails;
   }
-  const since = st.replay.playheadMs - TRAIL_FADE_MAX_SEC * 1000;
+  const selectedHex = st.selectedHex;
+  const unselectedSince = st.replay.playheadMs - TRAIL_FADE_MAX_SEC * 1000;
+  const selectedSince =
+    selectedHex == null
+      ? unselectedSince
+      : (st.replay.trailStartMs ?? unselectedSince);
   const out: Record<string, TrailPoint[]> = {};
   const segmentStates = new Map<string, TrailSegmentState>();
   for (const block of blocks) {
-    let i = firstFrameAtOrAfter(block.frames, since);
+    let i = firstFrameAtOrAfter(block.frames, selectedSince);
     for (; i < block.frames.length; i += 1) {
       const frame = block.frames[i];
       if (frame.ts > st.replay.playheadMs) break;
       for (const ac of frame.aircraft) {
+        if (ac.hex !== selectedHex && frame.ts < unselectedSince) continue;
         if (typeof ac.lat !== "number" || typeof ac.lon !== "number") continue;
         const series = out[ac.hex] ?? [];
         const segmentState = segmentStates.get(ac.hex) ?? { segment: 0 };
@@ -1569,7 +1595,7 @@ export function selectDisplayTrailsByHex(
   }
   for (const [hex, series] of Object.entries(out)) {
     series.sort((a, b) => a.ts - b.ts);
-    if (series.length > TRAIL_POINT_CAP) {
+    if (hex !== selectedHex && series.length > TRAIL_POINT_CAP) {
       out[hex] = series.slice(series.length - TRAIL_POINT_CAP);
     }
   }
@@ -1578,6 +1604,8 @@ export function selectDisplayTrailsByHex(
     blocks: st.replay.cache,
     recent: st.replay.recent,
     playheadMs: st.replay.playheadMs,
+    trailStartMs: st.replay.trailStartMs,
+    selectedHex,
     trails,
   };
   return trails;
@@ -1721,6 +1749,33 @@ function displayLatestTrailSegments(
   return out;
 }
 
+function retainTrailsForAircraft(
+  source: Record<string, TrailPoint[]>,
+  activeHexes: Set<string>,
+): Record<string, TrailPoint[]> {
+  let changed = false;
+  const trails: Record<string, TrailPoint[]> = {};
+  for (const [hex, points] of Object.entries(source)) {
+    if (activeHexes.has(hex)) {
+      trails[hex] = points;
+    } else {
+      changed = true;
+    }
+  }
+  return changed ? trails : source;
+}
+
+function trailWithAppendedPoint(
+  previous: TrailPoint[] | undefined,
+  next: TrailPoint[],
+  point: TrailPoint,
+): TrailPoint[] {
+  const previousSegment = previous?.at(-1)?.segment;
+  return previousSegment != null && previousSegment !== point.segment
+    ? [point]
+    : next;
+}
+
 function latestTrailSegment(points: TrailPoint[]): TrailPoint[] {
   if (points.length === 0) return points;
   const segment = points[points.length - 1].segment;
@@ -1728,6 +1783,10 @@ function latestTrailSegment(points: TrailPoint[]): TrailPoint[] {
   let start = points.length - 1;
   while (start > 0 && points[start - 1].segment === segment) start--;
   return start === 0 ? points : points.slice(start);
+}
+
+export function pruneRetainedTrail(points: TrailPoint[]): TrailPoint[] {
+  return latestTrailSegment(points);
 }
 
 function currentReplayFrame(st: IdentState): ReplayFrame | null {

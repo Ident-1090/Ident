@@ -273,6 +273,55 @@ describe("replay display selectors", () => {
     ]);
   });
 
+  it("keeps selected replay trails from the replay trail start", () => {
+    useIdentStore.setState((st) => ({
+      selectedHex: "abc123",
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 0,
+        availableTo: 1_000_000,
+        mode: "replay",
+        playheadMs: 1_000_000,
+        trailStartMs: 400_000,
+        cache: {
+          "/api/replay/blocks/0-1000000.json.zst": {
+            version: 1,
+            start: 0,
+            end: 1_000_000,
+            step_ms: 5_000,
+            frames: [
+              {
+                ts: 100_000,
+                aircraft: [
+                  { hex: "abc123", lat: 34.1, lon: -118.1, alt_baro: 3000 },
+                  { hex: "other", lat: 35.1, lon: -119.1, alt_baro: 3000 },
+                ],
+              },
+              {
+                ts: 500_000,
+                aircraft: [
+                  { hex: "abc123", lat: 34.2, lon: -118.2, alt_baro: 4000 },
+                ],
+              },
+              {
+                ts: 950_000,
+                aircraft: [
+                  { hex: "abc123", lat: 34.3, lon: -118.3, alt_baro: 5000 },
+                  { hex: "other", lat: 35.2, lon: -119.2, alt_baro: 5000 },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    }));
+
+    const trails = selectDisplayTrailsByHex(useIdentStore.getState());
+    expect(trails.abc123.map((point) => point.ts)).toEqual([500_000, 950_000]);
+    expect(trails.other.map((point) => point.ts)).toEqual([950_000]);
+  });
+
   it("shows an empty replay display for a true gap between segments", () => {
     useIdentStore.setState((st) => ({
       replay: {
@@ -1137,6 +1186,39 @@ describe("ingestAircraft rolling buffers", () => {
     expect(state.aircraft.get("abc123")?.seen_pos).toBeUndefined();
   });
 
+  it("drops trail points for aircraft missing from the latest frame", () => {
+    const store = useIdentStore.getState();
+    store.recordTrailPoint("abc123", {
+      lat: 34.1,
+      lon: -118.2,
+      alt: 3000,
+      ts: 100_000,
+    });
+    store.recordTrailPoint("def456", {
+      lat: 35.1,
+      lon: -119.2,
+      alt: 4000,
+      ts: 100_000,
+    });
+
+    store.ingestAircraft({
+      now: 110,
+      aircraft: [{ hex: "def456", alt_baro: 4000 }],
+    });
+
+    expect(useIdentStore.getState().trailsByHex).toEqual({
+      def456: [
+        {
+          lat: 35.1,
+          lon: -119.2,
+          alt: 4000,
+          ts: 100_000,
+          segment: 0,
+        },
+      ],
+    });
+  });
+
   it("preserves selectedHex when the selected aircraft is still present", () => {
     useIdentStore.setState({ selectedHex: "abc123" });
     useIdentStore.getState().ingestAircraft(frame("abc123", 10000));
@@ -1360,12 +1442,9 @@ describe("camera slice", () => {
 describe("recordTrailPoint", () => {
   beforeEach(resetStore);
 
-  it("retains points across a wide age range, capping at 1500 with the oldest dropped", () => {
+  it("retains all points for the current live trail segment", () => {
     const store = useIdentStore.getState();
     const base = 2_000_000;
-    // Span ~2 h of 4 s cadence: 1800 points, across which age-based trimming
-    // used to drop the olds. The new buffer keeps them, bounded only by the
-    // 1500-point cap.
     for (let i = 0; i < 2000; i++) {
       store.recordTrailPoint("abc123", {
         lat: 0,
@@ -1376,10 +1455,63 @@ describe("recordTrailPoint", () => {
       });
     }
     const buf = useIdentStore.getState().trailsByHex.abc123;
-    expect(buf.length).toBe(1500);
-    // Oldest kept point is i=500 because we rolled 500 off the front.
-    expect(buf[0].ts).toBe(base + 500 * 4000);
-    expect(buf[1499].ts).toBe(base + 1999 * 4000);
+    expect(buf).toHaveLength(2000);
+    expect(buf[0].ts).toBe(base);
+    expect(buf[1999].ts).toBe(base + 1999 * 4000);
+  });
+
+  it("keeps current-leg live trails before later selection", () => {
+    const store = useIdentStore.getState();
+    const base = 2_000_000;
+
+    for (let i = 0; i < 2000; i++) {
+      store.recordTrailPoint("abc123", {
+        lat: 0,
+        lon: 0,
+        alt: 3000,
+        ts: base + i * 1000,
+      });
+      store.recordTrailPoint("def456", {
+        lat: 1,
+        lon: 1,
+        alt: 3000,
+        ts: base + i * 1000,
+      });
+    }
+
+    useIdentStore.setState({ selectedHex: "abc123" });
+    expect(useIdentStore.getState().trailsByHex.abc123).toHaveLength(2000);
+    expect(useIdentStore.getState().trailsByHex.def456).toHaveLength(2000);
+  });
+
+  it("drops previous live trail segments when a new segment starts", () => {
+    const store = useIdentStore.getState();
+
+    store.recordTrailPoint("abc123", {
+      lat: 34.1,
+      lon: -118.2,
+      alt: 3000,
+      ts: 100_000,
+      segment: 0,
+    });
+    store.recordTrailPoint("abc123", {
+      lat: 34.2,
+      lon: -118.3,
+      alt: 2500,
+      ts: 110_000,
+      segment: 0,
+    });
+    store.recordTrailPoint("abc123", {
+      lat: 34.3,
+      lon: -118.4,
+      alt: 1500,
+      ts: 190_000,
+      segment: 1,
+    });
+
+    expect(
+      useIdentStore.getState().trailsByHex.abc123.map((point) => point.ts),
+    ).toEqual([190_000]);
   });
 
   it("assigns live trail segments from ground dwell boundaries", () => {
@@ -1486,21 +1618,21 @@ describe("recordTrailPoint", () => {
 describe("selectDisplayTrailsByHex", () => {
   beforeEach(resetStore);
 
-  it("shows only the newest segment by default", () => {
+  it("returns retained live trail buffers without recomputing segments", () => {
+    const points = [
+      { lat: 1, lon: 1, alt: 1000, ts: 1_000, segment: 0 },
+      { lat: 2, lon: 2, alt: null, ground: true, ts: 2_000, segment: 0 },
+    ];
     useIdentStore.setState((st) => ({
       trailsByHex: {
         ...st.trailsByHex,
-        abc123: [
-          { lat: 1, lon: 1, alt: 1000, ts: 1_000, segment: 0 },
-          { lat: 2, lon: 2, alt: null, ground: true, ts: 2_000, segment: 0 },
-          { lat: 3, lon: 3, alt: 1500, ts: 3_000, segment: 1 },
-        ],
+        abc123: points,
       },
     }));
 
-    expect(selectDisplayTrailsByHex(useIdentStore.getState()).abc123).toEqual([
-      { lat: 3, lon: 3, alt: 1500, ts: 3_000, segment: 1 },
-    ]);
+    expect(selectDisplayTrailsByHex(useIdentStore.getState()).abc123).toBe(
+      points,
+    );
   });
 });
 
