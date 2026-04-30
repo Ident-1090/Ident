@@ -273,7 +273,7 @@ describe("replay display selectors", () => {
     ]);
   });
 
-  it("keeps selected replay trails from the replay trail start", () => {
+  it("extends selected replay trails into already loaded blocks", () => {
     useIdentStore.setState((st) => ({
       selectedHex: "abc123",
       replay: {
@@ -318,7 +318,9 @@ describe("replay display selectors", () => {
     }));
 
     const trails = selectDisplayTrailsByHex(useIdentStore.getState());
-    expect(trails.abc123.map((point) => point.ts)).toEqual([500_000, 950_000]);
+    expect(trails.abc123.map((point) => point.ts)).toEqual([
+      100_000, 500_000, 950_000,
+    ]);
     expect(trails.other.map((point) => point.ts)).toEqual([950_000]);
   });
 

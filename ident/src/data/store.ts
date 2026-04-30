@@ -1563,7 +1563,12 @@ export function selectDisplayTrailsByHex(
   const selectedSince =
     selectedHex == null
       ? unselectedSince
-      : (st.replay.trailStartMs ?? unselectedSince);
+      : selectedReplayTrailStart(
+          blocks,
+          selectedHex,
+          st.replay.playheadMs,
+          st.replay.trailStartMs ?? unselectedSince,
+        );
   const out: Record<string, TrailPoint[]> = {};
   const segmentStates = new Map<string, TrailSegmentState>();
   for (const block of blocks) {
@@ -1787,6 +1792,34 @@ function latestTrailSegment(points: TrailPoint[]): TrailPoint[] {
 
 export function pruneRetainedTrail(points: TrailPoint[]): TrailPoint[] {
   return latestTrailSegment(points);
+}
+
+function selectedReplayTrailStart(
+  blocks: ReplayBlockFile[],
+  selectedHex: string,
+  playheadMs: number,
+  fallbackStartMs: number,
+): number {
+  let startMs = fallbackStartMs;
+  for (const block of blocks) {
+    if (block.start >= startMs || block.start > playheadMs) continue;
+    if (blockContainsAircraftAtOrBefore(block, selectedHex, playheadMs)) {
+      startMs = block.start;
+    }
+  }
+  return startMs;
+}
+
+function blockContainsAircraftAtOrBefore(
+  block: ReplayBlockFile,
+  hex: string,
+  playheadMs: number,
+): boolean {
+  for (const frame of block.frames) {
+    if (frame.ts > playheadMs) break;
+    if (frame.aircraft.some((ac) => ac.hex === hex)) return true;
+  }
+  return false;
 }
 
 function currentReplayFrame(st: IdentState): ReplayFrame | null {
