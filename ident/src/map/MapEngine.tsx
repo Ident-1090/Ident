@@ -64,6 +64,10 @@ const LYR_RX_RANGE_LINE = "ident-rx-range-line";
 const SRC_LOS = "ident-los";
 const LYR_LOS_FILL = "ident-los-fill";
 const LYR_LOS_LINE = "ident-los-line";
+const sourceDataCache = new WeakMap<
+  MlMap,
+  Map<string, GeoJSON.FeatureCollection>
+>();
 
 function readCssVar(host: Element | null, ...names: string[]): string {
   if (typeof document === "undefined") return "";
@@ -291,6 +295,10 @@ export function MapEngine({ children }: MapEngineProps): ReactElement {
     if (!m) return;
 
     const siteCenter = receiverCenter(receiver);
+    const rangeRingsData =
+      layers.rangeRings && siteCenter ? rangeRingsGeoJson(siteCenter) : null;
+    const rxRangeData = layers.rxRange ? rxRangeGeoJson(outline) : null;
+    const losRingsData = layers.losRings ? losGeoJson(losData) : null;
 
     const apply = (): void => {
       // MapLibre throws on addSource/addLayer while a setStyle swap is still
@@ -307,9 +315,9 @@ export function MapEngine({ children }: MapEngineProps): ReactElement {
       );
       const accentColor = readCssVar(host, "--color-accent");
       try {
-        syncRangeRings(m, siteCenter, layers.rangeRings, ringColor);
-        syncRxRange(m, outline, layers.rxRange, accentColor);
-        syncLosRings(m, losData, layers.losRings);
+        syncRangeRings(m, rangeRingsData, ringColor);
+        syncRxRange(m, rxRangeData, accentColor);
+        syncLosRings(m, losRingsData);
       } catch (err) {
         // eslint-disable-next-line no-console
         console.warn("[MapEngine] overlay sync failed", err);
@@ -395,10 +403,37 @@ function setOrUpdateSource(
     | { setData?: (d: GeoJSON.FeatureCollection) => void }
     | undefined;
   if (existing && typeof existing.setData === "function") {
+    if (cachedSourceData(m, id) === data) return;
     existing.setData(data);
+    cacheSourceData(m, id, data);
   } else {
     m.addSource(id, { type: "geojson", data });
+    cacheSourceData(m, id, data);
   }
+}
+
+function cachedSourceData(
+  map: MlMap,
+  id: string,
+): GeoJSON.FeatureCollection | undefined {
+  return sourceDataCache.get(map)?.get(id);
+}
+
+function cacheSourceData(
+  map: MlMap,
+  id: string,
+  data: GeoJSON.FeatureCollection,
+): void {
+  let byId = sourceDataCache.get(map);
+  if (!byId) {
+    byId = new Map();
+    sourceDataCache.set(map, byId);
+  }
+  byId.set(id, data);
+}
+
+function clearSourceData(map: MlMap, id: string): void {
+  sourceDataCache.get(map)?.delete(id);
 }
 
 function preloadMapLabelFonts(): void {
@@ -433,6 +468,7 @@ function removeLayerIfPresent(m: MlMap, id: string): void {
 
 function removeSourceIfPresent(m: MlMap, id: string): void {
   if (m.getSource(id)) m.removeSource(id);
+  clearSourceData(m, id);
 }
 
 function firstTrafficOverlayAnchor(m: MlMap): string | undefined {
@@ -457,16 +493,15 @@ function keepLayerBelowTrafficOverlays(m: MlMap, id: string): void {
 
 function syncRangeRings(
   m: MlMap,
-  center: { lng: number; lat: number } | null,
-  visible: boolean,
+  data: GeoJSON.FeatureCollection | null,
   color: string,
 ): void {
-  if (!visible || !center) {
+  if (!data) {
     removeLayerIfPresent(m, LYR_RANGE_RINGS);
     removeSourceIfPresent(m, SRC_RANGE_RINGS);
     return;
   }
-  setOrUpdateSource(m, SRC_RANGE_RINGS, rangeRingsGeoJson(center));
+  setOrUpdateSource(m, SRC_RANGE_RINGS, data);
   if (!m.getLayer(LYR_RANGE_RINGS)) {
     addLayerBelowTrafficOverlays(m, {
       id: LYR_RANGE_RINGS,
@@ -487,17 +522,16 @@ function syncRangeRings(
 
 function syncRxRange(
   m: MlMap,
-  outline: OutlineJson | null,
-  visible: boolean,
+  data: GeoJSON.FeatureCollection | null,
   color: string,
 ): void {
-  if (!visible) {
+  if (!data) {
     removeLayerIfPresent(m, LYR_RX_RANGE_LINE);
     removeLayerIfPresent(m, LYR_RX_RANGE_FILL);
     removeSourceIfPresent(m, SRC_RX_RANGE);
     return;
   }
-  setOrUpdateSource(m, SRC_RX_RANGE, rxRangeGeoJson(outline));
+  setOrUpdateSource(m, SRC_RX_RANGE, data);
   if (!m.getLayer(LYR_RX_RANGE_FILL)) {
     addLayerBelowTrafficOverlays(m, {
       id: LYR_RX_RANGE_FILL,
@@ -522,18 +556,14 @@ function syncRxRange(
   }
 }
 
-function syncLosRings(
-  m: MlMap,
-  los: HeyWhatsThatJson | null,
-  visible: boolean,
-): void {
-  if (!visible) {
+function syncLosRings(m: MlMap, data: GeoJSON.FeatureCollection | null): void {
+  if (!data) {
     removeLayerIfPresent(m, LYR_LOS_LINE);
     removeLayerIfPresent(m, LYR_LOS_FILL);
     removeSourceIfPresent(m, SRC_LOS);
     return;
   }
-  setOrUpdateSource(m, SRC_LOS, losGeoJson(los));
+  setOrUpdateSource(m, SRC_LOS, data);
   removeLayerIfPresent(m, LYR_LOS_FILL);
   if (!m.getLayer(LYR_LOS_LINE)) {
     addLayerBelowTrafficOverlays(m, {

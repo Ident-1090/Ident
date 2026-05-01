@@ -129,6 +129,16 @@ export default defineConfig(({ mode }) => {
         "/api/update.json": httpProxy,
       },
     },
+    preview: {
+      port: 5174,
+      proxy: {
+        "/api/ws": wsProxy,
+        "/api/chunks": httpProxy,
+        "/api/trails": httpProxy,
+        "/api/replay": httpProxy,
+        "/api/update.json": httpProxy,
+      },
+    },
     test: {
       environment: "jsdom",
       globals: true,

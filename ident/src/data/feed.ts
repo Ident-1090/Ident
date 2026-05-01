@@ -1,10 +1,6 @@
 import { appPath, appWebSocketUrl } from "./basePath";
 import { refreshReplayManifest } from "./replay";
-import {
-  pruneRetainedTrail,
-  trailPointFromAircraft,
-  useIdentStore,
-} from "./store";
+import { pruneRetainedTrail, useIdentStore } from "./store";
 import type {
   AircraftFrame,
   HeyWhatsThatJson,
@@ -58,39 +54,11 @@ function parseJSON<T>(text: string): T | null {
   }
 }
 
-function aircraftFrameAdvanced(
-  frame: AircraftFrame,
-  previousNow: number,
-): boolean {
-  return (
-    typeof frame.now === "number" &&
-    Number.isFinite(frame.now) &&
-    frame.now > previousNow
-  );
-}
-
-function aircraftFrameTimestampMs(frame: AircraftFrame): number {
-  return typeof frame.now === "number" && Number.isFinite(frame.now)
-    ? Math.round(frame.now * 1000)
-    : Date.now();
-}
-
 function dispatch(env: Envelope): void {
   const store = useIdentStore.getState();
   switch (env.type) {
     case "aircraft": {
-      const advanced = aircraftFrameAdvanced(env.data, store.now);
-      if (advanced) store.recordSnapshot();
       store.ingestAircraft(env.data);
-      if (!advanced) break;
-      const nowMs = aircraftFrameTimestampMs(env.data);
-      for (const ac of env.data.aircraft) {
-        if (typeof ac.lat !== "number" || typeof ac.lon !== "number") continue;
-        store.recordTrailPoint(
-          ac.hex,
-          trailPointFromAircraft({ ...ac, lat: ac.lat, lon: ac.lon }, nowMs),
-        );
-      }
       break;
     }
     case "receiver":

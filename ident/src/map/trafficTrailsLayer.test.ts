@@ -54,6 +54,48 @@ function snapshot(
 }
 
 describe("buildTrafficTrailsSnapshot", () => {
+  it("reuses snapshots when inputs are identical", () => {
+    const args = {
+      aircraft: [UAL],
+      trailsByHex: { [UAL.hex]: [point(1_000), point(2_000)] },
+      selectedHex: null,
+      trailFadeSec: 10,
+      nowMs: 2_000,
+      enabled: true,
+    };
+
+    expect(buildTrafficTrailsSnapshot(args)).toBe(
+      buildTrafficTrailsSnapshot(args),
+    );
+  });
+
+  it("invalidates memoized snapshots when rendering inputs change", () => {
+    const aircraft = [UAL];
+    const trailsByHex = { [UAL.hex]: [point(1_000), point(2_000)] };
+    const args = {
+      aircraft,
+      trailsByHex,
+      selectedHex: null,
+      trailFadeSec: 10,
+      nowMs: 2_000,
+      enabled: true,
+    };
+    const first = buildTrafficTrailsSnapshot(args);
+
+    expect(buildTrafficTrailsSnapshot({ ...args, nowMs: 3_000 })).not.toBe(
+      first,
+    );
+    expect(
+      buildTrafficTrailsSnapshot({ ...args, selectedHex: UAL.hex }),
+    ).not.toBe(first);
+    expect(
+      buildTrafficTrailsSnapshot({
+        ...args,
+        trailsByHex: { [UAL.hex]: [point(1_000), point(3_000)] },
+      }),
+    ).not.toBe(first);
+  });
+
   it("converts active trail segments into mercator vertex data", () => {
     const snap = snapshot({ aircraft: [UAL] });
 

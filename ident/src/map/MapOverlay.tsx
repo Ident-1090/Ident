@@ -11,7 +11,7 @@ import {
 import { matchesFilter } from "../data/predicates";
 import {
   selectDisplayAircraftMap,
-  selectDisplayNowMs,
+  selectDisplayTrailNowMs,
   selectDisplayTrailsByHex,
   useIdentStore,
 } from "../data/store";
@@ -76,7 +76,7 @@ export function MapOverlay() {
   const viewportHexes = useIdentStore((s) => s.map.viewportHexes);
   const trailsByHex = useIdentStore(selectDisplayTrailsByHex);
   const trailFadeSec = useIdentStore((s) => s.settings.trailFadeSec);
-  const dataNowMs = useIdentStore(selectDisplayNowMs);
+  const trailNowMs = useIdentStore(selectDisplayTrailNowMs);
   const hoveredHex = useIdentStore((s) => s.labels.hoveredHex);
   const setHoveredHex = useIdentStore((s) => s.setHoveredHex);
   const setMapViewportHexes = useIdentStore((s) => s.setMapViewportHexes);
@@ -308,7 +308,7 @@ export function MapOverlay() {
         trailsByHex,
         selectedHex,
         trailFadeSec,
-        nowMs: dataNowMs,
+        nowMs: trailNowMs,
         enabled: layersOn.trails,
       }),
     [
@@ -316,7 +316,7 @@ export function MapOverlay() {
       trailsByHex,
       selectedHex,
       trailFadeSec,
-      dataNowMs,
+      trailNowMs,
       layersOn.trails,
     ],
   );

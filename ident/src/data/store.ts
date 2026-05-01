@@ -450,6 +450,17 @@ function aircraftFrameTimestampMs(frame: AircraftFrame): number {
     : Date.now();
 }
 
+function aircraftFrameAdvanced(
+  frame: AircraftFrame,
+  previousNow: number,
+): boolean {
+  return (
+    typeof frame.now === "number" &&
+    Number.isFinite(frame.now) &&
+    frame.now > previousNow
+  );
+}
+
 function replayBlockAvailability(blocks: ReplayBlockIndex[]): {
   from: number | null;
   to: number | null;
@@ -757,6 +768,7 @@ export const useIdentStore = create<IdentState>((set) => ({
 
   ingestAircraft: (frame) =>
     set((st) => {
+      const advanced = aircraftFrameAdvanced(frame, st.now);
       const next = new Map<string, Aircraft>();
       for (const ac of frame.aircraft) {
         next.set(ac.hex, ac);
@@ -785,6 +797,21 @@ export const useIdentStore = create<IdentState>((set) => ({
           rssiBufByHex[ac.hex] = appendTrimmed(rssiBufByHex[ac.hex], ac.rssi);
         }
       }
+      let trailsByHex = retainTrailsForAircraft(st.trailsByHex, retainedHexes);
+      if (advanced) {
+        let nextTrailsByHex: Record<string, TrailPoint[]> | null = null;
+        for (const ac of frame.aircraft) {
+          if (typeof ac.lat !== "number" || typeof ac.lon !== "number")
+            continue;
+          nextTrailsByHex ??= { ...trailsByHex };
+          appendTrailPointToRecord(
+            nextTrailsByHex,
+            ac.hex,
+            trailPointFromAircraft(ac as PositionedAircraft, nowMs),
+          );
+        }
+        if (nextTrailsByHex) trailsByHex = nextTrailsByHex;
+      }
 
       return {
         aircraft: next,
@@ -794,7 +821,10 @@ export const useIdentStore = create<IdentState>((set) => ({
         altTrendsByHex,
         gsTrendsByHex,
         rssiBufByHex,
-        trailsByHex: retainTrailsForAircraft(st.trailsByHex, retainedHexes),
+        trailsByHex,
+        liveState: advanced
+          ? { ...st.liveState, lastMsgTs: Date.now() }
+          : st.liveState,
         replay: appendRecentReplayFrame(st.replay, {
           ts: nowMs,
           aircraft: frame.aircraft,
@@ -1055,18 +1085,9 @@ export const useIdentStore = create<IdentState>((set) => ({
     }),
 
   recordTrailPoint: (hex, point) =>
-    set((st) => {
-      const prev = st.trailsByHex[hex];
-      const next = prev ? prev.slice() : [];
-      const assigned = assignTrailPointSegment(point, prev);
-      next.push(assigned);
-      return {
-        trailsByHex: {
-          ...st.trailsByHex,
-          [hex]: trailWithAppendedPoint(prev, next, assigned),
-        },
-      };
-    }),
+    set((st) => ({
+      trailsByHex: appendTrailPoint(st.trailsByHex, hex, point),
+    })),
 
   setLosData: (data) => set({ losData: data }),
 
@@ -1500,7 +1521,7 @@ const replayAircraftMapByFrame = new WeakMap<
 let replayTrailsCache: {
   blocks: Record<string, ReplayBlockFile>;
   recent: ReplayBlockFile | null | undefined;
-  playheadMs: number;
+  frameTs: number;
   trailStartMs: number | null;
   selectedHex: string | null;
   trails: Record<string, TrailPoint[]>;
@@ -1540,6 +1561,13 @@ export function selectDisplayNowMs(st: IdentState): number {
     : st.now * 1000;
 }
 
+export function selectDisplayTrailNowMs(st: IdentState): number {
+  if (st.replay.mode !== "replay" || st.replay.playheadMs == null) {
+    return st.now * 1000;
+  }
+  return currentReplayFrame(st)?.ts ?? st.replay.playheadMs;
+}
+
 export function selectDisplayTrailsByHex(
   st: IdentState,
 ): Record<string, TrailPoint[]> {
@@ -1548,25 +1576,27 @@ export function selectDisplayTrailsByHex(
   }
   const blocks = replayLoadedBlocks(st);
   if (blocks.length === 0) return EMPTY_REPLAY_TRAILS;
+  const frame = currentReplayFrameFromBlocks(st, blocks);
+  if (!frame) return EMPTY_REPLAY_TRAILS;
   if (
     replayTrailsCache &&
     replayTrailsCache.blocks === st.replay.cache &&
     replayTrailsCache.recent === st.replay.recent &&
-    replayTrailsCache.playheadMs === st.replay.playheadMs &&
+    replayTrailsCache.frameTs === frame.ts &&
     replayTrailsCache.trailStartMs === st.replay.trailStartMs &&
     replayTrailsCache.selectedHex === st.selectedHex
   ) {
     return replayTrailsCache.trails;
   }
   const selectedHex = st.selectedHex;
-  const unselectedSince = st.replay.playheadMs - TRAIL_FADE_MAX_SEC * 1000;
+  const unselectedSince = frame.ts - TRAIL_FADE_MAX_SEC * 1000;
   const selectedSince =
     selectedHex == null
       ? unselectedSince
       : selectedReplayTrailStart(
           blocks,
           selectedHex,
-          st.replay.playheadMs,
+          frame.ts,
           st.replay.trailStartMs ?? unselectedSince,
         );
   const out: Record<string, TrailPoint[]> = {};
@@ -1574,17 +1604,18 @@ export function selectDisplayTrailsByHex(
   for (const block of blocks) {
     let i = firstFrameAtOrAfter(block.frames, selectedSince);
     for (; i < block.frames.length; i += 1) {
-      const frame = block.frames[i];
-      if (frame.ts > st.replay.playheadMs) break;
-      for (const ac of frame.aircraft) {
-        if (ac.hex !== selectedHex && frame.ts < unselectedSince) continue;
+      const replayFrame = block.frames[i];
+      if (replayFrame.ts > frame.ts) break;
+      for (const ac of replayFrame.aircraft) {
+        if (ac.hex !== selectedHex && replayFrame.ts < unselectedSince)
+          continue;
         if (typeof ac.lat !== "number" || typeof ac.lon !== "number") continue;
         const series = out[ac.hex] ?? [];
         const segmentState = segmentStates.get(ac.hex) ?? { segment: 0 };
         const point = assignTrailPointSegment(
           trailPointFromAircraft(
-            { ...ac, lat: ac.lat, lon: ac.lon },
-            frame.ts,
+            ac as PositionedAircraft,
+            replayFrame.ts,
             segmentState,
           ),
           series,
@@ -1599,7 +1630,6 @@ export function selectDisplayTrailsByHex(
     }
   }
   for (const [hex, series] of Object.entries(out)) {
-    series.sort((a, b) => a.ts - b.ts);
     if (hex !== selectedHex && series.length > TRAIL_POINT_CAP) {
       out[hex] = series.slice(series.length - TRAIL_POINT_CAP);
     }
@@ -1608,7 +1638,7 @@ export function selectDisplayTrailsByHex(
   replayTrailsCache = {
     blocks: st.replay.cache,
     recent: st.replay.recent,
-    playheadMs: st.replay.playheadMs,
+    frameTs: frame.ts,
     trailStartMs: st.replay.trailStartMs,
     selectedHex,
     trails,
@@ -1781,6 +1811,28 @@ function trailWithAppendedPoint(
     : next;
 }
 
+function appendTrailPoint(
+  source: Record<string, TrailPoint[]>,
+  hex: string,
+  point: TrailPointInput,
+): Record<string, TrailPoint[]> {
+  const next = { ...source };
+  appendTrailPointToRecord(next, hex, point);
+  return next;
+}
+
+function appendTrailPointToRecord(
+  source: Record<string, TrailPoint[]>,
+  hex: string,
+  point: TrailPointInput,
+): void {
+  const prev = source[hex];
+  const next = prev ? prev.slice() : [];
+  const assigned = assignTrailPointSegment(point, prev);
+  next.push(assigned);
+  source[hex] = trailWithAppendedPoint(prev, next, assigned);
+}
+
 function latestTrailSegment(points: TrailPoint[]): TrailPoint[] {
   if (points.length === 0) return points;
   const segment = points[points.length - 1].segment;
@@ -1824,8 +1876,16 @@ function blockContainsAircraftAtOrBefore(
 
 function currentReplayFrame(st: IdentState): ReplayFrame | null {
   if (st.replay.mode !== "replay" || st.replay.playheadMs == null) return null;
+  return currentReplayFrameFromBlocks(st, replayLoadedBlocks(st));
+}
+
+function currentReplayFrameFromBlocks(
+  st: IdentState,
+  blocks: ReplayBlockFile[],
+): ReplayFrame | null {
+  if (st.replay.mode !== "replay" || st.replay.playheadMs == null) return null;
   let best: ReplayFrame | null = null;
-  for (const block of replayLoadedBlocks(st)) {
+  for (const block of blocks) {
     if (st.replay.playheadMs > block.end) continue;
     if (st.replay.playheadMs < block.start) continue;
     const frame = frameAtOrBefore(block.frames, st.replay.playheadMs);

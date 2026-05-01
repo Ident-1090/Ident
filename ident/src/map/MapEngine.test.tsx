@@ -33,20 +33,46 @@ interface FakeMap {
   addControl: ReturnType<typeof vi.fn>;
   isStyleLoaded: ReturnType<typeof vi.fn>;
   resize: ReturnType<typeof vi.fn>;
+  sources: Map<
+    string,
+    {
+      data: GeoJSON.FeatureCollection;
+      setData: ReturnType<typeof vi.fn>;
+    }
+  >;
 }
 
 function makeFakeMap(): FakeMap {
+  const sources = new Map<
+    string,
+    {
+      data: GeoJSON.FeatureCollection;
+      setData: ReturnType<typeof vi.fn>;
+    }
+  >();
   return {
     on: vi.fn(),
     off: vi.fn(),
     remove: vi.fn(),
-    addSource: vi.fn(),
+    addSource: vi.fn(
+      (id: string, source: { data: GeoJSON.FeatureCollection }) => {
+        sources.set(id, {
+          data: source.data,
+          setData: vi.fn((data: GeoJSON.FeatureCollection) => {
+            const current = sources.get(id);
+            if (current) current.data = data;
+          }),
+        });
+      },
+    ),
     addLayer: vi.fn(),
     addImage: vi.fn(),
     hasImage: vi.fn(() => false),
-    removeSource: vi.fn(),
+    removeSource: vi.fn((id: string) => {
+      sources.delete(id);
+    }),
     removeLayer: vi.fn(),
-    getSource: vi.fn(() => undefined),
+    getSource: vi.fn((id: string) => sources.get(id)),
     getLayer: vi.fn(() => undefined),
     moveLayer: vi.fn(),
     setStyle: vi.fn(),
@@ -59,7 +85,17 @@ function makeFakeMap(): FakeMap {
     addControl: vi.fn(),
     isStyleLoaded: vi.fn(() => true),
     resize: vi.fn(),
+    sources,
   };
+}
+
+function fireMapEvent(m: FakeMap, event: string): void {
+  const handlers = m.on.mock.calls
+    .filter(([name]) => name === event)
+    .map(([, handler]) => handler as () => void);
+  act(() => {
+    for (const handler of handlers) handler();
+  });
 }
 
 describe("MapEngine", () => {
@@ -355,6 +391,32 @@ describe("MapEngine", () => {
       "ident-range-rings-line",
       "ident-station-ring-outer",
     );
+  });
+
+  it("skips unchanged receiver range source updates on idle", () => {
+    useIdentStore.setState((st) => ({
+      ...st,
+      receiver: { lat: 37.4, lon: -122.1, version: "readsb" },
+      map: {
+        ...st.map,
+        layers: {
+          ...st.map.layers,
+          rangeRings: true,
+          rxRange: false,
+          losRings: false,
+        },
+      } as typeof st.map,
+    }));
+
+    act(() => {
+      root.render(<MapEngine />);
+    });
+    const source = lastMap!.sources.get("ident-range-rings");
+    expect(source).toBeTruthy();
+
+    fireMapEvent(lastMap!, "idle");
+
+    expect(source!.setData).not.toHaveBeenCalled();
   });
 
   it("renders LOS rings as muted context lines below traffic", () => {

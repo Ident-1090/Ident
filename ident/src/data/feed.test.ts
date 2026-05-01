@@ -196,6 +196,35 @@ describe("startFeed route envelopes", () => {
     stop();
   });
 
+  it("applies aircraft snapshots and trail points in one store update", () => {
+    const stop = startFeed();
+    let updates = 0;
+    const unsubscribe = useIdentStore.subscribe(() => {
+      updates += 1;
+    });
+
+    wsHarness.instances[0].emitText(
+      JSON.stringify({
+        type: "aircraft",
+        data: {
+          now: 100,
+          aircraft: [
+            { hex: "abc123", lat: 34.1, lon: -118.2, alt_baro: 3000 },
+            { hex: "def456", lat: 35.1, lon: -119.2, alt_baro: 4000 },
+          ],
+        },
+      }),
+    );
+
+    unsubscribe();
+    expect(updates).toBe(1);
+    expect(useIdentStore.getState().aircraft.size).toBe(2);
+    expect(useIdentStore.getState().trailsByHex.abc123).toHaveLength(1);
+    expect(useIdentStore.getState().trailsByHex.def456).toHaveLength(1);
+    expect(useIdentStore.getState().liveState.lastMsgTs).toBeGreaterThan(0);
+    stop();
+  });
+
   it("merges relay-supplied trail points into the local trail cache", () => {
     const stop = startFeed();
     useIdentStore.getState().recordTrailPoint("abc123", {

@@ -8,6 +8,7 @@ import {
   __resetTrailDisplayCachesForTests,
   sampleMpsOnce,
   selectDisplayAircraftMap,
+  selectDisplayTrailNowMs,
   selectDisplayTrailsByHex,
   trailPointFromAircraft,
   useIdentStore,
@@ -99,6 +100,79 @@ describe("replay display selectors", () => {
     const st = useIdentStore.getState();
     expect(selectDisplayAircraftMap(st)).toBe(selectDisplayAircraftMap(st));
     expect(selectDisplayTrailsByHex(st)).toBe(selectDisplayTrailsByHex(st));
+  });
+
+  it("reuses replay trails while the playhead remains on the same frame", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 100_000,
+        availableTo: 120_000,
+        mode: "replay",
+        playheadMs: 110_100,
+        cache: {
+          "/api/replay/blocks/100000-120000.json.zst": {
+            version: 1,
+            start: 100_000,
+            end: 120_000,
+            step_ms: 5_000,
+            frames: [
+              {
+                ts: 100_000,
+                aircraft: [
+                  { hex: "abc123", lat: 34.1, lon: -118.1, alt_baro: 3000 },
+                ],
+              },
+              {
+                ts: 110_000,
+                aircraft: [
+                  { hex: "abc123", lat: 34.2, lon: -118.2, alt_baro: 4000 },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    }));
+
+    const first = selectDisplayTrailsByHex(useIdentStore.getState());
+    useIdentStore.setState((st) => ({
+      replay: { ...st.replay, playheadMs: 110_900 },
+    }));
+
+    expect(selectDisplayTrailsByHex(useIdentStore.getState())).toBe(first);
+  });
+
+  it("uses replay frame time for trail rendering while playhead stays in frame", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 100_000,
+        availableTo: 120_000,
+        mode: "replay",
+        playheadMs: 110_100,
+        cache: {
+          "/api/replay/blocks/100000-120000.json.zst": {
+            version: 1,
+            start: 100_000,
+            end: 120_000,
+            step_ms: 5_000,
+            frames: [
+              { ts: 100_000, aircraft: [{ hex: "abc123" }] },
+              { ts: 110_000, aircraft: [{ hex: "abc123" }] },
+            ],
+          },
+        },
+      },
+    }));
+
+    expect(selectDisplayTrailNowMs(useIdentStore.getState())).toBe(110_000);
+    useIdentStore.setState((st) => ({
+      replay: { ...st.replay, playheadMs: 110_900 },
+    }));
+    expect(selectDisplayTrailNowMs(useIdentStore.getState())).toBe(110_000);
   });
 
   it("uses recent replay frames beyond finalized blocks", () => {

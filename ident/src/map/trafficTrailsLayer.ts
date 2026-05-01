@@ -68,6 +68,10 @@ export interface BuildTrafficTrailsSnapshotArgs {
   enabled: boolean;
 }
 
+let trafficTrailsSnapshotCache:
+  | (BuildTrafficTrailsSnapshotArgs & { snapshot: TrafficTrailsSnapshot })
+  | null = null;
+
 export function lngLatToMercator(
   lng: number,
   lat: number,
@@ -86,6 +90,17 @@ export function lngLatToMercator(
 export function buildTrafficTrailsSnapshot(
   args: BuildTrafficTrailsSnapshotArgs,
 ): TrafficTrailsSnapshot {
+  if (
+    trafficTrailsSnapshotCache &&
+    trafficTrailsSnapshotCache.aircraft === args.aircraft &&
+    trafficTrailsSnapshotCache.trailsByHex === args.trailsByHex &&
+    trafficTrailsSnapshotCache.selectedHex === args.selectedHex &&
+    trafficTrailsSnapshotCache.trailFadeSec === args.trailFadeSec &&
+    trafficTrailsSnapshotCache.nowMs === args.nowMs &&
+    trafficTrailsSnapshotCache.enabled === args.enabled
+  ) {
+    return trafficTrailsSnapshotCache.snapshot;
+  }
   const floats: number[] = [];
   if (args.enabled) {
     for (const ac of args.aircraft) {
@@ -106,10 +121,12 @@ export function buildTrafficTrailsSnapshot(
       nowMs: args.nowMs,
     });
   }
-  return {
+  const snapshot = {
     vertices: new Float32Array(floats),
     vertexCount: floats.length / FLOATS_PER_VERTEX,
   };
+  trafficTrailsSnapshotCache = { ...args, snapshot };
+  return snapshot;
 }
 
 export class TrafficTrailsLayer implements CustomLayerInterface {
