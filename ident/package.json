@@ -32,7 +32,7 @@
     "zustand": "^5.0.12"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.13",
+    "@biomejs/biome": "2.4.14",
     "@tailwindcss/vite": "^4.2.4",
     "@types/node": "^25.6.0",
     "@types/react": "^19.2.14",
@@ -40,7 +40,7 @@
     "@vite-pwa/assets-generator": "^1.0.2",
     "@vitejs/plugin-react": "^5.2.0",
     "husky": "9.1.7",
-    "jsdom": "^29.1.0",
+    "jsdom": "^29.1.1",
     "lint-staged": "16.4.0",
     "maplibre-gl": "^5.24.0",
     "tailwindcss": "^4.2.4",
