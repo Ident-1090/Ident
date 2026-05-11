@@ -1946,6 +1946,7 @@ function replayLoadedBlocksFromReplay(replay: ReplaySlice): ReplayBlockFile[] {
   if (replay.recent && replay.recent.frames.length > 0) {
     blocks.push(replay.recent);
   }
+  blocks.sort((a, b) => a.start - b.start);
   return blocks;
 }
 

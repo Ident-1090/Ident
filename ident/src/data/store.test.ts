@@ -399,6 +399,68 @@ describe("replay display selectors", () => {
     expect(trails.other.map((point) => point.ts)).toEqual([950_000]);
   });
 
+  it("reconstructs replay trails in chronological order regardless of block load order", () => {
+    useIdentStore.setState((st) => ({
+      selectedHex: "abc123",
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 0,
+        availableTo: 1_000_000,
+        mode: "replay",
+        playheadMs: 1_000_000,
+        trailStartMs: 0,
+        cache: {
+          "/api/replay/blocks/500000-1000000.json.zst": {
+            version: 1,
+            start: 500_000,
+            end: 1_000_000,
+            step_ms: 5_000,
+            frames: [
+              {
+                ts: 600_000,
+                aircraft: [
+                  { hex: "abc123", lat: 34.3, lon: -118.3, alt_baro: 5000 },
+                ],
+              },
+              {
+                ts: 950_000,
+                aircraft: [
+                  { hex: "abc123", lat: 34.4, lon: -118.4, alt_baro: 6000 },
+                ],
+              },
+            ],
+          },
+          "/api/replay/blocks/0-500000.json.zst": {
+            version: 1,
+            start: 0,
+            end: 500_000,
+            step_ms: 5_000,
+            frames: [
+              {
+                ts: 100_000,
+                aircraft: [
+                  { hex: "abc123", lat: 34.1, lon: -118.1, alt_baro: 3000 },
+                ],
+              },
+              {
+                ts: 400_000,
+                aircraft: [
+                  { hex: "abc123", lat: 34.2, lon: -118.2, alt_baro: 4000 },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    }));
+
+    const trails = selectDisplayTrailsByHex(useIdentStore.getState());
+    expect(trails.abc123.map((p) => p.ts)).toEqual([
+      100_000, 400_000, 600_000, 950_000,
+    ]);
+  });
+
   it("shows an empty replay display for a true gap between segments", () => {
     useIdentStore.setState((st) => ({
       replay: {
