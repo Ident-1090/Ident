@@ -1320,7 +1320,7 @@ describe("MapOverlay", () => {
     const layer = stub.layers.get(TRAFFIC_TRAILS_LAYER_ID) as
       | { snapshot?: TrafficTrailsSnapshot }
       | undefined;
-    expect(layer?.snapshot?.vertexCount).toBe(6);
+    expect(layer?.snapshot?.vertexCount).toBe(18);
   });
 
   it("does not refit on startup when traffic is already visible", () => {
@@ -1482,5 +1482,64 @@ describe("MapOverlay", () => {
       fire(stub, "mouseout");
     });
     expect(useIdentStore.getState().labels.hoveredHex).toBeNull();
+  });
+
+  it("highlights a selected trail dot when the pointer is below it", () => {
+    const trail = [
+      { lat: 37.4, lon: -122.1, alt: 10_000, ts: 1_000, segment: 0 },
+      { lat: 37.42, lon: -122.08, alt: 12_000, ts: 2_000, segment: 0 },
+    ];
+    const stub = createStubMap({
+      project: ({ lng, lat }) => ({ x: lng * 10, y: lat * 10 }),
+    });
+    useIdentStore.setState({
+      selectedHex: UAL.hex,
+      trailsByHex: { [UAL.hex]: trail },
+    });
+
+    renderOverlay(root, stub, true);
+
+    const dot = { x: trail[1].lon * 10, y: trail[1].lat * 10 };
+    act(() => {
+      fire(stub, "mousemove", { point: { x: dot.x, y: dot.y + 12 } });
+    });
+
+    const layer = stub.layers.get(TRAFFIC_TRAILS_LAYER_ID) as
+      | { snapshot?: TrafficTrailsSnapshot }
+      | undefined;
+    const vertices = Array.from(layer?.snapshot?.vertices ?? []);
+    const hasHighlightedDot = vertices.some(
+      (_value, index) =>
+        index % 11 === 7 &&
+        vertices[index] === 1 &&
+        vertices[index + 1] === 1 &&
+        vertices[index + 2] === 1,
+    );
+    expect(hasHighlightedDot).toBe(true);
+  });
+
+  it("does not rebind pointer handlers while recomputing trail dot targets during pan", () => {
+    const trail = [
+      { lat: 37.4, lon: -122.1, alt: 10_000, ts: 1_000, segment: 0 },
+      { lat: 37.42, lon: -122.08, alt: 12_000, ts: 2_000, segment: 0 },
+    ];
+    const stub = createStubMap({
+      project: ({ lng, lat }) => ({ x: lng * 10, y: lat * 10 }),
+    });
+    useIdentStore.setState({
+      selectedHex: UAL.hex,
+      trailsByHex: { [UAL.hex]: trail },
+    });
+
+    renderOverlay(root, stub, true);
+    const onCalls = stub.on.mock.calls.length;
+    const offCalls = stub.off.mock.calls.length;
+
+    act(() => {
+      fire(stub, "move");
+    });
+
+    expect(stub.on.mock.calls.length).toBe(onCalls);
+    expect(stub.off.mock.calls.length).toBe(offCalls);
   });
 });

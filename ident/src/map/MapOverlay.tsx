@@ -46,12 +46,22 @@ import {
 } from "./mapOverlayLayers";
 import {
   buildTrafficTrailsSnapshot,
+  selectedTrailDotSamples,
+  selectedTrailDotSpacingForZoom,
   TrafficTrailsLayer,
 } from "./trafficTrailsLayer";
 
 const RECENTER_PADDING_PX = 60;
 const SELECT_EASE_MS = 350;
 const AUTO_FIT_IDLE_MS = 12_000;
+const TRAIL_DOT_HIT_X_PX = 8;
+const TRAIL_DOT_HIT_ABOVE_PX = 6;
+const TRAIL_DOT_HIT_BELOW_PX = 18;
+
+interface TrailDotTarget {
+  ts: number;
+  screen: { x: number; y: number };
+}
 
 export function MapOverlay() {
   const { map, isReady } = useMap();
@@ -89,6 +99,7 @@ export function MapOverlay() {
   );
   const trafficTrailsLayerRef = useRef<TrafficTrailsLayer | null>(null);
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
+  const selectedTrailDotTargetsRef = useRef<TrailDotTarget[]>([]);
   const recenterToTrafficRef = useRef<(() => void) | null>(null);
   const lastTrackedPosition = useRef<{
     hex: string;
@@ -102,6 +113,9 @@ export function MapOverlay() {
   const lastRecenterRequestId = useRef(recenterRequestId);
   const didInitialTrafficRecenter = useRef(false);
   const [viewTick, setViewTick] = useState(0);
+  const [hoveredTrailDotTs, setHoveredTrailDotTs] = useState<number | null>(
+    null,
+  );
   const hasSelectedAircraft = selectedHex != null && aircraft.has(selectedHex);
   const selectedAircraft = selectedHex ? aircraft.get(selectedHex) : undefined;
   const selectedMapAircraft = useMemo(
@@ -301,12 +315,20 @@ export function MapOverlay() {
     predictorFeatures,
   ]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: viewTick is a cache-bust for map.getZoom() which is imperative state not tracked by React
+  const selectedTrailDotMinMercatorDistance = useMemo(() => {
+    if (!map || !isReady) return selectedTrailDotSpacingForZoom(NaN);
+    return selectedTrailDotSpacingForZoom(map.getZoom());
+  }, [map, isReady, viewTick]);
+
   const trafficTrailsSnapshot = useMemo(
     () =>
       buildTrafficTrailsSnapshot({
         aircraft: filteredAircraft,
         trailsByHex,
         selectedHex,
+        hoveredTrailDotTs,
+        selectedTrailDotMinMercatorDistance,
         trailFadeSec,
         nowMs: trailNowMs,
         enabled: layersOn.trails,
@@ -315,11 +337,36 @@ export function MapOverlay() {
       filteredAircraft,
       trailsByHex,
       selectedHex,
+      hoveredTrailDotTs,
+      selectedTrailDotMinMercatorDistance,
       trailFadeSec,
       trailNowMs,
       layersOn.trails,
     ],
   );
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: viewTick is a cache-bust for map.project() which depends on imperative camera state
+  const selectedTrailDotTargets = useMemo<TrailDotTarget[]>(() => {
+    if (!map || !isReady || !selectedHex) return [];
+    return selectedTrailDotSamples(
+      trailsByHex[selectedHex],
+      0,
+      selectedTrailDotMinMercatorDistance,
+    ).map((sample) => ({
+      ts: sample.point.ts,
+      screen: map.project({ lng: sample.point.lon, lat: sample.point.lat }),
+    }));
+  }, [
+    map,
+    isReady,
+    selectedHex,
+    trailsByHex,
+    selectedTrailDotMinMercatorDistance,
+    viewTick,
+  ]);
+  useEffect(() => {
+    selectedTrailDotTargetsRef.current = selectedTrailDotTargets;
+  }, [selectedTrailDotTargets]);
 
   useLayoutEffect(() => {
     if (!map || !isReady) return;
@@ -444,19 +491,46 @@ export function MapOverlay() {
       const hex = pick(evt?.point);
       if (hex !== undefined) select(hex);
     };
+    const pickTrailDot = (
+      point: { x: number; y: number } | undefined,
+    ): number | null => {
+      const targets = selectedTrailDotTargetsRef.current;
+      if (!point || targets.length === 0) return null;
+      let closestTs: number | null = null;
+      let closestScore = Infinity;
+      for (const target of targets) {
+        const dx = Math.abs(point.x - target.screen.x);
+        const dy = point.y - target.screen.y;
+        if (
+          dx > TRAIL_DOT_HIT_X_PX ||
+          dy < -TRAIL_DOT_HIT_ABOVE_PX ||
+          dy > TRAIL_DOT_HIT_BELOW_PX
+        ) {
+          continue;
+        }
+        const score = Math.hypot(dx, dy > 0 ? dy * 0.5 : dy);
+        if (score >= closestScore) continue;
+        closestScore = score;
+        closestTs = target.ts;
+      }
+      return closestTs;
+    };
     const onMouseMove = (evt?: { point?: { x: number; y: number } }): void => {
       pointerRef.current = evt?.point ?? null;
       const hex = pick(evt?.point);
       if (hex !== undefined) setHoveredHex(hex);
+      setHoveredTrailDotTs(pickTrailDot(evt?.point));
     };
     const onMouseOut = (): void => {
       pointerRef.current = null;
       setHoveredHex(null);
+      setHoveredTrailDotTs(null);
     };
     const onMove = (): void => {
       if (!pointerRef.current) return;
       const hex = pick(pointerRef.current);
       if (hex !== undefined) setHoveredHex(hex);
+      setHoveredTrailDotTs(pickTrailDot(pointerRef.current));
     };
     map.on("click", onClick);
     map.on("mousemove", onMouseMove);

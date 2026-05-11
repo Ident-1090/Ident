@@ -3,6 +3,8 @@ import type { Aircraft, TrailPoint } from "../data/types";
 import {
   buildTrafficTrailsSnapshot,
   lngLatToMercator,
+  selectedTrailDotSamples,
+  selectedTrailDotSpacingForZoom,
   TRAFFIC_TRAILS_LAYER_ID,
   TrafficTrailsLayer,
   type TrafficTrailsSnapshot,
@@ -46,6 +48,8 @@ function snapshot(
       [SWA.hex]: [point(10_000, 24000), point(20_000, 24000)],
     },
     selectedHex: null,
+    hoveredTrailDotTs: null,
+    selectedTrailDotMinMercatorDistance: 0.00003,
     trailFadeSec: 10,
     nowMs: 25_000,
     enabled: true,
@@ -59,10 +63,12 @@ describe("buildTrafficTrailsSnapshot", () => {
       aircraft: [UAL],
       trailsByHex: { [UAL.hex]: [point(1_000), point(2_000)] },
       selectedHex: null,
+      hoveredTrailDotTs: null,
+      selectedTrailDotMinMercatorDistance: 0.00003,
       trailFadeSec: 10,
       nowMs: 2_000,
       enabled: true,
-    };
+    } satisfies Parameters<typeof buildTrafficTrailsSnapshot>[0];
 
     expect(buildTrafficTrailsSnapshot(args)).toBe(
       buildTrafficTrailsSnapshot(args),
@@ -76,10 +82,12 @@ describe("buildTrafficTrailsSnapshot", () => {
       aircraft,
       trailsByHex,
       selectedHex: null,
+      hoveredTrailDotTs: null,
+      selectedTrailDotMinMercatorDistance: 0.00003,
       trailFadeSec: 10,
       nowMs: 2_000,
       enabled: true,
-    };
+    } satisfies Parameters<typeof buildTrafficTrailsSnapshot>[0];
     const first = buildTrafficTrailsSnapshot(args);
 
     expect(buildTrafficTrailsSnapshot({ ...args, nowMs: 3_000 })).not.toBe(
@@ -87,6 +95,15 @@ describe("buildTrafficTrailsSnapshot", () => {
     );
     expect(
       buildTrafficTrailsSnapshot({ ...args, selectedHex: UAL.hex }),
+    ).not.toBe(first);
+    expect(
+      buildTrafficTrailsSnapshot({ ...args, hoveredTrailDotTs: 1_000 }),
+    ).not.toBe(first);
+    expect(
+      buildTrafficTrailsSnapshot({
+        ...args,
+        selectedTrailDotMinMercatorDistance: 0.00001,
+      }),
     ).not.toBe(first);
     expect(
       buildTrafficTrailsSnapshot({
@@ -123,10 +140,9 @@ describe("buildTrafficTrailsSnapshot", () => {
     expect(snap.vertexCount / 6).toBeLessThanOrEqual(241);
   });
 
-  it("keeps every selected trail segment", () => {
-    const selectedTrail = Array.from({ length: 20 }, (_, i) =>
-      point(i * 1_000),
-    );
+  it("keeps every selected trail segment with distance-spaced sample dots", () => {
+    const selectedTrail = Array.from({ length: 20 }, (_, i) => point(i * 100));
+    const samples = selectedTrailDotSamples(selectedTrail);
     const snap = snapshot({
       aircraft: [UAL],
       trailsByHex: { [UAL.hex]: selectedTrail },
@@ -135,7 +151,111 @@ describe("buildTrafficTrailsSnapshot", () => {
       nowMs: 20_000,
     });
 
-    expect(snap.vertexCount).toBe((selectedTrail.length - 1) * 6);
+    expect(samples.length).toBeLessThan(selectedTrail.length);
+    expect(snap.vertexCount).toBe(
+      (selectedTrail.length - 1) * 6 + samples.length * 6,
+    );
+  });
+
+  it("uses caller-provided selected dot spacing", () => {
+    const selectedTrail = Array.from({ length: 20 }, (_, i) => point(i * 100));
+
+    expect(selectedTrailDotSamples(selectedTrail, 0, 0.000001).length).toBe(
+      selectedTrail.length,
+    );
+  });
+
+  it("converts selected dot screen spacing to mercator distance by zoom", () => {
+    expect(selectedTrailDotSpacingForZoom(10)).toBeLessThan(
+      selectedTrailDotSpacingForZoom(8),
+    );
+  });
+
+  it("keeps only the newest continuous segment for unselected trails", () => {
+    const trail = [
+      point(1_000),
+      point(2_000),
+      point(80_000),
+      point(81_000),
+      point(82_000),
+    ];
+    const snap = snapshot({
+      aircraft: [UAL],
+      trailsByHex: { [UAL.hex]: trail },
+      trailFadeSec: 120,
+      nowMs: 82_000,
+    });
+
+    expect(snap.vertexCount).toBe(12);
+    const start = lngLatToMercator(point(80_000).lon, point(80_000).lat);
+    const end = lngLatToMercator(point(81_000).lon, point(81_000).lat);
+    expect(snap.vertices[0]).toBeCloseTo(start.x);
+    expect(snap.vertices[2]).toBeCloseTo(end.x);
+  });
+
+  it("keeps unselected trails when segment metadata is only partially present", () => {
+    const trail = [
+      { ...point(1_000), segment: undefined as unknown as number },
+      point(2_000),
+      point(3_000),
+    ];
+    const snap = snapshot({
+      aircraft: [UAL],
+      trailsByHex: { [UAL.hex]: trail },
+      trailFadeSec: 10,
+      nowMs: 3_000,
+    });
+
+    expect(snap.vertexCount).toBe(12);
+    const start = lngLatToMercator(point(1_000).lon, point(1_000).lat);
+    const end = lngLatToMercator(point(2_000).lon, point(2_000).lat);
+    expect(snap.vertices[0]).toBeCloseTo(start.x);
+    expect(snap.vertices[2]).toBeCloseTo(end.x);
+  });
+
+  it("keeps stale unselected endpoints attached to the newest trail", () => {
+    const trail = [
+      point(1_000),
+      point(2_000),
+      { ...point(3_000), stale: true },
+    ];
+    const snap = snapshot({
+      aircraft: [UAL],
+      trailsByHex: { [UAL.hex]: trail },
+      trailFadeSec: 10,
+      nowMs: 3_000,
+    });
+
+    expect(snap.vertexCount).toBe(12);
+    const start = lngLatToMercator(point(1_000).lon, point(1_000).lat);
+    const end = lngLatToMercator(point(2_000).lon, point(2_000).lat);
+    expect(snap.vertices[0]).toBeCloseTo(start.x);
+    expect(snap.vertices[2]).toBeCloseTo(end.x);
+  });
+
+  it("connects selected trails across time gaps and marks retained samples", () => {
+    const trail = [point(1_000), point(2_000), point(80_000)];
+    const snap = snapshot({
+      aircraft: [UAL],
+      trailsByHex: { [UAL.hex]: trail },
+      selectedHex: UAL.hex,
+      trailFadeSec: 1,
+      nowMs: 80_000,
+    });
+
+    const samples = selectedTrailDotSamples(trail);
+    const segmentVertexCount = (trail.length - 1) * 6;
+    expect(snap.vertexCount).toBe(segmentVertexCount + samples.length * 6);
+    const beforeGap = lngLatToMercator(point(2_000).lon, point(2_000).lat);
+    const afterGap = lngLatToMercator(point(80_000).lon, point(80_000).lat);
+    expect(snap.vertices[66]).toBeCloseTo(beforeGap.x);
+    expect(snap.vertices[68]).toBeCloseTo(afterGap.x);
+    expect(snap.vertices[segmentVertexCount * 11]).toBeCloseTo(
+      lngLatToMercator(point(1_000).lon, point(1_000).lat).x,
+    );
+    expect(snap.vertices[segmentVertexCount * 11 + 4]).toBe(2);
+    const lastDotOffset = (segmentVertexCount + (samples.length - 1) * 6) * 11;
+    expect(snap.vertices[lastDotOffset]).toBeCloseTo(afterGap.x);
   });
 
   it("encodes selected trails wider than unselected trails", () => {
@@ -150,6 +270,42 @@ describe("buildTrafficTrailsSnapshot", () => {
     expect(selected.vertices[6]).toBeGreaterThan(unselected.vertices[6]);
   });
 
+  it("keeps selected and unselected trail lines translucent", () => {
+    const unselected = snapshot({ aircraft: [UAL] });
+    const snap = snapshot({
+      aircraft: [UAL],
+      selectedHex: UAL.hex,
+    });
+
+    expect(snap.vertices[10]).toBeLessThan(1);
+    expect(snap.vertices[10]).toBeGreaterThan(0.4);
+    expect(unselected.vertices[10]).toBeLessThanOrEqual(snap.vertices[10]);
+  });
+
+  it("lights only the hovered selected trail dot", () => {
+    const hoveredTrailDotTs = 14_000;
+    const snap = snapshot({
+      aircraft: [UAL],
+      selectedHex: UAL.hex,
+      hoveredTrailDotTs,
+    });
+
+    const samples = selectedTrailDotSamples([
+      point(1_000),
+      point(14_000),
+      point(16_000),
+      point(24_000),
+    ]);
+    const hoveredIndex = samples.findIndex(
+      (sample) => sample.point.ts === hoveredTrailDotTs,
+    );
+    const dotOffset = 3 * 6 * 11 + hoveredIndex * 6 * 11;
+    expect(snap.vertices[dotOffset + 7]).toBe(1);
+    expect(snap.vertices[dotOffset + 8]).toBe(1);
+    expect(snap.vertices[dotOffset + 9]).toBe(1);
+    expect(snap.vertices[dotOffset - 66 + 7]).not.toBe(1);
+  });
+
   it("keeps the selected trail even when the aircraft row is filtered out", () => {
     const selectedTrail = [point(1_000), point(2_000), point(3_000)];
     const snap = snapshot({
@@ -158,7 +314,10 @@ describe("buildTrafficTrailsSnapshot", () => {
       selectedHex: UAL.hex,
     });
 
-    expect(snap.vertexCount).toBe((selectedTrail.length - 1) * 6);
+    expect(snap.vertexCount).toBe(
+      (selectedTrail.length - 1) * 6 +
+        selectedTrailDotSamples(selectedTrail).length * 6,
+    );
   });
 
   it("keeps only the selected trail when the trails layer is disabled", () => {
@@ -173,14 +332,17 @@ describe("buildTrafficTrailsSnapshot", () => {
       enabled: false,
     });
 
-    expect(snap.vertexCount).toBe((selectedTrail.length - 1) * 6);
+    expect(snap.vertexCount).toBe(
+      (selectedTrail.length - 1) * 6 +
+        selectedTrailDotSamples(selectedTrail).length * 6,
+    );
   });
 
-  it("does not connect across stale points or segment changes", () => {
+  it("does not connect across segment changes", () => {
     const trail: TrailPoint[] = [
       point(1_000),
       point(2_000),
-      { ...point(3_000), stale: true },
+      point(3_000),
       { ...point(4_000), segment: 1 },
       { ...point(5_000), segment: 1 },
     ];
@@ -192,15 +354,15 @@ describe("buildTrafficTrailsSnapshot", () => {
       nowMs: 6_000,
     });
 
-    expect(snap.vertexCount).toBe(12);
+    expect(snap.vertexCount).toBe(48);
     const first = lngLatToMercator(point(1_000).lon, point(1_000).lat);
     const second = lngLatToMercator(point(2_000).lon, point(2_000).lat);
     const fourth = lngLatToMercator(point(4_000).lon, point(4_000).lat);
     const fifth = lngLatToMercator(point(5_000).lon, point(5_000).lat);
     expect(snap.vertices[0]).toBeCloseTo(first.x);
     expect(snap.vertices[2]).toBeCloseTo(second.x);
-    expect(snap.vertices[66]).toBeCloseTo(fourth.x);
-    expect(snap.vertices[68]).toBeCloseTo(fifth.x);
+    expect(snap.vertices[132]).toBeCloseTo(fourth.x);
+    expect(snap.vertices[134]).toBeCloseTo(fifth.x);
   });
 
   it("returns an empty snapshot when disabled", () => {

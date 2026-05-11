@@ -7,13 +7,19 @@ import type {
 } from "./maplibre";
 
 export const TRAFFIC_TRAILS_LAYER_ID = "ident-traffic-trails";
-const TRAIL_OPACITY_MIN = 0.35;
-const TRAIL_OPACITY_MAX_UNSEL = 0.85;
-const TRAIL_OPACITY_MAX_SEL = 1;
+const TRAIL_OPACITY_MIN = 0.18;
+const TRAIL_OPACITY_MAX_UNSEL = 0.42;
+const TRAIL_OPACITY_MAX_SEL = 0.46;
 const TRAIL_WIDTH_UNSEL = 1;
 const TRAIL_WIDTH_SEL = 2;
+const TRAIL_DOT_RADIUS_SEL = 1.65;
+const TRAIL_DOT_OPACITY_SEL = 0.92;
+const TRAIL_DOT_MIN_SCREEN_DISTANCE_PX = 6;
+const TRAIL_DOT_DEFAULT_MERCATOR_DISTANCE = 0.00003;
+const TRAIL_DOT_HOVER_COLOR = { r: 1, g: 1, b: 1 };
 const TRAIL_BREAK_GAP_MS = 45_000;
 const TRAIL_MAX_UNSELECTED_SEGMENTS = 240;
+const WEB_MERCATOR_TILE_SIZE_PX = 512;
 const WEB_MERCATOR_MAX_LAT = 85.05112878;
 const FLOATS_PER_VERTEX = 11;
 const BYTES_PER_FLOAT = 4;
@@ -28,19 +34,32 @@ attribute vec4 a_color;
 uniform mat4 u_matrix;
 uniform vec2 u_viewport;
 varying vec4 v_color;
+varying vec2 v_dot_coord;
+varying float v_is_dot;
 
 void main() {
-  vec4 start_clip = u_matrix * vec4(a_start, 0.0, 1.0);
-  vec4 end_clip = u_matrix * vec4(a_end, 0.0, 1.0);
-  vec4 clip = mix(start_clip, end_clip, a_t);
-  vec2 start_ndc = start_clip.xy / start_clip.w;
-  vec2 end_ndc = end_clip.xy / end_clip.w;
-  vec2 dir_px = (end_ndc - start_ndc) * u_viewport;
-  float len = length(dir_px);
-  vec2 normal = len > 0.0 ? vec2(-dir_px.y, dir_px.x) / len : vec2(0.0);
-  vec2 offset_ndc = normal * a_side * a_half_width * 2.0 / u_viewport;
-  gl_Position = clip;
-  gl_Position.xy += offset_ndc * clip.w;
+  if (a_t > 1.5) {
+    vec4 center_clip = u_matrix * vec4(a_start, 0.0, 1.0);
+    vec2 offset_ndc = vec2(a_side, a_half_width) * 2.0 / u_viewport;
+    gl_Position = center_clip;
+    gl_Position.xy += offset_ndc * center_clip.w;
+    v_dot_coord = a_end;
+    v_is_dot = 1.0;
+  } else {
+    vec4 start_clip = u_matrix * vec4(a_start, 0.0, 1.0);
+    vec4 end_clip = u_matrix * vec4(a_end, 0.0, 1.0);
+    vec4 clip = mix(start_clip, end_clip, a_t);
+    vec2 start_ndc = start_clip.xy / start_clip.w;
+    vec2 end_ndc = end_clip.xy / end_clip.w;
+    vec2 dir_px = (end_ndc - start_ndc) * u_viewport;
+    float len = length(dir_px);
+    vec2 normal = len > 0.0 ? vec2(-dir_px.y, dir_px.x) / len : vec2(0.0);
+    vec2 offset_ndc = normal * a_side * a_half_width * 2.0 / u_viewport;
+    gl_Position = clip;
+    gl_Position.xy += offset_ndc * clip.w;
+    v_dot_coord = vec2(0.0);
+    v_is_dot = 0.0;
+  }
   v_color = a_color;
 }
 `;
@@ -48,8 +67,13 @@ void main() {
 const FRAGMENT_SHADER_SOURCE = `
 precision mediump float;
 varying vec4 v_color;
+varying vec2 v_dot_coord;
+varying float v_is_dot;
 
 void main() {
+  if (v_is_dot > 0.5 && dot(v_dot_coord, v_dot_coord) > 1.0) {
+    discard;
+  }
   gl_FragColor = v_color;
 }
 `;
@@ -63,6 +87,8 @@ export interface BuildTrafficTrailsSnapshotArgs {
   aircraft: Aircraft[];
   trailsByHex: Record<string, TrailPoint[]>;
   selectedHex: string | null;
+  hoveredTrailDotTs: number | null;
+  selectedTrailDotMinMercatorDistance: number;
   trailFadeSec: number;
   nowMs: number;
   enabled: boolean;
@@ -95,6 +121,9 @@ export function buildTrafficTrailsSnapshot(
     trafficTrailsSnapshotCache.aircraft === args.aircraft &&
     trafficTrailsSnapshotCache.trailsByHex === args.trailsByHex &&
     trafficTrailsSnapshotCache.selectedHex === args.selectedHex &&
+    trafficTrailsSnapshotCache.hoveredTrailDotTs === args.hoveredTrailDotTs &&
+    trafficTrailsSnapshotCache.selectedTrailDotMinMercatorDistance ===
+      args.selectedTrailDotMinMercatorDistance &&
     trafficTrailsSnapshotCache.trailFadeSec === args.trailFadeSec &&
     trafficTrailsSnapshotCache.nowMs === args.nowMs &&
     trafficTrailsSnapshotCache.enabled === args.enabled
@@ -117,6 +146,9 @@ export function buildTrafficTrailsSnapshot(
     appendTrailVertices(floats, {
       trail: args.trailsByHex[args.selectedHex],
       isSelected: true,
+      hoveredTrailDotTs: args.hoveredTrailDotTs,
+      selectedTrailDotMinMercatorDistance:
+        args.selectedTrailDotMinMercatorDistance,
       trailFadeSec: args.trailFadeSec,
       nowMs: args.nowMs,
     });
@@ -247,20 +279,27 @@ function appendTrailVertices(
   {
     trail,
     isSelected,
+    hoveredTrailDotTs = null,
+    selectedTrailDotMinMercatorDistance = TRAIL_DOT_DEFAULT_MERCATOR_DISTANCE,
     trailFadeSec,
     nowMs,
   }: {
     trail: TrailPoint[] | undefined;
     isSelected: boolean;
+    hoveredTrailDotTs?: number | null;
+    selectedTrailDotMinMercatorDistance?: number;
     trailFadeSec: number;
     nowMs: number;
   },
 ): void {
   if (!trail || trail.length < 2) return;
   const points = trail;
-  const start = isSelected
+  let start = isSelected
     ? 0
     : firstTrailIndexAtOrAfter(points, nowMs - trailFadeSec * 1000);
+  if (!isSelected) {
+    start = latestContinuousTrailStart(points, start);
+  }
   const lastIndex = points.length - start - 1;
   if (lastIndex < 1) return;
   const stride = isSelected
@@ -274,15 +313,19 @@ function appendTrailVertices(
   if (prevIndex !== points.length - 1) {
     appendSegment(points.length - 1);
   }
+  if (isSelected) {
+    appendTrailDotVertices(
+      floats,
+      points,
+      start,
+      hoveredTrailDotTs,
+      selectedTrailDotMinMercatorDistance,
+    );
+  }
 
   function appendSegment(nextIndex: number): void {
     const next = points[nextIndex];
-    if (
-      next.ts - prev.ts > TRAIL_BREAK_GAP_MS ||
-      next.stale ||
-      prev.stale ||
-      next.segment !== prev.segment
-    ) {
+    if (breaksTrail(prev, next, isSelected)) {
       prev = next;
       prevIndex = nextIndex;
       return;
@@ -303,6 +346,147 @@ function appendTrailVertices(
     prev = next;
     prevIndex = nextIndex;
   }
+}
+
+function latestContinuousTrailStart(
+  points: TrailPoint[],
+  start: number,
+): number {
+  if (points.length < 2) return start;
+  let nextIndex = points.length - 1;
+  while (nextIndex > start) {
+    const prev = points[nextIndex - 1];
+    const next = points[nextIndex];
+    if (breaksTrail(prev, next, false)) return nextIndex;
+    nextIndex -= 1;
+  }
+  return start;
+}
+
+function breaksTrail(
+  prev: TrailPoint,
+  next: TrailPoint,
+  connectsTimeGaps: boolean,
+): boolean {
+  return (
+    (!connectsTimeGaps && next.ts - prev.ts > TRAIL_BREAK_GAP_MS) ||
+    (prev.segment != null &&
+      next.segment != null &&
+      next.segment !== prev.segment)
+  );
+}
+
+export interface TrailDotSample {
+  point: TrailPoint;
+  center: { x: number; y: number };
+}
+
+export function selectedTrailDotSamples(
+  points: TrailPoint[] | undefined,
+  start = 0,
+  minMercatorDistance = TRAIL_DOT_DEFAULT_MERCATOR_DISTANCE,
+): TrailDotSample[] {
+  if (!points || points.length === 0) return [];
+  const samples: TrailDotSample[] = [];
+  let previousCenter: { x: number; y: number } | null = null;
+  let distanceSinceDot = Infinity;
+  let lastDotIndex = -1;
+  for (let i = start; i < points.length; i += 1) {
+    const center = lngLatToMercator(points[i].lon, points[i].lat);
+    if (previousCenter) {
+      distanceSinceDot += mercatorDistance(center, previousCenter);
+    }
+    if (
+      i !== start &&
+      i !== points.length - 1 &&
+      distanceSinceDot < minMercatorDistance
+    ) {
+      previousCenter = center;
+      continue;
+    }
+    samples.push({ point: points[i], center });
+    distanceSinceDot = 0;
+    previousCenter = center;
+    lastDotIndex = i;
+  }
+  if (lastDotIndex !== points.length - 1) {
+    samples.push({
+      point: points[points.length - 1],
+      center: lngLatToMercator(
+        points[points.length - 1].lon,
+        points[points.length - 1].lat,
+      ),
+    });
+  }
+  return samples;
+}
+
+export function selectedTrailDotSpacingForZoom(zoom: number): number {
+  if (!Number.isFinite(zoom)) return TRAIL_DOT_DEFAULT_MERCATOR_DISTANCE;
+  return (
+    TRAIL_DOT_MIN_SCREEN_DISTANCE_PX / (WEB_MERCATOR_TILE_SIZE_PX * 2 ** zoom)
+  );
+}
+
+function appendTrailDotVertices(
+  floats: number[],
+  points: TrailPoint[],
+  start: number,
+  hoveredTrailDotTs: number | null,
+  minMercatorDistance: number,
+): void {
+  for (const { point, center } of selectedTrailDotSamples(
+    points,
+    start,
+    minMercatorDistance,
+  )) {
+    appendTrailDot(floats, point, center, point.ts === hoveredTrailDotTs);
+  }
+}
+
+function mercatorDistance(
+  a: { x: number; y: number },
+  b: { x: number; y: number },
+): number {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function appendTrailDot(
+  floats: number[],
+  point: TrailPoint,
+  center = lngLatToMercator(point.lon, point.lat),
+  highlighted = false,
+): void {
+  const color = highlighted
+    ? TRAIL_DOT_HOVER_COLOR
+    : rgbaFromHex(altTrailColor(point.alt, point.ground));
+  const r = TRAIL_DOT_RADIUS_SEL;
+  appendTrailDotVertex(floats, center, -1, -1, r, color);
+  appendTrailDotVertex(floats, center, 1, -1, r, color);
+  appendTrailDotVertex(floats, center, -1, 1, r, color);
+  appendTrailDotVertex(floats, center, -1, 1, r, color);
+  appendTrailDotVertex(floats, center, 1, -1, r, color);
+  appendTrailDotVertex(floats, center, 1, 1, r, color);
+}
+
+function appendTrailDotVertex(
+  floats: number[],
+  center: { x: number; y: number },
+  x: number,
+  y: number,
+  radius: number,
+  color: { r: number; g: number; b: number },
+): void {
+  appendTrailVertex(
+    floats,
+    center,
+    { x, y },
+    2,
+    x * radius,
+    y * radius,
+    color,
+    TRAIL_DOT_OPACITY_SEL,
+  );
 }
 
 function appendSegmentQuad(

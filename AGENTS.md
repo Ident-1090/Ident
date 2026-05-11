@@ -32,6 +32,9 @@ Use placeholders such as `receiver.local`, `YOUR_LAT`, `YOUR_LON`, and
 
 - Keep changes focused.
 - Add tests for behavior changes.
+- Weigh per-frame and render-path cost. Prefer identity-stable selector
+  outputs, avoid hot-loop allocations, and skip imperative updates (`setData`,
+  GPU uploads) when inputs are unchanged.
 - Update docs when configuration, install shape, privacy behavior, or network
   access changes.
 - Do not choose or change the project license without maintainer approval.

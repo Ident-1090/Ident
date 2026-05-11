@@ -1,7 +1,7 @@
 import type { StyleSpecification } from "../maplibre";
 import { cartoDarkStyle } from "./cartoDark";
 import { cartoPositronStyle } from "./cartoPositron";
-import { esriSatStyle } from "./esriSat";
+import { esriSatDayStyle, esriSatNightStyle } from "./esriSat";
 import { esriTerrainDayStyle, esriTerrainNightStyle } from "./esriTerrain";
 import { identDayStyle } from "./identDay";
 import { identNightStyle } from "./identNight";
@@ -42,7 +42,7 @@ export const BASEMAPS: Record<BasemapId, BasemapDef> = {
     tooltip: "Satellite map",
     isDark: true,
     group: "primary",
-    style: esriSatStyle,
+    style: esriSatDayStyle,
   },
   esriTerrain: {
     id: "esriTerrain",
@@ -83,6 +83,8 @@ export function resolveBasemapStyle(
   themeIsDark: boolean,
 ): string | StyleSpecification {
   if (id === "ident") return themeIsDark ? identNightStyle : identDayStyle;
+  if (id === "esriSat")
+    return themeIsDark ? esriSatNightStyle : esriSatDayStyle;
   if (id === "esriTerrain")
     return themeIsDark ? esriTerrainNightStyle : esriTerrainDayStyle;
   return BASEMAPS[id].style;
@@ -91,7 +93,8 @@ export function resolveBasemapStyle(
 export {
   cartoDarkStyle,
   cartoPositronStyle,
-  esriSatStyle,
+  esriSatDayStyle,
+  esriSatNightStyle,
   esriTerrainDayStyle,
   esriTerrainNightStyle,
   identDayStyle,

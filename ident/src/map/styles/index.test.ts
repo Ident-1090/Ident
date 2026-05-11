@@ -27,6 +27,43 @@ describe("BASEMAPS registry", () => {
     );
   });
 
+  it("resolves satellite imagery to distinct muted styles per theme", () => {
+    const dayRaster = findLayer(
+      resolveBasemapStyle("esriSat", false),
+      "esri-sat",
+    );
+    const nightRaster = findLayer(
+      resolveBasemapStyle("esriSat", true),
+      "esri-sat-dark",
+    );
+
+    expect(dayRaster?.paint?.["raster-saturation"]).toBeLessThan(0);
+    expect(dayRaster?.paint?.["raster-brightness-max"]).toBeLessThan(1);
+    expect(nightRaster?.paint?.["raster-saturation"]).toBeLessThanOrEqual(
+      dayRaster?.paint?.["raster-saturation"] as number,
+    );
+    expect(nightRaster?.paint?.["raster-brightness-max"]).toBeLessThan(
+      dayRaster?.paint?.["raster-brightness-max"] as number,
+    );
+  });
+
+  it("keeps terrain imagery muted in both themes", () => {
+    const dayRaster = findLayer(
+      resolveBasemapStyle("esriTerrain", false),
+      "esri-topo",
+    );
+    const nightRaster = findLayer(
+      resolveBasemapStyle("esriTerrain", true),
+      "esri-topo-dark",
+    );
+
+    expect(dayRaster?.paint?.["raster-saturation"]).toBe(-0.75);
+    expect(dayRaster?.paint?.["raster-brightness-max"]).toBe(0.76);
+    expect(nightRaster?.paint?.["raster-brightness-max"]).toBeLessThan(
+      dayRaster?.paint?.["raster-brightness-max"] as number,
+    );
+  });
+
   it("uses local Ident styles so day labels can be tuned deterministically", () => {
     expect(typeof resolveBasemapStyle("ident", false)).not.toBe("string");
     expect(typeof resolveBasemapStyle("ident", true)).not.toBe("string");
