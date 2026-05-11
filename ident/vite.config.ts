@@ -13,6 +13,7 @@ function ignoreDevWatchPath(
   if (filePath.endsWith(".md")) return true;
   const rel = relative(process.cwd(), filePath);
   if (rel === "") return false;
+  if (/(^|[\\/]).+\.test\.[cm]?[jt]sx?$/.test(rel)) return true;
   return rel !== "src" && !rel.startsWith(`src${sep}`);
 }
 

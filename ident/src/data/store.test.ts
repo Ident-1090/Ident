@@ -38,6 +38,7 @@ function resetStore() {
     },
     settings: {
       trailFadeSec: 180,
+      showTrailTooltip: true,
       unitMode: "aviation",
       unitOverrides: {
         altitude: "ft",

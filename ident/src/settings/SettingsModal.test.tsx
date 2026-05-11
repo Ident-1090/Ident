@@ -18,6 +18,7 @@ describe("SettingsModal", () => {
     useIdentStore.setState({
       settings: {
         trailFadeSec: 180,
+        showTrailTooltip: true,
         unitMode: "aviation",
         unitOverrides: {
           altitude: "ft",
@@ -139,6 +140,28 @@ describe("SettingsModal", () => {
     act(() => saveButton?.click());
 
     expect(useIdentStore.getState().settings.clock).toBe("local");
+  });
+
+  it("can hide selected trail point tooltips", () => {
+    act(() => {
+      root.render(<SettingsModal onClose={vi.fn()} />);
+    });
+
+    const hideButton = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent?.trim() === "Hide");
+    expect(hideButton).toBeTruthy();
+
+    act(() => hideButton?.click());
+
+    const saveButton = Array.from(
+      container.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent?.trim() === "Save");
+    expect(saveButton).toBeTruthy();
+
+    act(() => saveButton?.click());
+
+    expect(useIdentStore.getState().settings.showTrailTooltip).toBe(false);
   });
 
   it("shows GitHub release update details", () => {

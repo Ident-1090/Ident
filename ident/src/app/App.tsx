@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useState } from "react";
 import { startFeed } from "../data/feed";
+import { usePreferencesStore } from "../data/preferences";
 import { selectDisplayAircraftMap, useIdentStore } from "../data/store";
 import { startUpdateStatusPolling } from "../data/update";
 import { logMapTiming } from "../debug/mapTiming";
@@ -31,6 +32,10 @@ function AppContent() {
   const [omniboxOpen, setOmniboxOpen] = useState(false);
   useAppliedTheme();
   const isPhone = useMediaQuery(PHONE_QUERY);
+  const railCollapsed = usePreferencesStore((s) => s.layout.railCollapsed);
+  const setLayoutPreferences = usePreferencesStore(
+    (s) => s.setLayoutPreferences,
+  );
   const aircraft = useIdentStore(selectDisplayAircraftMap);
   const selected = useIdentStore((s) => s.selectedHex);
   const select = useIdentStore((s) => s.select);
@@ -82,7 +87,9 @@ function AppContent() {
     "grid-cols-[1fr] " +
     "md:[grid-template-areas:'topbar_topbar''left_replay''left_canvas''status_status'] " +
     "[grid-template-areas:'canvas']";
-  const desktopCols = "md:grid-cols-[340px_minmax(0,1fr)]";
+  const desktopCols = railCollapsed
+    ? "md:grid-cols-[max-content_minmax(0,1fr)]"
+    : "md:grid-cols-[340px_minmax(0,1fr)]";
 
   return (
     <div className={`${base} ${desktopCols}`}>
@@ -90,7 +97,13 @@ function AppContent() {
         <Topbar onOpenSettings={() => setSettingsOpen(true)} />
       </div>
       <div className="hidden md:contents">
-        <Rail onOpenOmnibox={() => setOmniboxOpen(true)} />
+        <Rail
+          onOpenOmnibox={() => setOmniboxOpen(true)}
+          collapsed={railCollapsed}
+          onCollapsedChange={(collapsed) =>
+            setLayoutPreferences({ railCollapsed: collapsed })
+          }
+        />
       </div>
       <ReplayScrubber />
       <MapEngine>

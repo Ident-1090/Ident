@@ -156,6 +156,7 @@ export interface CameraSlice {
 
 export interface SettingsSlice {
   trailFadeSec: number;
+  showTrailTooltip: boolean;
   unitMode: UnitMode;
   unitOverrides: UnitOverrides;
   clock: ClockMode;
@@ -1061,6 +1062,7 @@ export const useIdentStore = create<IdentState>((set) => ({
       );
       const settings: SettingsSlice = {
         trailFadeSec,
+        showTrailTooltip: next.showTrailTooltip ?? st.settings.showTrailTooltip,
         unitMode: next.unitMode ?? st.settings.unitMode,
         unitOverrides: normalizeUnitOverrides(
           next.unitOverrides,

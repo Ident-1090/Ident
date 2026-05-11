@@ -40,10 +40,15 @@ export interface MapPreferences {
 
 export interface SettingsPreferences {
   trailFadeSec: number;
+  showTrailTooltip: boolean;
   unitMode: UnitMode;
   unitOverrides: UnitOverrides;
   clock: ClockMode;
   theme: ThemeMode;
+}
+
+export interface LayoutPreferences {
+  railCollapsed: boolean;
 }
 
 export interface ReplayWindowPreferences {
@@ -68,12 +73,14 @@ export interface ReleaseUpdateDismissal {
 interface PreferencesState {
   map: MapPreferences;
   settings: SettingsPreferences;
+  layout: LayoutPreferences;
   replayWindow: ReplayWindowPreferences;
   replayRangeRecents: ReplayRangeRecent[];
   inspectorTab: InspectorTab;
   updateDismissal: ReleaseUpdateDismissal | null;
   setMapPreferences: (next: Partial<MapPreferences>) => void;
   setSettingsPreferences: (next: SettingsPreferences) => void;
+  setLayoutPreferences: (next: Partial<LayoutPreferences>) => void;
   setReplayWindow: (next: ReplayWindowPreferences) => void;
   setReplayRangeRecents: (next: ReplayRangeRecent[]) => void;
   setInspectorTab: (tab: InspectorTab) => void;
@@ -108,10 +115,15 @@ export const DEFAULT_MAP_PREFERENCES: MapPreferences = {
 
 export const DEFAULT_SETTINGS_PREFERENCES: SettingsPreferences = {
   trailFadeSec: 180,
+  showTrailTooltip: true,
   unitMode: "aviation",
   unitOverrides: presetUnitOverrides("aviation"),
   clock: "utc",
   theme: "system",
+};
+
+export const DEFAULT_LAYOUT_PREFERENCES: LayoutPreferences = {
+  railCollapsed: false,
 };
 
 export const DEFAULT_REPLAY_WINDOW_PREFERENCES: ReplayWindowPreferences = {
@@ -169,6 +181,7 @@ export const usePreferencesStore = create<PreferencesState>()(
     (set) => ({
       map: DEFAULT_MAP_PREFERENCES,
       settings: DEFAULT_SETTINGS_PREFERENCES,
+      layout: DEFAULT_LAYOUT_PREFERENCES,
       replayWindow: DEFAULT_REPLAY_WINDOW_PREFERENCES,
       replayRangeRecents: DEFAULT_REPLAY_RANGE_RECENTS,
       inspectorTab: "telemetry",
@@ -176,6 +189,8 @@ export const usePreferencesStore = create<PreferencesState>()(
       setMapPreferences: (next) =>
         set((st) => ({ map: normalizeMapPreferences(next, st.map) })),
       setSettingsPreferences: (next) => set({ settings: next }),
+      setLayoutPreferences: (next) =>
+        set((st) => ({ layout: normalizeLayoutPreferences(next, st.layout) })),
       setReplayWindow: (next) => set({ replayWindow: next }),
       setReplayRangeRecents: (next) =>
         set({ replayRangeRecents: normalizeReplayRangeRecents(next) }),
@@ -204,6 +219,7 @@ export const usePreferencesStore = create<PreferencesState>()(
       partialize: (state) => ({
         map: state.map,
         settings: state.settings,
+        layout: state.layout,
         replayWindow: state.replayWindow,
         replayRangeRecents: state.replayRangeRecents,
         inspectorTab: state.inspectorTab,
@@ -215,6 +231,7 @@ export const usePreferencesStore = create<PreferencesState>()(
             PreferencesState,
             | "map"
             | "settings"
+            | "layout"
             | "replayWindow"
             | "replayRangeRecents"
             | "inspectorTab"
@@ -228,6 +245,7 @@ export const usePreferencesStore = create<PreferencesState>()(
             saved.settings,
             current.settings,
           ),
+          layout: normalizeLayoutPreferences(saved.layout, current.layout),
           replayWindow: normalizeReplayWindowPreferences(
             saved.replayWindow,
             current.replayWindow,
@@ -252,6 +270,7 @@ export function resetPreferencesStoreForTests(): void {
   usePreferencesStore.setState({
     map: DEFAULT_MAP_PREFERENCES,
     settings: DEFAULT_SETTINGS_PREFERENCES,
+    layout: DEFAULT_LAYOUT_PREFERENCES,
     replayWindow: DEFAULT_REPLAY_WINDOW_PREFERENCES,
     replayRangeRecents: DEFAULT_REPLAY_RANGE_RECENTS,
     inspectorTab: "telemetry",
@@ -306,10 +325,26 @@ function normalizeSettingsPreferences(
       typeof raw?.trailFadeSec === "number"
         ? raw.trailFadeSec
         : defaults.trailFadeSec,
+    showTrailTooltip:
+      typeof raw?.showTrailTooltip === "boolean"
+        ? raw.showTrailTooltip
+        : defaults.showTrailTooltip,
     unitMode,
     unitOverrides: normalizeUnitOverrides(raw?.unitOverrides, presetFallback),
     clock: isClockMode(raw?.clock) ? raw.clock : defaults.clock,
     theme: isThemeMode(raw?.theme) ? raw.theme : defaults.theme,
+  };
+}
+
+function normalizeLayoutPreferences(
+  raw: Partial<LayoutPreferences> | undefined,
+  defaults: LayoutPreferences,
+): LayoutPreferences {
+  return {
+    railCollapsed:
+      typeof raw?.railCollapsed === "boolean"
+        ? raw.railCollapsed
+        : defaults.railCollapsed,
   };
 }
 

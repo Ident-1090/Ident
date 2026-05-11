@@ -6,6 +6,10 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  resetPreferencesStoreForTests,
+  usePreferencesStore,
+} from "../data/preferences";
 import { useIdentStore } from "../data/store";
 import { App } from "./App";
 
@@ -20,7 +24,24 @@ vi.mock("../data/update", () => ({
   startUpdateStatusPolling: vi.fn(() => () => {}),
 }));
 
-vi.mock("../rails/Rail", () => ({ Rail: () => <div data-testid="rail" /> }));
+vi.mock("../rails/Rail", () => ({
+  Rail: ({
+    collapsed,
+    onCollapsedChange,
+  }: {
+    collapsed: boolean;
+    onCollapsedChange: (collapsed: boolean) => void;
+  }) => (
+    <button
+      type="button"
+      data-testid="rail"
+      data-collapsed={collapsed ? "true" : "false"}
+      onClick={() => onCollapsedChange(!collapsed)}
+    >
+      rail
+    </button>
+  ),
+}));
 vi.mock("../map/MapOverlay", () => ({
   MapOverlay: () => {
     if (mapOverlayMockState.shouldThrow) throw new Error("Map overlay failed");
@@ -65,6 +86,7 @@ describe("App layout", () => {
     root = createRoot(container);
     mapOverlayMockState.shouldThrow = false;
     mediaQueryMockState.matches = false;
+    resetPreferencesStoreForTests();
   });
 
   afterEach(() => {
@@ -76,6 +98,7 @@ describe("App layout", () => {
       selectedHex: null,
       settings: {
         ...useIdentStore.getState().settings,
+        showTrailTooltip: true,
         theme: "system",
       },
     });
@@ -116,6 +139,49 @@ describe("App layout", () => {
       container.querySelector('[data-testid="floating-inspector"]'),
     ).toBeTruthy();
     expect(container.querySelector('[data-testid="inspector"]')).toBeTruthy();
+  });
+
+  it("collapses the desktop rail without hiding the rail affordance", () => {
+    act(() => {
+      root.render(<App />);
+    });
+
+    expect(container.firstElementChild?.className).toContain(
+      "md:grid-cols-[340px_minmax(0,1fr)]",
+    );
+    const rail = container.querySelector<HTMLButtonElement>(
+      '[data-testid="rail"]',
+    );
+    expect(rail?.dataset.collapsed).toBe("false");
+
+    act(() => rail?.click());
+
+    expect(container.firstElementChild?.className).toContain(
+      "md:grid-cols-[max-content_minmax(0,1fr)]",
+    );
+    expect(
+      container.querySelector<HTMLButtonElement>('[data-testid="rail"]')
+        ?.dataset.collapsed,
+    ).toBe("true");
+    expect(usePreferencesStore.getState().layout.railCollapsed).toBe(true);
+  });
+
+  it("restores the collapsed desktop rail preference", () => {
+    usePreferencesStore
+      .getState()
+      .setLayoutPreferences({ railCollapsed: true });
+
+    act(() => {
+      root.render(<App />);
+    });
+
+    expect(container.firstElementChild?.className).toContain(
+      "md:grid-cols-[max-content_minmax(0,1fr)]",
+    );
+    expect(
+      container.querySelector<HTMLButtonElement>('[data-testid="rail"]')
+        ?.dataset.collapsed,
+    ).toBe("true");
   });
 
   it("dismisses the floating inspector on Escape", () => {

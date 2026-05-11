@@ -75,6 +75,7 @@ function resetStore() {
     replay: useIdentStore.getInitialState().replay,
     settings: {
       trailFadeSec: 180,
+      showTrailTooltip: true,
       unitMode: "aviation",
       unitOverrides: {
         altitude: "ft",

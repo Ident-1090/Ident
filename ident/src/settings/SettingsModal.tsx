@@ -196,6 +196,18 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                 ]}
               />
             </ControlRow>
+            <ControlRow label="Trail tooltip">
+              <ChoiceGroup<boolean>
+                value={form.showTrailTooltip}
+                onChange={(showTrailTooltip) =>
+                  setForm((prev) => ({ ...prev, showTrailTooltip }))
+                }
+                options={[
+                  { value: true, label: "Show" },
+                  { value: false, label: "Hide" },
+                ]}
+              />
+            </ControlRow>
             <ControlRow label="Trails">
               <ChoiceGroup<number>
                 value={form.trailFadeSec}
@@ -385,7 +397,7 @@ function ControlStack({
   );
 }
 
-function ChoiceGroup<T extends string | number>({
+function ChoiceGroup<T extends string | number | boolean>({
   value,
   onChange,
   options,

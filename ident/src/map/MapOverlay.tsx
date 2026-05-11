@@ -15,11 +15,22 @@ import {
   selectDisplayTrailsByHex,
   useIdentStore,
 } from "../data/store";
-import type { Aircraft, TrailPoint } from "../data/types";
+import type {
+  Aircraft,
+  AltitudeUnit,
+  ClockMode,
+  HorizontalSpeedUnit,
+  TrailPoint,
+} from "../data/types";
 import { labelFieldsKey, logMapTiming } from "../debug/mapTiming";
 import { MobileLogoHud } from "../mobile/MobileShell";
 import { queryTextFromOmnibox } from "../omnibox/grammar";
-import { resolveUnitOverrides } from "../settings/format";
+import {
+  airSpeedLabelFromKnots,
+  altitudeLabelFromFeet,
+  formatClock,
+  resolveUnitOverrides,
+} from "../settings/format";
 import { FeedStatusCell } from "../statusbar/StatusBar";
 import { Tooltip } from "../ui/Tooltip";
 import { AIRCRAFT_GLYPH_COLORS_BY_TONE, type AircraftGlyphColors } from "./alt";
@@ -59,7 +70,7 @@ const TRAIL_DOT_HIT_ABOVE_PX = 6;
 const TRAIL_DOT_HIT_BELOW_PX = 18;
 
 interface TrailDotTarget {
-  ts: number;
+  point: TrailPoint;
   screen: { x: number; y: number };
 }
 
@@ -93,6 +104,7 @@ export function MapOverlay() {
   const searchQuery = useIdentStore((s) => s.search.query);
   const routeByCallsign = useIdentStore((s) => s.routeByCallsign);
   const settings = useIdentStore((s) => s.settings);
+  const showTrailTooltip = settings.showTrailTooltip;
   const units = useMemo(
     () => resolveUnitOverrides(settings.unitMode, settings.unitOverrides),
     [settings.unitMode, settings.unitOverrides],
@@ -113,9 +125,9 @@ export function MapOverlay() {
   const lastRecenterRequestId = useRef(recenterRequestId);
   const didInitialTrafficRecenter = useRef(false);
   const [viewTick, setViewTick] = useState(0);
-  const [hoveredTrailDotTs, setHoveredTrailDotTs] = useState<number | null>(
-    null,
-  );
+  const [hoveredTrailDotTarget, setHoveredTrailDotTarget] =
+    useState<TrailDotTarget | null>(null);
+  const hoveredTrailDotTs = hoveredTrailDotTarget?.point.ts ?? null;
   const hasSelectedAircraft = selectedHex != null && aircraft.has(selectedHex);
   const selectedAircraft = selectedHex ? aircraft.get(selectedHex) : undefined;
   const selectedMapAircraft = useMemo(
@@ -353,7 +365,7 @@ export function MapOverlay() {
       0,
       selectedTrailDotMinMercatorDistance,
     ).map((sample) => ({
-      ts: sample.point.ts,
+      point: sample.point,
       screen: map.project({ lng: sample.point.lon, lat: sample.point.lat }),
     }));
   }, [
@@ -493,10 +505,10 @@ export function MapOverlay() {
     };
     const pickTrailDot = (
       point: { x: number; y: number } | undefined,
-    ): number | null => {
+    ): TrailDotTarget | null => {
       const targets = selectedTrailDotTargetsRef.current;
       if (!point || targets.length === 0) return null;
-      let closestTs: number | null = null;
+      let closest: TrailDotTarget | null = null;
       let closestScore = Infinity;
       for (const target of targets) {
         const dx = Math.abs(point.x - target.screen.x);
@@ -511,26 +523,26 @@ export function MapOverlay() {
         const score = Math.hypot(dx, dy > 0 ? dy * 0.5 : dy);
         if (score >= closestScore) continue;
         closestScore = score;
-        closestTs = target.ts;
+        closest = target;
       }
-      return closestTs;
+      return closest;
     };
     const onMouseMove = (evt?: { point?: { x: number; y: number } }): void => {
       pointerRef.current = evt?.point ?? null;
       const hex = pick(evt?.point);
       if (hex !== undefined) setHoveredHex(hex);
-      setHoveredTrailDotTs(pickTrailDot(evt?.point));
+      setHoveredTrailDotTarget(pickTrailDot(evt?.point));
     };
     const onMouseOut = (): void => {
       pointerRef.current = null;
       setHoveredHex(null);
-      setHoveredTrailDotTs(null);
+      setHoveredTrailDotTarget(null);
     };
     const onMove = (): void => {
       if (!pointerRef.current) return;
       const hex = pick(pointerRef.current);
       if (hex !== undefined) setHoveredHex(hex);
-      setHoveredTrailDotTs(pickTrailDot(pointerRef.current));
+      setHoveredTrailDotTarget(pickTrailDot(pointerRef.current));
     };
     map.on("click", onClick);
     map.on("mousemove", onMouseMove);
@@ -661,6 +673,14 @@ export function MapOverlay() {
         </div>
         <LayersHUD />
       </div>
+      {showTrailTooltip && hoveredTrailDotTarget && (
+        <TrailPointTooltip
+          target={hoveredTrailDotTarget}
+          altitudeUnit={units.altitude}
+          speedUnit={units.horizontalSpeed}
+          clockMode={settings.clock}
+        />
+      )}
       <div className="map-scale-controls absolute flex flex-col items-start gap-2 pointer-events-none [&>*]:pointer-events-auto">
         <ScaleHUD pxPerNm={pxPerNm} distanceUnit={units.distance} />
         <div className="md:hidden">
@@ -781,6 +801,53 @@ function RecenterButton({
           <Focus size={14} strokeWidth={1.75} aria-hidden="true" />
         </button>
       </Tooltip>
+    </div>
+  );
+}
+
+function TrailPointTooltip({
+  target,
+  altitudeUnit,
+  speedUnit,
+  clockMode,
+}: {
+  target: TrailDotTarget;
+  altitudeUnit: AltitudeUnit;
+  speedUnit: HorizontalSpeedUnit;
+  clockMode: ClockMode;
+}) {
+  const point = target.point;
+  const time = formatClock(new Date(point.ts), clockMode);
+  const altitude =
+    point.alt == null
+      ? point.ground
+        ? "GND"
+        : "-"
+      : altitudeLabelFromFeet(point.alt, altitudeUnit);
+  const speed =
+    typeof point.gs === "number"
+      ? airSpeedLabelFromKnots(point.gs, speedUnit)
+      : "-";
+
+  return (
+    <div
+      role="tooltip"
+      data-testid="trail-point-tooltip"
+      className="pointer-events-none absolute z-30 min-w-38 rounded-sm border border-(--color-line-strong) bg-paper px-2.5 py-1.5 font-mono text-[11px] text-(--color-ink) shadow-md"
+      style={{
+        left: target.screen.x,
+        top: target.screen.y,
+        transform: "translate(10px, calc(-100% - 10px))",
+      }}
+    >
+      <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
+        <span className="text-ink-faint">Time</span>
+        <span>{time.value}</span>
+        <span className="text-ink-faint">GS</span>
+        <span>{speed}</span>
+        <span className="text-ink-faint">Alt</span>
+        <span>{altitude}</span>
+      </div>
     </div>
   );
 }
