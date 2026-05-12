@@ -26,7 +26,7 @@ import {
   LYR_STATION_RING_OUTER,
   MAP_LABEL_FONT_FAMILY,
 } from "./mapOverlayLayers";
-import { resolveBasemapTone, resolveThemeIsDark } from "./mapTone";
+import { resolveBasemapTone, useThemeIsDark } from "./mapTone";
 import { type BasemapId, resolveBasemapStyle } from "./styles";
 import { TRAFFIC_TRAILS_LAYER_ID } from "./trafficTrailsLayer";
 
@@ -193,7 +193,7 @@ export function MapEngine({ children }: MapEngineProps): ReactElement {
   const storedZoom = useIdentStore((s) => s.map.zoom);
   const setMapView = useIdentStore((s) => s.setMapView);
 
-  const themeIsDark = resolveThemeIsDark(theme);
+  const themeIsDark = useThemeIsDark(theme);
   const firstPaintRef = useRef(false);
   const hasSavedInitialCenterRef = useRef(storedCenter != null);
 

@@ -98,15 +98,61 @@ function fireMapEvent(m: FakeMap, event: string): void {
   });
 }
 
+function installThemePreference(
+  initialMatches: boolean,
+): (matches: boolean) => void {
+  let matches = initialMatches;
+  const listeners = new Set<(event: MediaQueryListEvent) => void>();
+  window.matchMedia = vi.fn(
+    (query: string) =>
+      ({
+        media: query,
+        get matches() {
+          return matches;
+        },
+        onchange: null,
+        addEventListener: vi.fn(
+          (event: string, listener: (event: MediaQueryListEvent) => void) => {
+            if (event === "change") listeners.add(listener);
+          },
+        ),
+        removeEventListener: vi.fn(
+          (event: string, listener: (event: MediaQueryListEvent) => void) => {
+            if (event === "change") listeners.delete(listener);
+          },
+        ),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }) as MediaQueryList,
+  );
+  return (nextMatches: boolean) => {
+    matches = nextMatches;
+    const event = { matches, media: "(prefers-color-scheme: dark)" };
+    for (const listener of listeners) {
+      listener(event as MediaQueryListEvent);
+    }
+  };
+}
+
+function lastSetStyleName(m: FakeMap): string | undefined {
+  const style = m.setStyle.mock.calls.at(-1)?.[0];
+  return typeof style === "object" && style != null && "name" in style
+    ? String(style.name)
+    : undefined;
+}
+
 describe("MapEngine", () => {
   let container: HTMLDivElement;
   let root: Root;
   let lastMap: FakeMap | null = null;
   let ctor: ReturnType<typeof vi.fn>;
   let originalResizeObserver: typeof ResizeObserver | undefined;
+  let originalMatchMedia: typeof window.matchMedia | undefined;
 
   beforeEach(() => {
     originalResizeObserver = globalThis.ResizeObserver;
+    originalMatchMedia = window.matchMedia;
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
@@ -156,6 +202,11 @@ describe("MapEngine", () => {
     } else {
       delete (globalThis as unknown as { ResizeObserver?: unknown })
         .ResizeObserver;
+    }
+    if (originalMatchMedia) {
+      window.matchMedia = originalMatchMedia;
+    } else {
+      delete (window as unknown as { matchMedia?: unknown }).matchMedia;
     }
   });
 
@@ -254,6 +305,27 @@ describe("MapEngine", () => {
     });
 
     expect(m.setStyle.mock.calls.length).toBeGreaterThan(before);
+  });
+
+  it("updates the basemap style when system theme preference changes", () => {
+    const setSystemDark = installThemePreference(false);
+    useIdentStore.setState((st) => ({
+      ...st,
+      settings: { ...st.settings, theme: "system" },
+    }));
+
+    act(() => {
+      root.render(<MapEngine />);
+    });
+    const m = lastMap!;
+    const before = m.setStyle.mock.calls.length;
+
+    act(() => {
+      setSystemDark(true);
+    });
+
+    expect(m.setStyle.mock.calls.length).toBeGreaterThan(before);
+    expect(lastSetStyleName(m)).toBe("ident-night");
   });
 
   it("writes the current camera back to the store on moveend", () => {
