@@ -678,6 +678,7 @@ describe("startFeed route envelopes", () => {
       diagnostics: [
         {
           severity: "warning",
+          seenAtEpochMs: 0,
           channel: "stale",
           code: "stale.code",
           message: "should be replaced",
@@ -692,6 +693,7 @@ describe("startFeed route envelopes", () => {
           diagnostics: [
             {
               severity: "error",
+              seenAtEpochMs: 0,
               channel: "stats",
               code: "stats.adapter.malformed_file",
               message: "stats.json could not be parsed",

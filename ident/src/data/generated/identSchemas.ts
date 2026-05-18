@@ -131,6 +131,7 @@ export interface IdentDiagnostics {
       label: string;
       url: string;
     };
+    seenAtEpochMs: number;
   }[];
 }
 

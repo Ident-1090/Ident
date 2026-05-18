@@ -12,6 +12,7 @@ import {
   type NotificationSuppression,
   usePreferencesStore,
 } from "../data/preferences";
+import { relativeTimeAgo } from "../data/recency";
 import { useIdentStore } from "../data/store";
 import type {
   IdentBuildInfo,
@@ -659,7 +660,12 @@ function DiagnosticRow({
         {diagnostic.severity.toUpperCase()}
       </span>
       <div className="min-w-0">
-        <div className="truncate text-(--color-ink)">{diagnostic.code}</div>
+        <div className="flex items-baseline justify-between gap-2">
+          <div className="truncate text-(--color-ink)">{diagnostic.code}</div>
+          <div className="shrink-0 text-ink-faint text-xs">
+            {relativeTimeAgo(diagnostic.seenAtEpochMs)}
+          </div>
+        </div>
         <div className="truncate text-ink-faint">{diagnostic.channel}</div>
         <div className="mt-1 whitespace-normal text-ink-soft">
           {diagnostic.message}
@@ -712,8 +718,13 @@ function DiagnosticPopup({
             onClick={onOpen}
             className="min-w-0 flex-1 text-left focus-visible:outline focus-visible:outline-1 focus-visible:outline-(--color-accent)"
           >
-            <div className={diagnosticSeverityClass(diagnostic.severity)}>
-              {diagnostic.severity.toUpperCase()}
+            <div className="flex items-baseline justify-between gap-2">
+              <div className={diagnosticSeverityClass(diagnostic.severity)}>
+                {diagnostic.severity.toUpperCase()}
+              </div>
+              <div className="shrink-0 text-ink-faint text-xs">
+                {relativeTimeAgo(diagnostic.seenAtEpochMs)}
+              </div>
             </div>
             <div className="mt-1 text-(--color-ink)">{diagnostic.message}</div>
             <div className="mt-1 truncate text-ink-faint">

@@ -387,6 +387,10 @@ export interface IdentDiagnostic {
   // sense together; nesting them rules out the half-populated state where
   // a URL renders without a label or vice versa.
   action?: { label: string; url: string };
+  // Wall-clock instant the store first recorded or last refreshed this
+  // entry. Surfaced in the notification UI as a relative "X ago" so users
+  // can tell fresh issues from background noise.
+  seenAtEpochMs: number;
 }
 
 export interface IdentDiagnosticsEnvelope {

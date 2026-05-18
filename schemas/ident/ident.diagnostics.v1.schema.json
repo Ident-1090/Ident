@@ -49,13 +49,17 @@
               "url"
             ],
             "additionalProperties": false
+          },
+          "seenAtEpochMs": {
+            "type": "integer"
           }
         },
         "required": [
           "severity",
           "channel",
           "code",
-          "message"
+          "message",
+          "seenAtEpochMs"
         ],
         "additionalProperties": false
       }

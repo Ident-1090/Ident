@@ -2234,6 +2234,7 @@ describe("notification suppression persistence", () => {
 
     const hash = diagnosticIdentity({
       severity: "info",
+      seenAtEpochMs: 0,
       channel: "update",
       code: "update.release.available",
       message: "Ident v1.1.0 is available.",
@@ -2292,12 +2293,14 @@ describe("notification suppression persistence", () => {
   it("hashes only identity fields, so mutable updates keep the same key", () => {
     const a = diagnosticIdentity({
       severity: "warning",
+      seenAtEpochMs: 0,
       channel: "x",
       code: "y",
       message: "A",
     });
     const b = diagnosticIdentity({
       severity: "warning",
+      seenAtEpochMs: 0,
       channel: "x",
       code: "y",
       message: "B",

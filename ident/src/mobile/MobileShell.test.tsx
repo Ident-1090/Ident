@@ -98,6 +98,7 @@ describe("MobileShell", () => {
       diagnostics: [
         {
           severity: "warning",
+          seenAtEpochMs: 0,
           channel: "stats",
           code: "stats.dump1090fa.missing_window_duration",
           message: "stats window is missing start/end",

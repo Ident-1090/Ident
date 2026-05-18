@@ -246,12 +246,14 @@ describe("StatusBar", () => {
       diagnostics: [
         {
           severity: "warning",
+          seenAtEpochMs: 0,
           channel: "aircraft",
           code: "aircraft.adapter.invalid_bool",
           message: "aircraft alert value must be boolean or 0/1",
         },
         {
           severity: "error",
+          seenAtEpochMs: 0,
           channel: "outline",
           code: "outline.adapter.malformed_outline",
           message: "outline.json did not contain a valid polygon",
@@ -306,6 +308,7 @@ describe("StatusBar", () => {
   it("surfaces update diagnostics through the notification center with device-local suppression", () => {
     const updateDiagnostic = {
       severity: "info",
+      seenAtEpochMs: 0,
       channel: "update",
       code: "update.release.available",
       message: "Ident v1.1.0 is available.",
@@ -394,6 +397,7 @@ describe("StatusBar", () => {
   it("prunes expired snoozes while the app stays mounted", () => {
     const diagnostic = {
       severity: "warning",
+      seenAtEpochMs: 0,
       channel: "stats",
       code: "stats.dump1090fa.missing_window_duration",
       message: "stats window is missing start/end",
@@ -430,6 +434,7 @@ describe("StatusBar", () => {
   it("opens the diagnostics panel on the popup diagnostic", () => {
     const warning = {
       severity: "warning",
+      seenAtEpochMs: 0,
       channel: "stats",
       code: "stats.dump1090fa.missing_window_duration",
       message: "stats window is missing start/end",
@@ -471,6 +476,7 @@ describe("StatusBar", () => {
   it("shows suppressed diagnostics and restores notification delivery", () => {
     const ignored = {
       severity: "warning",
+      seenAtEpochMs: 0,
       channel: "stats",
       code: "stats.dump1090fa.missing_window_duration",
       message: "stats window is missing start/end",
@@ -526,6 +532,7 @@ describe("StatusBar", () => {
       diagnostics: [
         {
           severity: "warning",
+          seenAtEpochMs: 0,
           channel: "stats",
           code: "stats.dump1090fa.missing_window_duration",
           message: "stats window is missing start/end",

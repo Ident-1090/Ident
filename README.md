@@ -170,10 +170,18 @@ services:
 
 volumes:
   receiver-json:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
 ```
 
 In that layout, the decoder writes `aircraft.json` into the shared volume and
 Ident reads the same files without needing direct access to the host filesystem.
+
+The `tmpfs` driver keeps the JSON in RAM rather than on disk. Decoders rewrite
+`aircraft.json` at ~1 Hz; on a Raspberry Pi or any flash-backed host that's a
+fast path to wearing the storage out. The files are ephemeral anyway — they
+describe live receiver state, not anything that needs to survive a restart.
 
 Start it:
 

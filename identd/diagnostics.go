@@ -82,12 +82,13 @@ type diagnosticAction struct {
 // message, action) follow. scope is omitted from the wire when empty so
 // single-instance diagnostics stay clean.
 type diagnostic struct {
-	Severity diagnosticSeverity `json:"severity"`
-	Channel  string             `json:"channel"`
-	Code     string             `json:"code"`
-	Scope    string             `json:"scope,omitempty"`
-	Message  string             `json:"message"`
-	Action   *diagnosticAction  `json:"action,omitempty"`
+	Severity      diagnosticSeverity `json:"severity"`
+	Channel       string             `json:"channel"`
+	Code          string             `json:"code"`
+	Scope         string             `json:"scope,omitempty"`
+	Message       string             `json:"message"`
+	Action        *diagnosticAction  `json:"action,omitempty"`
+	SeenAtEpochMs int64              `json:"seenAtEpochMs"`
 }
 
 type diagnosticOptions struct {
@@ -392,12 +393,13 @@ func (s *DiagnosticStore) snapshotLocked() []diagnostic {
 	out := make([]diagnostic, 0, len(s.entries))
 	for _, entry := range s.entries {
 		out = append(out, diagnostic{
-			Severity: entry.severity,
-			Channel:  entry.key.channel,
-			Code:     entry.key.code,
-			Scope:    entry.key.scope,
-			Message:  entry.message,
-			Action:   cloneDiagnosticAction(entry.action),
+			Severity:      entry.severity,
+			Channel:       entry.key.channel,
+			Code:          entry.key.code,
+			Scope:         entry.key.scope,
+			Message:       entry.message,
+			Action:        cloneDiagnosticAction(entry.action),
+			SeenAtEpochMs: entry.seenAt.UnixMilli(),
 		})
 	}
 	sort.SliceStable(out, func(i, j int) bool {
