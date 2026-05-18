@@ -18,30 +18,31 @@ import { resetRouteCacheForTests } from "./route";
 
 const FAKE: Aircraft = {
   hex: "abc123",
+  idKind: "icao",
   flight: "UAL123",
-  r: "N12345",
-  t: "B738",
-  category: "A3",
-  type: "adsb_icao",
-  version: 2,
-  alt_baro: 34000,
-  alt_geom: 34100,
-  baro_rate: 128,
-  gs: 420,
-  tas: 440,
+  reg: "N12345",
+  typeDesignator: "B738",
+  cat: "A3",
+  source: "adsb_icao",
+  adsbVersion: 2,
+  altBaroFt: 34000,
+  altGeomFt: 34100,
+  baroRateFpm: 128,
+  gsKt: 420,
+  tasKt: 440,
   mach: 0.78,
-  track: 91,
-  true_heading: 89,
+  trackDeg: 91,
+  trueHeadingDeg: 89,
   squawk: "2200",
   emergency: "none",
-  nav_altitude_mcp: 36000,
+  mcpAltFt: 36000,
   nic: 8,
-  nac_p: 9,
+  nacP: 9,
   sil: 3,
-  messages: 1234,
-  seen: 0.5,
-  seen_pos: 1.2,
-  rssi: -18.4,
+  aircraftMessagesTotal: 1234,
+  seenSec: 0.5,
+  seenPosSec: 1.2,
+  rssiDbfs: -18.4,
   lat: 37.42,
   lon: -122.08,
 };
@@ -182,11 +183,11 @@ describe("Inspector", () => {
         playheadMs: 150_000,
         cache: {
           "/api/replay/blocks/120000-180000.json.zst": {
-            version: 1,
+            version: 2,
             start: 120_000,
             end: 180_000,
             step_ms: 5_000,
-            frames: [{ ts: 150_000, aircraft: [{ ...FAKE, seen: 0.5 }] }],
+            frames: [{ ts: 150_000, aircraft: [{ ...FAKE, seenSec: 0.5 }] }],
           },
         },
       },
@@ -226,16 +227,16 @@ describe("Inspector", () => {
     // "GS / TAS is static" complaint.
     act(() => {
       useIdentStore.getState().ingestAircraft({
-        now: 0,
-        aircraft: [{ ...FAKE, gs: 502, tas: 520 }],
+        observedAtEpochSec: 0,
+        aircraft: [{ ...FAKE, gsKt: 502, tasKt: 520 }],
       });
     });
     expect(gsCellValue()).toContain("502");
     // Drop to ground speed: cell flips to "—".
     act(() => {
       useIdentStore.getState().ingestAircraft({
-        now: 0,
-        aircraft: [{ ...FAKE, gs: undefined, tas: undefined }],
+        observedAtEpochSec: 0,
+        aircraft: [{ ...FAKE, gsKt: undefined, tasKt: undefined }],
       });
     });
     expect(gsCellValue()).toBe("—");
@@ -258,9 +259,9 @@ describe("Inspector", () => {
             FAKE.hex,
             {
               ...FAKE,
-              wd: 297,
-              ws: 40,
-              oat: -30,
+              windDirDeg: 297,
+              windKt: 40,
+              oatC: -30,
             },
           ],
         ]),
@@ -297,7 +298,7 @@ describe("Inspector", () => {
 
     act(() => {
       useIdentStore.setState({
-        aircraft: new Map([[FAKE.hex, { ...FAKE, seen: 3 }]]),
+        aircraft: new Map([[FAKE.hex, { ...FAKE, seenSec: 3 }]]),
       });
     });
     expect(recency()).toBe("STALE");
@@ -305,7 +306,7 @@ describe("Inspector", () => {
 
     act(() => {
       useIdentStore.setState({
-        aircraft: new Map([[FAKE.hex, { ...FAKE, seen: 31 }]]),
+        aircraft: new Map([[FAKE.hex, { ...FAKE, seenSec: 31 }]]),
       });
     });
     expect(recency()).toBe("LOST");
@@ -316,7 +317,7 @@ describe("Inspector", () => {
     // 4-sample 1 Hz buffer spans 3 s. Δ = 40 kt over 3 s → 40 × 60 / 3 =
     // 800 kt/min in the default aviation preset.
     useIdentStore.setState({
-      aircraft: new Map([[FAKE.hex, { ...FAKE, gs: 460 }]]),
+      aircraft: new Map([[FAKE.hex, { ...FAKE, gsKt: 460 }]]),
       gsTrendsByHex: { [FAKE.hex]: [420, 430, 445, 460] },
     });
     act(() => {
@@ -353,7 +354,7 @@ describe("Inspector", () => {
   it("shows selected altitude under geometric altitude", () => {
     useIdentStore.setState((state) => ({
       settings: { ...state.settings, unitMode: "metric" },
-      aircraft: new Map([[FAKE.hex, { ...FAKE, nav_altitude_mcp: 36000 }]]),
+      aircraft: new Map([[FAKE.hex, { ...FAKE, mcpAltFt: 36000 }]]),
     }));
     act(() => {
       root.render(<Inspector />);
@@ -369,7 +370,7 @@ describe("Inspector", () => {
   it("shows selected heading under track and keeps the field label when unavailable", () => {
     useIdentStore.setState({
       aircraft: new Map([
-        [FAKE.hex, { ...FAKE, true_heading: undefined, nav_heading: 122.7 }],
+        [FAKE.hex, { ...FAKE, trueHeadingDeg: undefined, navHdgDeg: 122.7 }],
       ]),
     });
     act(() => {
@@ -387,7 +388,7 @@ describe("Inspector", () => {
         aircraft: new Map([
           [
             FAKE.hex,
-            { ...FAKE, true_heading: undefined, nav_heading: undefined },
+            { ...FAKE, trueHeadingDeg: undefined, navHdgDeg: undefined },
           ],
         ]),
       });
@@ -463,7 +464,7 @@ describe("Inspector", () => {
       aircraft: new Map([
         [
           FAKE.hex,
-          { ...FAKE, true_heading: undefined, nav_heading: undefined },
+          { ...FAKE, trueHeadingDeg: undefined, navHdgDeg: undefined },
         ],
       ]),
     });
@@ -480,7 +481,7 @@ describe("Inspector", () => {
 
   it("adds selected-field tooltips to compact SEL hints", () => {
     useIdentStore.setState({
-      aircraft: new Map([[FAKE.hex, { ...FAKE, nav_heading: 89 }]]),
+      aircraft: new Map([[FAKE.hex, { ...FAKE, navHdgDeg: 89 }]]),
     });
     act(() => {
       root.render(<Inspector />);
@@ -501,7 +502,7 @@ describe("Inspector", () => {
     vi.useFakeTimers();
     vi.setSystemTime(now);
     useIdentStore.setState({
-      aircraft: new Map([[FAKE.hex, { ...FAKE, nav_altitude_mcp: 36000 }]]),
+      aircraft: new Map([[FAKE.hex, { ...FAKE, mcpAltFt: 36000 }]]),
       trailsByHex: {
         [FAKE.hex]: [
           {
@@ -548,22 +549,22 @@ describe("Inspector", () => {
         playheadMs: 150_000,
         cache: {
           "/api/replay/blocks/120000-180000.json.zst": {
-            version: 1,
+            version: 2,
             start: 120_000,
             end: 180_000,
             step_ms: 5_000,
             frames: [
               {
                 ts: 140_000,
-                aircraft: [{ ...FAKE, alt_baro: 34_000 }],
+                aircraft: [{ ...FAKE, altBaroFt: 34_000 }],
               },
               {
                 ts: 145_000,
-                aircraft: [{ ...FAKE, alt_baro: 34_200 }],
+                aircraft: [{ ...FAKE, altBaroFt: 34_200 }],
               },
               {
                 ts: 150_000,
-                aircraft: [{ ...FAKE, alt_baro: 34_500 }],
+                aircraft: [{ ...FAKE, altBaroFt: 34_500 }],
               },
             ],
           },
@@ -581,7 +582,7 @@ describe("Inspector", () => {
   it("falls back to hex in the header when registration is missing", () => {
     act(() => {
       useIdentStore.setState({
-        aircraft: new Map([[FAKE.hex, { ...FAKE, r: undefined }]]),
+        aircraft: new Map([[FAKE.hex, { ...FAKE, reg: undefined }]]),
       });
       root.render(<Inspector />);
     });
@@ -637,7 +638,9 @@ describe("Inspector", () => {
     act(() => {
       useIdentStore.setState({
         inspector: { tab: "signal" },
-        aircraft: new Map([[FAKE.hex, { ...FAKE, messages: 1234, seen: 0.5 }]]),
+        aircraft: new Map([
+          [FAKE.hex, { ...FAKE, aircraftMessagesTotal: 1234, seenSec: 0.5 }],
+        ]),
       });
       root.render(<Inspector />);
     });

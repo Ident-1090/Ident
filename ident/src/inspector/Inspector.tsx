@@ -29,6 +29,7 @@ import { TelCell, type TelTone } from "../ui/TelCell";
 import { Tooltip } from "../ui/Tooltip";
 import { formatAgeSecondsAgo } from "./age";
 import { BADGE_PILL_CLASS, Badges } from "./Badges";
+import { padHeading } from "./heading";
 import { PhotoCard } from "./PhotoCard";
 import { AltitudeSparkline, altitudeSparklineWindow } from "./Sparkline";
 import { QualityTab } from "./tabs/QualityTab";
@@ -84,7 +85,7 @@ export function Inspector({ variant = "docked" }: InspectorProps) {
         replaying={replaying}
         onClose={() => select(null)}
       />
-      <PhotoCard hex={ac.hex} reg={ac.r} type={ac.t} />
+      <PhotoCard hex={ac.hex} reg={ac.reg} type={ac.typeDesignator} />
       <TelemetryGrid aircraft={ac} />
       <TrendSection
         aircraft={ac}
@@ -120,14 +121,10 @@ function Header({
   onClose: () => void;
 }) {
   const callsign = aircraft.flight?.trim() || aircraft.hex.toUpperCase();
-  const registration = aircraft.r?.trim() || undefined;
+  const registration = aircraft.reg?.trim() || undefined;
   const headerMeta = registration ?? aircraft.hex.toUpperCase();
-  const typeSeg = aircraft.desc || aircraft.t || "";
-  const sub = [
-    typeSeg,
-    registration ? null : aircraft.r?.trim(),
-    aircraft.ownOp,
-  ]
+  const typeSeg = aircraft.desc || aircraft.typeDesignator || "";
+  const sub = [typeSeg, registration ? null : aircraft.reg?.trim(), aircraft.op]
     .filter(Boolean)
     .join(" · ")
     .toUpperCase();
@@ -193,7 +190,7 @@ function aircraftRecency(
   tooltip: string;
   className: string;
 } {
-  const seenSec = aircraft.seen;
+  const seenSec = aircraft.seenSec;
   const tier = aircraftRecencyTier(aircraft, replaying);
   if (tier === "replay") {
     return {
@@ -243,13 +240,13 @@ function TelemetryGrid({ aircraft }: { aircraft: Aircraft }) {
   const units = resolveUnitOverrides(settings.unitMode, settings.unitOverrides);
   const callsign = aircraft.flight?.trim().toUpperCase() ?? "";
   const route = callsign ? (routeByCallsign[callsign] ?? null) : null;
-  const ground = aircraft.alt_baro === "ground";
+  const ground = aircraft.onGround;
   const altBaro = ground
     ? "GND"
-    : typeof aircraft.alt_baro === "number"
-      ? altitudeFromFeet(aircraft.alt_baro, units.altitude).value
+    : typeof aircraft.altBaroFt === "number"
+      ? altitudeFromFeet(aircraft.altBaroFt, units.altitude).value
       : "—";
-  const baroRate = aircraft.baro_rate ?? 0;
+  const baroRate = aircraft.baroRateFpm ?? 0;
   const baroRateFmt = verticalRateFromFpm(baroRate, units.verticalSpeed);
   let baroDeltaText = "— level";
   let baroTone: TelTone = "muted";
@@ -262,12 +259,12 @@ function TelemetryGrid({ aircraft }: { aircraft: Aircraft }) {
   }
 
   const gs =
-    aircraft.gs != null
-      ? airSpeedFromKnots(aircraft.gs, units.horizontalSpeed)
+    aircraft.gsKt != null
+      ? airSpeedFromKnots(aircraft.gsKt, units.horizontalSpeed)
       : null;
   const tas =
-    aircraft.tas != null
-      ? airSpeedFromKnots(aircraft.tas, units.horizontalSpeed)
+    aircraft.tasKt != null
+      ? airSpeedFromKnots(aircraft.tasKt, units.horizontalSpeed)
       : null;
   const mach = aircraft.mach != null ? `M${aircraft.mach.toFixed(2)}` : "—";
 
@@ -300,19 +297,19 @@ function TelemetryGrid({ aircraft }: { aircraft: Aircraft }) {
       ? mach
       : null;
 
-  const track = aircraft.track != null ? padHeading(aircraft.track) : "—";
+  const track = aircraft.trackDeg != null ? padHeading(aircraft.trackDeg) : "—";
   const trackHint = selectedHeadingHint(aircraft);
 
-  const altGeomNum = aircraft.alt_geom;
+  const altGeomNum = aircraft.altGeomFt;
   const altGeom =
     altGeomNum != null
       ? altitudeFromFeet(altGeomNum, units.altitude).value
       : "—";
   const altSelHint =
-    aircraft.nav_altitude_mcp != null
+    aircraft.mcpAltFt != null
       ? selectedFieldHint(
           "Selected altitude",
-          `SEL ${quantityLabel(altitudeFromFeet(aircraft.nav_altitude_mcp, units.altitude))}`,
+          `SEL ${quantityLabel(altitudeFromFeet(aircraft.mcpAltFt, units.altitude))}`,
         )
       : selectedFieldHint("Selected altitude", "SEL -");
   const routeCell = routeGridCell(aircraft, route, receiver, units.distance);
@@ -326,9 +323,9 @@ function TelemetryGrid({ aircraft }: { aircraft: Aircraft }) {
         label="Alt baro"
         value={altBaro}
         unit={
-          ground || typeof aircraft.alt_baro !== "number"
+          ground || typeof aircraft.altBaroFt !== "number"
             ? undefined
-            : altitudeFromFeet(aircraft.alt_baro, units.altitude).unit
+            : altitudeFromFeet(aircraft.altBaroFt, units.altitude).unit
         }
         hint={baroDeltaText}
         tone={baroTone}
@@ -363,7 +360,7 @@ function TelemetryGrid({ aircraft }: { aircraft: Aircraft }) {
       <TelCell
         label="Track"
         value={track}
-        unit={aircraft.track != null ? "°" : undefined}
+        unit={aircraft.trackDeg != null ? "°" : undefined}
         hint={trackHint}
         borderB
       />
@@ -389,15 +386,11 @@ function TelemetryGrid({ aircraft }: { aircraft: Aircraft }) {
   );
 }
 
-function padHeading(deg: number): string {
-  return String(Math.round(deg)).padStart(3, "0");
-}
-
 function selectedHeadingHint(aircraft: Aircraft): ReactNode {
-  if (aircraft.nav_heading != null) {
+  if (aircraft.navHdgDeg != null) {
     return selectedFieldHint(
       "Selected heading",
-      `SEL ${padHeading(aircraft.nav_heading)}°`,
+      `SEL ${padHeading(aircraft.navHdgDeg)}°`,
     );
   }
   return selectedFieldHint("Selected heading", "SEL -°");
@@ -494,7 +487,7 @@ function TrendSection({
   nowMs: number;
 }) {
   const samples = trace.samples;
-  const rate = aircraft.baro_rate ?? 0;
+  const rate = aircraft.baroRateFpm ?? 0;
   const trendLabel =
     rate > 100 ? "▲ CLIMB" : rate < -100 ? "▼ DESC" : "— LEVEL";
   const trendColor =
@@ -512,7 +505,7 @@ function TrendSection({
       </div>
       <AltitudeSparkline
         samples={samples}
-        selectedAltitudeFt={aircraft.nav_altitude_mcp}
+        selectedAltitudeFt={aircraft.mcpAltFt}
       />
     </div>
   );
@@ -554,7 +547,7 @@ function Tabs({
   onSelect,
 }: {
   tab: InspectorTab;
-  onSelect: (t: InspectorTab) => void;
+  onSelect: (typeDesignator: InspectorTab) => void;
 }) {
   return (
     <div className="flex border-b border-(--color-line) font-mono text-[9.5px] uppercase tracking-widest shrink-0">

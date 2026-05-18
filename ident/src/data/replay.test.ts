@@ -16,7 +16,12 @@ const originalFetch = globalThis.fetch;
 function resetStore() {
   __resetTrailDisplayCachesForTests();
   useIdentStore.setState({
-    aircraft: new Map([["live", { hex: "live", flight: "LIVE1" }]]),
+    aircraft: new Map([
+      [
+        "live",
+        { hex: "live", idKind: "icao", source: "adsb_icao", flight: "LIVE1" },
+      ],
+    ]),
     now: 0,
     replay: {
       enabled: false,
@@ -199,7 +204,7 @@ describe("replay data loading", () => {
         playing: true,
         cache: {
           "/api/replay/blocks/0-60000.json.zst": {
-            version: 1,
+            version: 2,
             start: 0,
             end: 60_000,
             step_ms: 1000,
@@ -557,7 +562,7 @@ describe("replay data loading", () => {
     globalThis.fetch = vi.fn(async (url: string) =>
       url.includes("manifest")
         ? responseJson(manifest())
-        : responseJson({ version: 1, frames: null }),
+        : responseJson({ version: 2, frames: null }),
     ) as never;
 
     await refreshReplayManifest();
@@ -585,7 +590,7 @@ describe("replay data loading", () => {
       if (url.includes("manifest")) return responseJson(manifest());
       if (malformed) {
         malformed = false;
-        return responseJson({ version: 1, frames: null });
+        return responseJson({ version: 2, frames: null });
       }
       return responseJson(replayBlock());
     }) as never;
@@ -646,18 +651,36 @@ function longManifest() {
 
 function replayBlock() {
   return {
-    version: 1,
+    version: 2,
     start: 120_000,
     end: 180_000,
     step_ms: 5_000,
     frames: [
       {
         ts: 130_000,
-        aircraft: [{ hex: "abc123", flight: "UAL123", lat: 34, lon: -118 }],
+        aircraft: [
+          {
+            hex: "abc123",
+            idKind: "icao",
+            source: "adsb_icao",
+            flight: "UAL123",
+            lat: 34,
+            lon: -118,
+          },
+        ],
       },
       {
         ts: 160_000,
-        aircraft: [{ hex: "abc123", flight: "UAL123", lat: 35, lon: -119 }],
+        aircraft: [
+          {
+            hex: "abc123",
+            idKind: "icao",
+            source: "adsb_icao",
+            flight: "UAL123",
+            lat: 35,
+            lon: -119,
+          },
+        ],
       },
     ],
   } as const;

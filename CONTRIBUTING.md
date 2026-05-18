@@ -29,7 +29,8 @@ Use placeholders such as `receiver.local`, `YOUR_LAT`, `YOUR_LON`, and
 For install and compatibility issues, include:
 
 - Ident version
-- receiver stack: readsb, ultrafeeder, dump1090-fa, PiAware, or other
+- receiver JSON source: readsb native, dump1090-fa native including PiAware, or
+  dump978-fa native including SkyAware978
 - operating system and hardware model
 - install method: binary, Docker, systemd, Debian package, or source
 - path where `aircraft.json` is written
@@ -67,6 +68,22 @@ go test ./...
 ```
 
 If you cannot run a relevant check, say which check you skipped and why.
+
+### Wire Schemas
+
+Ident-owned WebSocket and HTTP payload schemas live in `schemas/ident/`. They
+are generated from the Go wire structs with `github.com/google/jsonschema-go`.
+
+Refresh schemas after changing a wire struct:
+
+```sh
+cd identd
+IDENT_UPDATE_SCHEMAS=1 go test . -run TestIdentSchemasAreCurrent -count=1
+go test . -run TestIdentSchemasAreCurrent -count=1
+```
+
+The normal Go test fails when a committed schema is stale, so CI and the local
+pre-commit hook both enforce freshness.
 
 ## Development Notes
 

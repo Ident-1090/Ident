@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"io"
 	"io/fs"
-	"log"
+	"log/slog"
 	"net/http"
 	"path"
 	"strings"
@@ -42,18 +42,16 @@ type Server struct {
 	hub      *Hub
 	basePath string
 	web      fs.FS
-	updates  *UpdateChecker
 	replay   ReplayProvider
 	trails   TrailProvider
 	ready    atomic.Bool
 }
 
 type ServerOptions struct {
-	BasePath      string
-	Web           fs.FS
-	UpdateChecker *UpdateChecker
-	Replay        ReplayProvider
-	Trails        TrailProvider
+	BasePath string
+	Web      fs.FS
+	Replay   ReplayProvider
+	Trails   TrailProvider
 }
 
 func NewServer(ctx context.Context, hub *Hub) *Server {
@@ -63,14 +61,13 @@ func NewServer(ctx context.Context, hub *Hub) *Server {
 func NewServerWithOptions(ctx context.Context, hub *Hub, opts ServerOptions) *Server {
 	basePath, err := normalizeBasePath(opts.BasePath)
 	if err != nil {
-		log.Printf("base path %q ignored: %v", opts.BasePath, err)
+		slog.Warn("base path ignored", "path", opts.BasePath, "err", err)
 	}
 	return &Server{
 		ctx:      ctx,
 		hub:      hub,
 		basePath: basePath,
 		web:      opts.Web,
-		updates:  opts.UpdateChecker,
 		replay:   opts.Replay,
 		trails:   opts.Trails,
 	}
@@ -82,8 +79,6 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/api/ws", s.serveWS)
 	mux.HandleFunc("/healthz", s.serveHealthz)
-	mux.HandleFunc("/version", s.serveVersion)
-	mux.HandleFunc("/api/update.json", s.serveUpdateStatus)
 	mux.HandleFunc("/api/trails/recent.json", s.serveRecentTrails)
 	mux.HandleFunc("/api/replay/manifest.json", s.serveReplayManifest)
 	mux.HandleFunc("/api/replay/blocks/", s.serveReplayBlock)
@@ -109,22 +104,6 @@ func (s *Server) serveHealthz(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusServiceUnavailable)
-}
-
-func (s *Server) serveVersion(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, CurrentVersionInfo())
-}
-
-func (s *Server) serveUpdateStatus(w http.ResponseWriter, r *http.Request) {
-	if s.updates == nil {
-		writeJSON(w, UpdateStatus{
-			Enabled: false,
-			Status:  UpdateDisabled,
-			Current: CurrentVersionInfo(),
-		})
-		return
-	}
-	writeJSON(w, s.updates.Status(r.Context()))
 }
 
 func (s *Server) serveReplayManifest(w http.ResponseWriter, _ *http.Request) {
@@ -165,7 +144,7 @@ func (s *Server) serveRecentTrails(w http.ResponseWriter, _ *http.Request) {
 func (s *Server) serveWS(w http.ResponseWriter, r *http.Request) {
 	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("upgrade: %v", err)
+		slog.Warn("upgrade", "err", err, "addr", r.RemoteAddr)
 		return
 	}
 	snaps := s.hub.Snapshots()
@@ -275,7 +254,7 @@ func readFSFile(files fs.FS, name string) ([]byte, time.Time, bool) {
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		log.Printf("json response: %v", err)
+		slog.Warn("json response", "err", err)
 	}
 }
 

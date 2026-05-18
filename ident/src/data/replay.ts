@@ -196,7 +196,7 @@ function loadReplayBlock(block: ReplayBlockIndex): Promise<void> | null {
         controller.signal,
       );
       if (controller.signal.aborted) throw new ReplayLoadCanceled();
-      if (body.version !== 1 || !Array.isArray(body.frames)) {
+      if (body.version !== 2 || !Array.isArray(body.frames)) {
         throw new ReplayBlockFormatError(block.url);
       }
       useIdentStore.getState().setReplayBlock(block.url, body);

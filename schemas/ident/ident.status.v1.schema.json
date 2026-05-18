@@ -1,0 +1,769 @@
+{
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "ident.status.v1"
+    },
+    "producer": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "readsb",
+            "dump1090-fa",
+            "skyaware978",
+            "unknown"
+          ]
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "observedAt": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "producer_provided"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "stats_now",
+                "stats_window_end",
+                "aircraft_now",
+                "ingest_clock"
+              ]
+            },
+            "value": {
+              "type": "object",
+              "properties": {
+                "epochSec": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "epochSec"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "kind",
+            "source",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "ident_derived"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "stats_now",
+                "stats_window_end",
+                "aircraft_now",
+                "ingest_clock"
+              ]
+            },
+            "value": {
+              "type": "object",
+              "properties": {
+                "epochSec": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "epochSec"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "kind",
+            "source",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "unavailable"
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "not_provided_by_producer",
+                "awaiting_classification",
+                "awaiting_second_sample",
+                "producer_changed",
+                "counter_reset",
+                "clock_not_advanced",
+                "stale_sample",
+                "malformed_file"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "freshness": {
+      "type": "object",
+      "properties": {
+        "aircraftAgeSec": {
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "statsAgeSec": {
+          "type": [
+            "null",
+            "number"
+          ]
+        },
+        "receiverObservedAgeSec": {
+          "type": [
+            "null",
+            "number"
+          ]
+        }
+      },
+      "required": [
+        "aircraftAgeSec",
+        "statsAgeSec",
+        "receiverObservedAgeSec"
+      ],
+      "additionalProperties": false
+    },
+    "receiverPosition": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "producer_provided"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "receiver_json"
+              ]
+            },
+            "value": {
+              "type": "object",
+              "properties": {
+                "lat": {
+                  "type": "number"
+                },
+                "lon": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "lat",
+                "lon"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "kind",
+            "source",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "ident_derived"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "receiver_json"
+              ]
+            },
+            "value": {
+              "type": "object",
+              "properties": {
+                "lat": {
+                  "type": "number"
+                },
+                "lon": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "lat",
+                "lon"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "kind",
+            "source",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "unavailable"
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "not_provided_by_producer",
+                "awaiting_classification",
+                "awaiting_second_sample",
+                "producer_changed",
+                "counter_reset",
+                "clock_not_advanced",
+                "stale_sample",
+                "malformed_file"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "messageRate": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "producer_provided"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "stats_last1min_messages_valid",
+                "stats_last1min_messages",
+                "aircraft_counter_delta"
+              ]
+            },
+            "value": {
+              "type": "object",
+              "properties": {
+                "hz": {
+                  "type": "number"
+                },
+                "basisSec": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "hz"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "kind",
+            "source",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "ident_derived"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "stats_last1min_messages_valid",
+                "stats_last1min_messages",
+                "aircraft_counter_delta"
+              ]
+            },
+            "value": {
+              "type": "object",
+              "properties": {
+                "hz": {
+                  "type": "number"
+                },
+                "basisSec": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "hz"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "kind",
+            "source",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "unavailable"
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "not_provided_by_producer",
+                "awaiting_classification",
+                "awaiting_second_sample",
+                "producer_changed",
+                "counter_reset",
+                "clock_not_advanced",
+                "stale_sample",
+                "malformed_file"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "gain": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "producer_provided"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "top_level",
+                "latest_local",
+                "last1min_local",
+                "last5min_local",
+                "last15min_local",
+                "total_local"
+              ]
+            },
+            "value": {
+              "type": "object",
+              "properties": {
+                "db": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "db"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "kind",
+            "source",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "ident_derived"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "top_level",
+                "latest_local",
+                "last1min_local",
+                "last5min_local",
+                "last15min_local",
+                "total_local"
+              ]
+            },
+            "value": {
+              "type": "object",
+              "properties": {
+                "db": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "db"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "kind",
+            "source",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "unavailable"
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "not_provided_by_producer",
+                "awaiting_classification",
+                "awaiting_second_sample",
+                "producer_changed",
+                "counter_reset",
+                "clock_not_advanced",
+                "stale_sample",
+                "malformed_file"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "uptime": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "producer_provided"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "stats_now_minus_total_start",
+                "window_end_minus_total_start",
+                "ident_process_start"
+              ]
+            },
+            "value": {
+              "type": "object",
+              "properties": {
+                "sec": {
+                  "type": "number"
+                },
+                "subject": {
+                  "type": "string",
+                  "enum": [
+                    "receiver",
+                    "ident"
+                  ]
+                }
+              },
+              "required": [
+                "sec",
+                "subject"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "kind",
+            "source",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "ident_derived"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "stats_now_minus_total_start",
+                "window_end_minus_total_start",
+                "ident_process_start"
+              ]
+            },
+            "value": {
+              "type": "object",
+              "properties": {
+                "sec": {
+                  "type": "number"
+                },
+                "subject": {
+                  "type": "string",
+                  "enum": [
+                    "receiver",
+                    "ident"
+                  ]
+                }
+              },
+              "required": [
+                "sec",
+                "subject"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "kind",
+            "source",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "unavailable"
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "not_provided_by_producer",
+                "awaiting_classification",
+                "awaiting_second_sample",
+                "producer_changed",
+                "counter_reset",
+                "clock_not_advanced",
+                "stale_sample",
+                "malformed_file"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "maxRange": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "producer_provided"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "outline_last24h_vertices",
+                "outline_alltime_vertices",
+                "outline_points_vertices",
+                "outline_other_vertices",
+                "stats_max_distance_meters"
+              ]
+            },
+            "value": {
+              "type": "object",
+              "properties": {
+                "nm": {
+                  "type": "number"
+                },
+                "scope": {
+                  "type": "string",
+                  "enum": [
+                    "last24h",
+                    "alltime",
+                    "points",
+                    "other",
+                    "stats"
+                  ]
+                },
+                "computation": {
+                  "type": "string",
+                  "enum": [
+                    "max_receiver_to_outline_vertex",
+                    "producer_reported_distance"
+                  ]
+                }
+              },
+              "required": [
+                "nm",
+                "scope",
+                "computation"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "kind",
+            "source",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "ident_derived"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "outline_last24h_vertices",
+                "outline_alltime_vertices",
+                "outline_points_vertices",
+                "outline_other_vertices",
+                "stats_max_distance_meters"
+              ]
+            },
+            "value": {
+              "type": "object",
+              "properties": {
+                "nm": {
+                  "type": "number"
+                },
+                "scope": {
+                  "type": "string",
+                  "enum": [
+                    "last24h",
+                    "alltime",
+                    "points",
+                    "other",
+                    "stats"
+                  ]
+                },
+                "computation": {
+                  "type": "string",
+                  "enum": [
+                    "max_receiver_to_outline_vertex",
+                    "producer_reported_distance"
+                  ]
+                }
+              },
+              "required": [
+                "nm",
+                "scope",
+                "computation"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "kind",
+            "source",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "unavailable"
+            },
+            "reason": {
+              "type": "string",
+              "enum": [
+                "not_provided_by_producer",
+                "awaiting_classification",
+                "awaiting_second_sample",
+                "producer_changed",
+                "counter_reset",
+                "clock_not_advanced",
+                "stale_sample",
+                "malformed_file"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "reason"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "diagnostics": {
+      "type": [
+        "null",
+        "array"
+      ],
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string"
+          },
+          "channel": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "actionLabel": {
+            "type": "string"
+          },
+          "actionUrl": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "severity",
+          "channel",
+          "code",
+          "message"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "$id": "https://github.com/Ident-1090/Ident/schemas/ident/ident.status.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ident status",
+  "required": [
+    "schema",
+    "producer",
+    "observedAt",
+    "freshness",
+    "diagnostics"
+  ],
+  "additionalProperties": false
+}

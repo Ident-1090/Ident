@@ -2,14 +2,7 @@ import type { Aircraft, ReceiverJson } from "../../data/types";
 import { formatAgeSecondsAgo } from "../age";
 import { KvList, KvRow } from "../KvRow";
 import { RssiBarSpark } from "../Sparkline";
-
-function sourceLabel(t: Aircraft["type"]): string {
-  if (t === "mlat") return "MLAT (aggregator)";
-  if (t === "adsb_icao" || t === "adsb_icao_nt" || t === "adsb_other")
-    return "Direct 1090 ES";
-  if (t) return t;
-  return "—";
-}
+import { aircraftSourceLabel } from "../source";
 
 export function SignalTab({
   aircraft,
@@ -20,11 +13,14 @@ export function SignalTab({
   rssiBuf: number[];
   receiver: ReceiverJson | null;
 }) {
-  const rssi = aircraft.rssi != null ? `${aircraft.rssi.toFixed(1)} dBFS` : "—";
+  const rssi =
+    aircraft.rssiDbfs != null ? `${aircraft.rssiDbfs.toFixed(1)} dBFS` : "—";
   const messages =
-    aircraft.messages != null ? aircraft.messages.toLocaleString() : "—";
-  const lastMsg = formatAgeSecondsAgo(aircraft.seen);
-  const lastPos = formatAgeSecondsAgo(aircraft.seen_pos);
+    aircraft.aircraftMessagesTotal != null
+      ? aircraft.aircraftMessagesTotal.toLocaleString()
+      : "—";
+  const lastMsg = formatAgeSecondsAgo(aircraft.seenSec);
+  const lastPos = formatAgeSecondsAgo(aircraft.seenPosSec);
   const rxName = receiver?.version?.split(" ").slice(0, 2).join(" ") || "—";
 
   return (
@@ -38,7 +34,13 @@ export function SignalTab({
         <KvRow k="Last msg" v={lastMsg} />
         <KvRow k="Last position" v={lastPos} />
         <KvRow k="Receiver" v={rxName} />
-        <KvRow k="Source" v={sourceLabel(aircraft.type)} />
+        <KvRow
+          k="Source"
+          v={aircraftSourceLabel(aircraft.source, {
+            adsb: "Direct 1090 ES",
+            mlat: "MLAT (aggregator)",
+          })}
+        />
       </KvList>
     </div>
   );

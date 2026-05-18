@@ -61,8 +61,9 @@ function resetStore() {
   useIdentStore.setState({
     aircraft: new Map(),
     receiver: null,
-    stats: null,
-    outline: null,
+    rangeOutline: null,
+    identStatus: null,
+    capabilities: null,
     now: 0,
     connectionStatus: {},
     connectionStatusInfo: {},
@@ -114,21 +115,24 @@ describe("startFeed route envelopes", () => {
     wsHarness.instances[0].emitText(
       JSON.stringify({
         type: "routes",
-        now: 1,
-        data: [
-          {
-            callsign: "UAL123",
-            origin: "SFO",
-            destination: "LAX",
-            route: "SFO-LAX",
-          },
-          {
-            callsign: "DAL456",
-            origin: "ATL",
-            destination: "JFK",
-            route: "ATL-JFK",
-          },
-        ],
+        data: {
+          schema: "ident.routes.v1",
+          observedAtEpochSec: 1,
+          routes: [
+            {
+              callsign: "UAL123",
+              origin: "SFO",
+              destination: "LAX",
+              route: "SFO-LAX",
+            },
+            {
+              callsign: "DAL456",
+              origin: "ATL",
+              destination: "JFK",
+              route: "ATL-JFK",
+            },
+          ],
+        },
       }),
     );
     const st = useIdentStore.getState();
@@ -163,7 +167,10 @@ describe("startFeed route envelopes", () => {
     wsHarness.instances[0].emitText(
       JSON.stringify({
         type: "routes",
-        data: [{ callsign: "UAL123", dropped: true }],
+        data: {
+          schema: "ident.routes.v1",
+          routes: [{ callsign: "UAL123", dropped: true }],
+        },
       }),
     );
     expect(useIdentStore.getState().routeByCallsign.UAL123).toBeNull();
@@ -173,19 +180,23 @@ describe("startFeed route envelopes", () => {
   it("writes relay-supplied station name from a config envelope into store", () => {
     const stop = startFeed();
     wsHarness.instances[0].emitText(
-      JSON.stringify({ type: "config", data: { station: "Home Receiver" } }),
+      JSON.stringify({
+        type: "config",
+        data: { schema: "ident.config.v1", station: "Home Receiver" },
+      }),
     );
     expect(useIdentStore.getState().config.station).toBe("Home Receiver");
     stop();
   });
 
-  it("writes relay-supplied line_of_sight rings from the config envelope into store", () => {
+  it("writes relay-supplied lineOfSight rings from the config envelope into store", () => {
     const stop = startFeed();
     wsHarness.instances[0].emitText(
       JSON.stringify({
         type: "config",
         data: {
-          line_of_sight: {
+          schema: "ident.config.v1",
+          lineOfSight: {
             rings: [{ alt: 3048, points: [[37, -122]] }],
           },
         },
@@ -194,6 +205,34 @@ describe("startFeed route envelopes", () => {
     expect(useIdentStore.getState().losData).toEqual({
       rings: [{ alt: 3048, points: [[37, -122]] }],
     });
+    stop();
+  });
+
+  it("stores normalized range outlines from the rangeOutline channel", () => {
+    const stop = startFeed();
+    const rangeOutline = {
+      schema: "ident.rangeOutline.v1",
+      producer: { kind: "readsb", version: "3.14" },
+      observedAtEpochSec: 100,
+      source: "outline_json",
+      scope: "last24h",
+      coordinates: [
+        [-122.1, 37.4],
+        [-122.0, 37.5],
+        [-122.2, 37.5],
+      ],
+    };
+
+    wsHarness.instances[0].emitText(
+      JSON.stringify({
+        type: "rangeOutline",
+        data: rangeOutline,
+      }),
+    );
+
+    expect(
+      (useIdentStore.getState() as { rangeOutline?: unknown }).rangeOutline,
+    ).toEqual(rangeOutline);
     stop();
   });
 
@@ -208,10 +247,24 @@ describe("startFeed route envelopes", () => {
       JSON.stringify({
         type: "aircraft",
         data: {
-          now: 100,
+          observedAtEpochSec: 100,
           aircraft: [
-            { hex: "abc123", lat: 34.1, lon: -118.2, alt_baro: 3000 },
-            { hex: "def456", lat: 35.1, lon: -119.2, alt_baro: 4000 },
+            {
+              hex: "abc123",
+              idKind: "icao",
+              source: "adsb_icao",
+              lat: 34.1,
+              lon: -118.2,
+              altBaroFt: 3000,
+            },
+            {
+              hex: "def456",
+              idKind: "icao",
+              source: "adsb_icao",
+              lat: 35.1,
+              lon: -119.2,
+              altBaroFt: 4000,
+            },
           ],
         },
       }),
@@ -388,14 +441,21 @@ describe("startFeed route envelopes", () => {
           json: async () => ({
             aircraft: {},
             replay: {
-              version: 1,
+              version: 2,
               start: 180_000,
               end: 190_000,
               step_ms: 5_000,
               frames: [
                 {
                   ts: 185_000,
-                  aircraft: [{ hex: "recent", flight: "RECENT1" }],
+                  aircraft: [
+                    {
+                      hex: "recent",
+                      idKind: "icao",
+                      source: "adsb_icao",
+                      flight: "RECENT1",
+                    },
+                  ],
                 },
               ],
             },
@@ -417,53 +477,235 @@ describe("startFeed route envelopes", () => {
     stop();
   });
 
+  it("refreshes the manifest when from/to shift even though blockCount stayed constant (retention rotation)", async () => {
+    const fetchSpy = vi.fn(async (url: string) => {
+      if (url.endsWith("/replay/manifest.json")) {
+        return {
+          ok: true,
+          json: async () => ({
+            enabled: true,
+            from: 100_000,
+            to: 200_000,
+            block_sec: 300,
+            blocks: [
+              {
+                start: 100_000,
+                end: 200_000,
+                url: "/api/replay/blocks/100000-200000.json.zst",
+                bytes: 1024,
+              },
+            ],
+          }),
+        } as Response;
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const stop = startFeed();
+
+    await vi.waitFor(() => {
+      expect(useIdentStore.getState().replay.blocks).toHaveLength(1);
+    });
+    const initialManifestFetches = fetchSpy.mock.calls.filter(([url]) =>
+      String(url).endsWith("/replay/manifest.json"),
+    ).length;
+
+    // Retention rotation: block 100k-200k aged out, replaced by block 150k-250k.
+    // blockCount unchanged (still 1) but window shifted — manifest must refetch
+    // or the stored blocks[] keeps pointing at the evicted block.
+    wsHarness.instances[0].emitText(
+      JSON.stringify({
+        type: "replay.availability",
+        data: {
+          schema: "ident.replay.availability.v1",
+          enabled: true,
+          fromEpochSec: 150,
+          toEpochSec: 250,
+          blockSec: 300,
+          blockCount: 1,
+        },
+      }),
+    );
+
+    await vi.waitFor(() => {
+      const manifestFetchesAfter = fetchSpy.mock.calls.filter(([url]) =>
+        String(url).endsWith("/replay/manifest.json"),
+      ).length;
+      expect(manifestFetchesAfter).toBeGreaterThan(initialManifestFetches);
+    });
+    stop();
+  });
+
+  it("does not refetch the manifest when no envelope field changed", async () => {
+    const fetchSpy = vi.fn(async (url: string) => {
+      if (url.endsWith("/replay/manifest.json")) {
+        return {
+          ok: true,
+          json: async () => ({
+            enabled: true,
+            from: 100_000,
+            to: 200_000,
+            block_sec: 300,
+            blocks: [
+              {
+                start: 100_000,
+                end: 200_000,
+                url: "/api/replay/blocks/100000-200000.json.zst",
+                bytes: 1024,
+              },
+            ],
+          }),
+        } as Response;
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const stop = startFeed();
+
+    await vi.waitFor(() => {
+      expect(useIdentStore.getState().replay.blocks).toHaveLength(1);
+    });
+    const initialManifestFetches = fetchSpy.mock.calls.filter(([url]) =>
+      String(url).endsWith("/replay/manifest.json"),
+    ).length;
+
+    wsHarness.instances[0].emitText(
+      JSON.stringify({
+        type: "replay.availability",
+        data: {
+          schema: "ident.replay.availability.v1",
+          enabled: true,
+          fromEpochSec: 100,
+          toEpochSec: 200,
+          blockSec: 300,
+          blockCount: 1,
+        },
+      }),
+    );
+
+    const st = useIdentStore.getState();
+    expect(st.replay.enabled).toBe(true);
+    expect(st.replay.availableFrom).toBe(100_000);
+    expect(st.replay.availableTo).toBe(200_000);
+    expect(st.replay.blockSec).toBe(300);
+
+    const manifestFetchesAfter = fetchSpy.mock.calls.filter(([url]) =>
+      String(url).endsWith("/replay/manifest.json"),
+    ).length;
+    expect(manifestFetchesAfter).toBe(initialManifestFetches);
+    stop();
+  });
+
+  it("refreshes the manifest when the envelope reports a new blockCount", async () => {
+    const fetchSpy = vi.fn(async (url: string) => {
+      if (url.endsWith("/replay/manifest.json")) {
+        return {
+          ok: true,
+          json: async () => ({
+            enabled: true,
+            from: 100_000,
+            to: 200_000,
+            block_sec: 300,
+            blocks: [
+              {
+                start: 100_000,
+                end: 200_000,
+                url: "/api/replay/blocks/100000-200000.json.zst",
+                bytes: 1024,
+              },
+            ],
+          }),
+        } as Response;
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as Response;
+    });
+    globalThis.fetch = fetchSpy as unknown as typeof fetch;
+
+    const stop = startFeed();
+    await vi.waitFor(() => {
+      expect(useIdentStore.getState().replay.blocks).toHaveLength(1);
+    });
+    const initialManifestFetches = fetchSpy.mock.calls.filter(([url]) =>
+      String(url).endsWith("/replay/manifest.json"),
+    ).length;
+
+    wsHarness.instances[0].emitText(
+      JSON.stringify({
+        type: "replay.availability",
+        data: {
+          schema: "ident.replay.availability.v1",
+          enabled: true,
+          fromEpochSec: 100,
+          toEpochSec: 500,
+          blockSec: 300,
+          blockCount: 2,
+        },
+      }),
+    );
+
+    await vi.waitFor(() => {
+      const manifestFetchesAfter = fetchSpy.mock.calls.filter(([url]) =>
+        String(url).endsWith("/replay/manifest.json"),
+      ).length;
+      expect(manifestFetchesAfter).toBe(initialManifestFetches + 1);
+    });
+    stop();
+  });
+
   it("does not refresh feed freshness from auxiliary websocket envelopes", () => {
     const stop = startFeed();
     wsHarness.instances[0].emitText(
       JSON.stringify({
-        type: "receiver",
-        data: { lat: 37.4, lon: -122.1, version: "readsb" },
+        type: "capabilities",
+        data: {
+          schema: "ident.capabilities.v1",
+          producer: { kind: "readsb", version: "3.14" },
+          capabilities: {
+            aircraft: "producer_provided",
+            receiverPosition: "producer_provided",
+            messageRate: "producer_provided",
+            gain: "producer_provided",
+            uptime: "producer_provided",
+            maxRange: "producer_provided",
+            rangeOutline: "producer_provided",
+            signalDiagnostics: "producer_provided",
+            meteorology: "unavailable",
+            replay: "ident_derived",
+            trails: "ident_derived",
+          },
+        },
       }),
     );
     wsHarness.instances[0].emitText(
-      JSON.stringify({ type: "stats", data: { now: 42 } }),
-    );
-    wsHarness.instances[0].emitText(
-      JSON.stringify({ type: "outline", data: { points: [[37.4, -122.1]] } }),
+      JSON.stringify({
+        type: "status",
+        data: {
+          schema: "ident.status.v1",
+          producer: { kind: "readsb", version: "3.14" },
+          receiverPosition: {
+            kind: "producer_provided",
+            source: "receiver_json",
+            value: { lat: 37.4, lon: -122.1 },
+          },
+          messageRate: {
+            kind: "producer_provided",
+            source: "stats_last1min_messages_valid",
+            value: { hz: 42, basisSec: 60 },
+          },
+          diagnostics: [],
+        },
+      }),
     );
 
     const state = useIdentStore.getState();
     expect(state.receiver?.lat).toBe(37.4);
-    expect(state.stats?.now).toBe(42);
-    expect(state.outline?.points).toEqual([[37.4, -122.1]]);
-    expect(state.liveState.lastMsgTs).toBe(0);
-
-    stop();
-  });
-
-  it("does not start receiver JSON polling when the websocket is unavailable", async () => {
-    vi.useFakeTimers();
-    globalThis.fetch = vi.fn(async (url: string) => {
-      if (url.endsWith("/trails/recent.json")) {
-        return { ok: false, status: 404, json: async () => ({}) } as Response;
-      }
-      return { ok: false, json: async () => ({}) } as Response;
-    }) as unknown as typeof fetch;
-
-    const stop = startFeed();
-    useIdentStore.getState().setConnectionStatus("ws", "closed");
-
-    await vi.advanceTimersByTimeAsync(60_000);
-
-    const requestedUrls = vi
-      .mocked(globalThis.fetch)
-      .mock.calls.map(([url]) => String(url));
-    expect(requestedUrls).toContain("/api/replay/manifest.json");
-    expect(requestedUrls).toContain("/api/trails/recent.json");
-    expect(requestedUrls.some((url) => url.startsWith("/api/data/"))).toBe(
-      false,
+    expect(state.identStatus?.messageRate?.kind).toBe("producer_provided");
+    expect(state.capabilities?.capabilities.messageRate).toBe(
+      "producer_provided",
     );
-    expect(useIdentStore.getState().connectionStatus.http).toBeUndefined();
+    expect(state.liveState.lastMsgTs).toBe(0);
 
     stop();
   });

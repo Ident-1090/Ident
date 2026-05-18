@@ -5,9 +5,10 @@ import type { Aircraft } from "./types";
 function mkAc(over: Partial<Aircraft> = {}): Aircraft {
   return {
     hex: "a1b2c3",
-    seen: 0,
-    type: "adsb_icao",
-    airground: 0,
+    idKind: "icao",
+    seenSec: 0,
+    source: "adsb_icao",
+    onGround: false,
     ...over,
   };
 }
@@ -19,7 +20,7 @@ describe("matchesFilter", () => {
 
   it("default altitude range still keeps ground aircraft visible", () => {
     expect(
-      matchesFilter(mkAc({ alt_baro: "ground", airground: "ground" }), {
+      matchesFilter(mkAc({ onGround: true }), {
         altRangeFt: [0, 45_000],
         hideGround: false,
       }),
@@ -28,17 +29,17 @@ describe("matchesFilter", () => {
 
   it("altitude range compares ground aircraft as zero feet", () => {
     expect(
-      matchesFilter(mkAc({ alt_baro: "ground" }), {
+      matchesFilter(mkAc({ onGround: true }), {
         altRangeFt: [0, 100],
       }),
     ).toBe(true);
     expect(
-      matchesFilter(mkAc({ alt_baro: "ground" }), {
+      matchesFilter(mkAc({ onGround: true }), {
         altRangeFt: [1, 45_000],
       }),
     ).toBe(false);
     expect(
-      matchesFilter(mkAc({ airground: "ground" }), {
+      matchesFilter(mkAc({ onGround: true }), {
         altMinFt: -100,
         altMaxFt: 100,
       }),
@@ -46,20 +47,20 @@ describe("matchesFilter", () => {
   });
 
   it("hideGround drops every ground representation", () => {
-    expect(matchesFilter(mkAc({ airground: 1 }), { hideGround: true })).toBe(
+    expect(matchesFilter(mkAc({ onGround: true }), { hideGround: true })).toBe(
       false,
     );
-    expect(
-      matchesFilter(mkAc({ airground: "ground" }), { hideGround: true }),
-    ).toBe(false);
-    expect(
-      matchesFilter(mkAc({ alt_baro: "ground" }), { hideGround: true }),
-    ).toBe(false);
-    expect(matchesFilter(mkAc({ airground: 0 }), { hideGround: true })).toBe(
+    expect(matchesFilter(mkAc({ onGround: true }), { hideGround: true })).toBe(
+      false,
+    );
+    expect(matchesFilter(mkAc({ onGround: true }), { hideGround: true })).toBe(
+      false,
+    );
+    expect(matchesFilter(mkAc({ onGround: false }), { hideGround: true })).toBe(
       true,
     );
     expect(
-      matchesFilter(mkAc({ alt_baro: 0, airground: 0 }), {
+      matchesFilter(mkAc({ altBaroFt: 0, onGround: false }), {
         hideGround: true,
       }),
     ).toBe(true);
@@ -84,16 +85,16 @@ describe("matchesFilter", () => {
 
   it("altitude range filters correctly", () => {
     const f = { altMinFt: 10_000, altMaxFt: 40_000 };
-    expect(matchesFilter(mkAc({ alt_baro: 5_000 }), f)).toBe(false);
-    expect(matchesFilter(mkAc({ alt_baro: 25_000 }), f)).toBe(true);
-    expect(matchesFilter(mkAc({ alt_baro: 50_000 }), f)).toBe(false);
-    expect(matchesFilter(mkAc({ alt_baro: "ground" }), f)).toBe(false);
+    expect(matchesFilter(mkAc({ altBaroFt: 5_000 }), f)).toBe(false);
+    expect(matchesFilter(mkAc({ altBaroFt: 25_000 }), f)).toBe(true);
+    expect(matchesFilter(mkAc({ altBaroFt: 50_000 }), f)).toBe(false);
+    expect(matchesFilter(mkAc({ onGround: true }), f)).toBe(false);
   });
 
   it("category filter uses A/B/C letter prefix", () => {
     const f = { categories: new Set(["A"]) };
-    expect(matchesFilter(mkAc({ category: "A3" }), f)).toBe(true);
-    expect(matchesFilter(mkAc({ category: "B1" }), f)).toBe(false);
+    expect(matchesFilter(mkAc({ cat: "A3" }), f)).toBe(true);
+    expect(matchesFilter(mkAc({ cat: "B1" }), f)).toBe(false);
   });
 
   it("category filter accepts semantic keys (airline/ga/bizjet/mil/rotor)", () => {
@@ -107,22 +108,22 @@ describe("matchesFilter", () => {
     };
     // Empty-selection = match anything.
     expect(
-      matchesFilter(mkAc({ category: "A3" }), { categories: { ...allOff } }),
+      matchesFilter(mkAc({ cat: "A3" }), { categories: { ...allOff } }),
     ).toBe(true);
     // A3 is an airline; selecting airline keeps it, selecting only ga drops it.
     expect(
-      matchesFilter(mkAc({ category: "A3" }), {
+      matchesFilter(mkAc({ cat: "A3" }), {
         categories: { ...allOff, airline: true },
       }),
     ).toBe(true);
     expect(
-      matchesFilter(mkAc({ category: "A3" }), {
+      matchesFilter(mkAc({ cat: "A3" }), {
         categories: { ...allOff, ga: true },
       }),
     ).toBe(false);
     // A7 is rotor.
     expect(
-      matchesFilter(mkAc({ category: "A7" }), {
+      matchesFilter(mkAc({ cat: "A7" }), {
         categories: { ...allOff, rotor: true },
       }),
     ).toBe(true);
@@ -134,9 +135,9 @@ describe("matchesFilter", () => {
 
   it("altRangeFt alias behaves like altMinFt/altMaxFt", () => {
     const f = { altRangeFt: [10_000, 40_000] as [number, number] };
-    expect(matchesFilter(mkAc({ alt_baro: 5_000 }), f)).toBe(false);
-    expect(matchesFilter(mkAc({ alt_baro: 25_000 }), f)).toBe(true);
-    expect(matchesFilter(mkAc({ alt_baro: 50_000 }), f)).toBe(false);
+    expect(matchesFilter(mkAc({ altBaroFt: 5_000 }), f)).toBe(false);
+    expect(matchesFilter(mkAc({ altBaroFt: 25_000 }), f)).toBe(true);
+    expect(matchesFilter(mkAc({ altBaroFt: 50_000 }), f)).toBe(false);
   });
 
   it("emergOnly / hasPosOnly aliases behave like legacy fields", () => {
@@ -155,8 +156,10 @@ describe("matchesFilter", () => {
   it("query matches hex, callsign, registration, squawk (case-insensitive)", () => {
     const ac = mkAc({
       hex: "a1b2c3",
+      idKind: "icao",
+      source: "adsb_icao",
       flight: "UAL123",
-      r: "N123AB",
+      reg: "N123AB",
       squawk: "1234",
     });
     expect(matchesFilter(ac, { query: "UAL" })).toBe(true);
@@ -189,28 +192,28 @@ describe("matchesFilter", () => {
       { callsignPrefix: "UPS", altRangeFt: [5000, 45000] as [number, number] },
     ];
     expect(
-      matchesFilter(mkAc({ flight: "FDX123", r: "N1FX" }), {
+      matchesFilter(mkAc({ flight: "FDX123", reg: "N1FX" }), {
         expressionBranches: branches,
       }),
     ).toBe(true);
     expect(
-      matchesFilter(mkAc({ flight: "UPS123", alt_baro: 7000, r: "N2UP" }), {
+      matchesFilter(mkAc({ flight: "UPS123", altBaroFt: 7000, reg: "N2UP" }), {
         expressionBranches: branches,
       }),
     ).toBe(true);
     expect(
-      matchesFilter(mkAc({ flight: "UPS123", alt_baro: 3000, r: "N2UP" }), {
+      matchesFilter(mkAc({ flight: "UPS123", altBaroFt: 3000, reg: "N2UP" }), {
         expressionBranches: branches,
       }),
     ).toBe(false);
     expect(
-      matchesFilter(mkAc({ flight: "FDX123", r: "N1FX" }), {
+      matchesFilter(mkAc({ flight: "FDX123", reg: "N1FX" }), {
         expressionBranches: branches,
         query: "N1",
       }),
     ).toBe(true);
     expect(
-      matchesFilter(mkAc({ flight: "FDX123", r: "N1FX" }), {
+      matchesFilter(mkAc({ flight: "FDX123", reg: "N1FX" }), {
         expressionBranches: branches,
         query: "ZZZ",
       }),
@@ -218,7 +221,7 @@ describe("matchesFilter", () => {
   });
 
   it("countryContains matches ICAO allocation country code and name", () => {
-    const ac = mkAc({ hex: "a8469e" });
+    const ac = mkAc({ hex: "a8469e", idKind: "icao", source: "adsb_icao" });
     expect(matchesFilter(ac, { countryContains: "us" })).toBe(true);
     expect(matchesFilter(ac, { countryContains: "united" })).toBe(true);
     expect(matchesFilter(ac, { countryContains: "gb" })).toBe(false);

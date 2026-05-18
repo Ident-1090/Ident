@@ -6,6 +6,7 @@ toolchain go1.26.2
 
 require (
 	github.com/fsnotify/fsnotify v1.9.0
+	github.com/google/jsonschema-go v0.4.3
 	github.com/gorilla/websocket v1.5.3
 	github.com/klauspost/compress v1.18.5
 )

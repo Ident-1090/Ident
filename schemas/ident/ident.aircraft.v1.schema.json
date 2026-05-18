@@ -1,0 +1,419 @@
+{
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "ident.aircraft.v1"
+    },
+    "producer": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "readsb",
+            "dump1090-fa",
+            "skyaware978",
+            "unknown"
+          ]
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "observedAtEpochSec": {
+      "type": "number"
+    },
+    "frameMessagesTotal": {
+      "type": [
+        "null",
+        "number"
+      ]
+    },
+    "aircraft": {
+      "type": [
+        "null",
+        "array"
+      ],
+      "items": {
+        "type": "object",
+        "properties": {
+          "hex": {
+            "type": "string"
+          },
+          "idKind": {
+            "type": "string",
+            "enum": [
+              "icao",
+              "non_icao",
+              "unknown"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "adsb_icao",
+              "adsb_icao_nt",
+              "adsr_icao",
+              "tisb_icao",
+              "adsb_other",
+              "adsr_other",
+              "tisb_other",
+              "tisb_trackfile",
+              "mode_s",
+              "mode_ac",
+              "mlat",
+              "unknown"
+            ]
+          },
+          "flight": {
+            "type": "string"
+          },
+          "reg": {
+            "type": "string"
+          },
+          "typeDesignator": {
+            "type": "string"
+          },
+          "desc": {
+            "type": "string"
+          },
+          "op": {
+            "type": "string"
+          },
+          "cat": {
+            "type": "string"
+          },
+          "lat": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "lon": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "seenPosSec": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "nic": {
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "rcM": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "altBaroFt": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "altGeomFt": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "onGround": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "gsKt": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "iasKt": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "tasKt": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "mach": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "trackDeg": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "calcTrackDeg": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "trackRateDegSec": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "rollDeg": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "magHeadingDeg": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "trueHeadingDeg": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "baroRateFpm": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "geomRateFpm": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "windDirDeg": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "windKt": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "oatC": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "tatC": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "pressHPa": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "humidity": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "turb": {
+            "type": "string"
+          },
+          "mrarSource": {
+            "type": "string"
+          },
+          "squawk": {
+            "type": "string"
+          },
+          "emergency": {
+            "type": "string"
+          },
+          "alert": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "spi": {
+            "type": [
+              "null",
+              "boolean"
+            ]
+          },
+          "qnhHPa": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "mcpAltFt": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "fmsAltFt": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "navHdgDeg": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "navModes": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "adsbVersion": {
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "uatVersion": {
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "nicBaro": {
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "nacP": {
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "nacV": {
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "sil": {
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "silType": {
+            "type": "string"
+          },
+          "gva": {
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "sda": {
+            "type": [
+              "null",
+              "integer"
+            ]
+          },
+          "aircraftMessagesTotal": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "seenSec": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "rssiDbfs": {
+            "type": [
+              "null",
+              "number"
+            ]
+          },
+          "dbFlags": {
+            "type": [
+              "null",
+              "integer"
+            ],
+            "minimum": 0,
+            "maximum": 65535
+          },
+          "mlatFields": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          },
+          "tisbFields": {
+            "type": [
+              "null",
+              "array"
+            ],
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "hex",
+          "idKind",
+          "source"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "$id": "https://github.com/Ident-1090/Ident/schemas/ident/ident.aircraft.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ident aircraft frame",
+  "required": [
+    "schema",
+    "producer",
+    "observedAtEpochSec",
+    "aircraft"
+  ],
+  "additionalProperties": false
+}

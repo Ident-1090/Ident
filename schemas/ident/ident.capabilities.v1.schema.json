@@ -1,0 +1,145 @@
+{
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "ident.capabilities.v1"
+    },
+    "producer": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "readsb",
+            "dump1090-fa",
+            "skyaware978",
+            "unknown"
+          ]
+        },
+        "version": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "type": "object",
+      "properties": {
+        "aircraft": {
+          "type": "string",
+          "enum": [
+            "producer_provided",
+            "ident_derived",
+            "unavailable"
+          ]
+        },
+        "receiverPosition": {
+          "type": "string",
+          "enum": [
+            "producer_provided",
+            "ident_derived",
+            "unavailable"
+          ]
+        },
+        "messageRate": {
+          "type": "string",
+          "enum": [
+            "producer_provided",
+            "ident_derived",
+            "unavailable"
+          ]
+        },
+        "gain": {
+          "type": "string",
+          "enum": [
+            "producer_provided",
+            "ident_derived",
+            "unavailable"
+          ]
+        },
+        "uptime": {
+          "type": "string",
+          "enum": [
+            "producer_provided",
+            "ident_derived",
+            "unavailable"
+          ]
+        },
+        "maxRange": {
+          "type": "string",
+          "enum": [
+            "producer_provided",
+            "ident_derived",
+            "unavailable"
+          ]
+        },
+        "rangeOutline": {
+          "type": "string",
+          "enum": [
+            "producer_provided",
+            "ident_derived",
+            "unavailable"
+          ]
+        },
+        "signalDiagnostics": {
+          "type": "string",
+          "enum": [
+            "producer_provided",
+            "ident_derived",
+            "unavailable"
+          ]
+        },
+        "meteorology": {
+          "type": "string",
+          "enum": [
+            "producer_provided",
+            "ident_derived",
+            "unavailable"
+          ]
+        },
+        "replay": {
+          "type": "string",
+          "enum": [
+            "producer_provided",
+            "ident_derived",
+            "unavailable"
+          ]
+        },
+        "trails": {
+          "type": "string",
+          "enum": [
+            "producer_provided",
+            "ident_derived",
+            "unavailable"
+          ]
+        }
+      },
+      "required": [
+        "aircraft",
+        "receiverPosition",
+        "messageRate",
+        "gain",
+        "uptime",
+        "maxRange",
+        "rangeOutline",
+        "signalDiagnostics",
+        "meteorology",
+        "replay",
+        "trails"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$id": "https://github.com/Ident-1090/Ident/schemas/ident/ident.capabilities.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ident capabilities",
+  "required": [
+    "schema",
+    "producer",
+    "capabilities"
+  ],
+  "additionalProperties": false
+}

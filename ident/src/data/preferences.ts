@@ -18,7 +18,7 @@ import type {
 } from "./types";
 
 const PREFERENCES_STORAGE_KEY = "ident.preferences";
-const RELEASE_UPDATE_DISMISSAL_MS = 7 * 24 * 60 * 60 * 1000;
+export const NOTIFICATION_SNOOZE_MS = 7 * 24 * 60 * 60 * 1000;
 
 export interface LabelFields {
   cs: boolean;
@@ -65,9 +65,10 @@ export interface ReplayRangeRecent {
   to: string;
 }
 
-export interface ReleaseUpdateDismissal {
-  version: string;
-  dismissedUntil: number;
+export interface NotificationSuppression {
+  keyHash: string;
+  ignored: boolean;
+  snoozedUntil?: number;
 }
 
 interface PreferencesState {
@@ -77,15 +78,15 @@ interface PreferencesState {
   replayWindow: ReplayWindowPreferences;
   replayRangeRecents: ReplayRangeRecent[];
   inspectorTab: InspectorTab;
-  updateDismissal: ReleaseUpdateDismissal | null;
+  notificationSuppressions: NotificationSuppression[];
   setMapPreferences: (next: Partial<MapPreferences>) => void;
   setSettingsPreferences: (next: SettingsPreferences) => void;
   setLayoutPreferences: (next: Partial<LayoutPreferences>) => void;
   setReplayWindow: (next: ReplayWindowPreferences) => void;
   setReplayRangeRecents: (next: ReplayRangeRecent[]) => void;
   setInspectorTab: (tab: InspectorTab) => void;
-  dismissReleaseUpdate: (version: string) => void;
-  clearExpiredReleaseUpdateDismissal: (now?: number) => void;
+  suppressNotification: (keyHash: string, mode: "snooze" | "ignore") => void;
+  clearExpiredNotificationSuppressions: (now?: number) => void;
 }
 
 export const DEFAULT_LABEL_FIELDS: LabelFields = {
@@ -145,15 +146,28 @@ const VALID_BASEMAP_IDS: BasemapId[] = [
   "esriTerrain",
 ];
 
-export function isReleaseUpdateDismissed(
-  version: string | null,
-  dismissal: ReleaseUpdateDismissal | null,
+export function notificationKeyHash(identity: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < identity.length; i++) {
+    hash ^= identity.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `n:${(hash >>> 0).toString(36)}`;
+}
+
+export function isNotificationSuppressed(
+  keyHash: string,
+  suppressions: NotificationSuppression[],
   now = Date.now(),
 ): boolean {
-  return (
-    version != null &&
-    dismissal?.version === version &&
-    dismissal.dismissedUntil > now
+  const key = keyHash.trim();
+  if (!key) return false;
+  return suppressions.some(
+    (suppression) =>
+      suppression.keyHash === key &&
+      (suppression.ignored ||
+        (typeof suppression.snoozedUntil === "number" &&
+          suppression.snoozedUntil > now)),
   );
 }
 
@@ -185,7 +199,7 @@ export const usePreferencesStore = create<PreferencesState>()(
       replayWindow: DEFAULT_REPLAY_WINDOW_PREFERENCES,
       replayRangeRecents: DEFAULT_REPLAY_RANGE_RECENTS,
       inspectorTab: "telemetry",
-      updateDismissal: null,
+      notificationSuppressions: [],
       setMapPreferences: (next) =>
         set((st) => ({ map: normalizeMapPreferences(next, st.map) })),
       setSettingsPreferences: (next) => set({ settings: next }),
@@ -195,23 +209,33 @@ export const usePreferencesStore = create<PreferencesState>()(
       setReplayRangeRecents: (next) =>
         set({ replayRangeRecents: normalizeReplayRangeRecents(next) }),
       setInspectorTab: (tab) => set({ inspectorTab: tab }),
-      dismissReleaseUpdate: (version) =>
-        set(() => {
-          const trimmedVersion = version.trim();
-          if (!trimmedVersion) return {};
+      suppressNotification: (keyHash, mode) =>
+        set((st) => {
+          const trimmedHash = keyHash.trim();
+          if (!trimmedHash) return {};
+          const next: NotificationSuppression = {
+            keyHash: trimmedHash,
+            ignored: mode === "ignore",
+            ...(mode === "snooze"
+              ? { snoozedUntil: Date.now() + NOTIFICATION_SNOOZE_MS }
+              : {}),
+          };
           return {
-            updateDismissal: {
-              version: trimmedVersion,
-              dismissedUntil: Date.now() + RELEASE_UPDATE_DISMISSAL_MS,
-            },
+            notificationSuppressions: [
+              ...st.notificationSuppressions.filter(
+                (suppression) => suppression.keyHash !== trimmedHash,
+              ),
+              next,
+            ],
           };
         }),
-      clearExpiredReleaseUpdateDismissal: (now = Date.now()) =>
-        set((st) =>
-          st.updateDismissal != null && st.updateDismissal.dismissedUntil <= now
-            ? { updateDismissal: null }
-            : {},
-        ),
+      clearExpiredNotificationSuppressions: (now = Date.now()) =>
+        set((st) => ({
+          notificationSuppressions: normalizeNotificationSuppressions(
+            st.notificationSuppressions,
+            now,
+          ),
+        })),
     }),
     {
       name: PREFERENCES_STORAGE_KEY,
@@ -223,7 +247,7 @@ export const usePreferencesStore = create<PreferencesState>()(
         replayWindow: state.replayWindow,
         replayRangeRecents: state.replayRangeRecents,
         inspectorTab: state.inspectorTab,
-        updateDismissal: state.updateDismissal,
+        notificationSuppressions: state.notificationSuppressions,
       }),
       merge: (persisted, current) => {
         const saved = persisted as Partial<
@@ -235,7 +259,7 @@ export const usePreferencesStore = create<PreferencesState>()(
             | "replayWindow"
             | "replayRangeRecents"
             | "inspectorTab"
-            | "updateDismissal"
+            | "notificationSuppressions"
           >
         >;
         return {
@@ -256,8 +280,8 @@ export const usePreferencesStore = create<PreferencesState>()(
           inspectorTab: isInspectorTab(saved.inspectorTab)
             ? saved.inspectorTab
             : current.inspectorTab,
-          updateDismissal: normalizeReleaseUpdateDismissal(
-            saved.updateDismissal,
+          notificationSuppressions: normalizeNotificationSuppressions(
+            saved.notificationSuppressions,
           ),
         };
       },
@@ -274,7 +298,7 @@ export function resetPreferencesStoreForTests(): void {
     replayWindow: DEFAULT_REPLAY_WINDOW_PREFERENCES,
     replayRangeRecents: DEFAULT_REPLAY_RANGE_RECENTS,
     inspectorTab: "telemetry",
-    updateDismissal: null,
+    notificationSuppressions: [],
   });
 }
 
@@ -388,17 +412,23 @@ function normalizeReplayRangeRecents(
   return out;
 }
 
-function normalizeReleaseUpdateDismissal(
-  raw: Partial<ReleaseUpdateDismissal> | null | undefined,
-): ReleaseUpdateDismissal | null {
-  if (
-    typeof raw?.version !== "string" ||
-    typeof raw.dismissedUntil !== "number" ||
-    raw.dismissedUntil <= Date.now()
-  ) {
-    return null;
+function normalizeNotificationSuppressions(
+  raw: Partial<NotificationSuppression>[] | null | undefined,
+  now = Date.now(),
+): NotificationSuppression[] {
+  if (!Array.isArray(raw)) return [];
+  const out: NotificationSuppression[] = [];
+  for (const item of raw) {
+    const keyHash = typeof item.keyHash === "string" ? item.keyHash.trim() : "";
+    if (!keyHash) continue;
+    const ignored = item.ignored === true;
+    const snoozedUntil =
+      typeof item.snoozedUntil === "number" ? item.snoozedUntil : undefined;
+    if (!ignored && (snoozedUntil == null || snoozedUntil <= now)) continue;
+    if (out.some((existing) => existing.keyHash === keyHash)) continue;
+    out.push({ keyHash, ignored, ...(snoozedUntil ? { snoozedUntil } : {}) });
   }
-  return { version: raw.version, dismissedUntil: raw.dismissedUntil };
+  return out;
 }
 
 function isInspectorTab(v: unknown): v is InspectorTab {

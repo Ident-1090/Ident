@@ -171,8 +171,7 @@ function DrawerContent({
   onClose: () => void;
   onOpenSettings: () => void;
 }) {
-  const { cells, buildLabel } = useReceiverDiagnostics();
-  const updateAvailable = useIdentStore((s) => s.update.status === "available");
+  const { cells, producerLabel } = useReceiverDiagnostics();
   return (
     <div className="h-full min-h-0 flex flex-col">
       <div className="grid grid-cols-[1fr_1fr_1fr_1fr_44px] border-b border-(--color-line) flex-none">
@@ -201,7 +200,6 @@ function DrawerContent({
           tab="settings"
           activeTab={activeTab}
           onSelect={onSelectTab}
-          indicator={updateAvailable}
         >
           Settings
         </DrawerTabButton>
@@ -243,7 +241,7 @@ function DrawerContent({
               ))}
             </div>
             <div className="mt-3 font-mono text-[10px] text-ink-faint">
-              {buildLabel}
+              {producerLabel}
             </div>
           </section>
         )}

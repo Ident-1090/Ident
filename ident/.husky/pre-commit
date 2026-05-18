@@ -1,0 +1,10 @@
+#!/usr/bin/env sh
+set -eu
+
+repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
+
+cd "$repo_root/identd"
+go test . -run TestIdentSchemasAreCurrent -count=1
+
+cd "$repo_root/ident"
+pnpm check-ident-schemas

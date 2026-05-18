@@ -36,7 +36,6 @@ type ReleaseInfo struct {
 type UpdateStatus struct {
 	Enabled       bool         `json:"enabled"`
 	Status        string       `json:"status"`
-	Current       VersionInfo  `json:"current"`
 	Latest        *ReleaseInfo `json:"latest,omitempty"`
 	CheckedAt     string       `json:"checkedAt,omitempty"`
 	LastSuccessAt string       `json:"lastSuccessAt,omitempty"`
@@ -133,7 +132,6 @@ func (c *UpdateChecker) Status(ctx context.Context) UpdateStatus {
 		return UpdateStatus{
 			Enabled: false,
 			Status:  UpdateDisabled,
-			Current: c.current,
 		}
 	}
 
@@ -163,7 +161,6 @@ func (c *UpdateChecker) Status(ctx context.Context) UpdateStatus {
 	checkedAt := formatTime(now)
 	status := UpdateStatus{
 		Enabled:   true,
-		Current:   c.current,
 		CheckedAt: checkedAt,
 	}
 
@@ -223,12 +220,27 @@ func (c *UpdateChecker) unavailableLocked(checkedAt string, err error) UpdateSta
 	return UpdateStatus{
 		Enabled:       true,
 		Status:        UpdateUnavailable,
-		Current:       c.current,
 		Latest:        c.lastSuccess,
 		CheckedAt:     checkedAt,
 		LastSuccessAt: c.lastSuccessAt,
 		Error:         err.Error(),
 	}
+}
+
+func (s UpdateStatus) Diagnostic() (diagnostic, bool) {
+	if s.Status != UpdateAvailable || s.Latest == nil {
+		return diagnostic{}, false
+	}
+	version := strings.TrimSpace(s.Latest.Version)
+	if version == "" {
+		return diagnostic{}, false
+	}
+	d := infoDiagnostic("update", "update.release.available", "Ident "+version+" is available")
+	if url := strings.TrimSpace(s.Latest.URL); url != "" {
+		d.ActionLabel = "Release notes"
+		d.ActionURL = url
+	}
+	return d, true
 }
 
 func (c *UpdateChecker) fetchLatest(ctx context.Context) (*ReleaseInfo, bool, string, error) {

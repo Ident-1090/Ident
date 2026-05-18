@@ -7,16 +7,18 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/klauspost/compress/zstd"
 )
 
 func TestReplayStoreFinalizesZstdBlockAndIndex(t *testing.T) {
 	store := newTestReplayStore(t, 10_000_000)
 
-	store.IngestAircraftJSON(replayFrameJSON(120, "abc123", 34.1, -118.1))
+	store.IngestAircraftFrame(replayFrameForTest(120, "abc123", 34.1, -118.1))
 	if got := store.Manifest(); len(got.Blocks) != 0 {
 		t.Fatalf("active block was published: %#v", got.Blocks)
 	}
-	store.IngestAircraftJSON(replayFrameJSON(181, "abc123", 34.2, -118.2))
+	store.IngestAircraftFrame(replayFrameForTest(181, "abc123", 34.2, -118.2))
 
 	manifest := store.Manifest()
 	if len(manifest.Blocks) != 1 {
@@ -36,19 +38,19 @@ func TestReplayStoreFinalizesZstdBlockAndIndex(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read block: %v", err)
 	}
-	if body.Version != 1 || len(body.Frames) != 1 {
+	if body.Version != replayManifestVersion || len(body.Frames) != 1 {
 		t.Fatalf("block body = %#v", body)
 	}
 }
 
 func TestReplayStorePrunesOldestBlocksByByteBudget(t *testing.T) {
 	store := newTestReplayStore(t, 10_000_000)
-	store.IngestAircraftJSON(replayFrameJSON(120, "abc123", 34.1, -118.1))
-	store.IngestAircraftJSON(replayFrameJSON(181, "abc123", 34.2, -118.2))
+	store.IngestAircraftFrame(replayFrameForTest(120, "abc123", 34.1, -118.1))
+	store.IngestAircraftFrame(replayFrameForTest(181, "abc123", 34.2, -118.2))
 	first := store.Manifest().Blocks[0]
 
 	store.maxBytes = first.Bytes + 20
-	store.IngestAircraftJSON(replayFrameJSON(241, "def456", 35.1, -119.1))
+	store.IngestAircraftFrame(replayFrameForTest(241, "def456", 35.1, -119.1))
 
 	manifest := store.Manifest()
 	if len(manifest.Blocks) != 1 {
@@ -68,10 +70,10 @@ func TestReplayStorePrunesOldestBlocksByByteBudget(t *testing.T) {
 func TestReplayStorePrunesByRetention(t *testing.T) {
 	store := newTestReplayStore(t, 10_000_000)
 	store.retention = time.Minute
-	store.IngestAircraftJSON(replayFrameJSON(120, "abc123", 34.1, -118.1))
-	store.IngestAircraftJSON(replayFrameJSON(181, "abc123", 34.2, -118.2))
-	store.IngestAircraftJSON(replayFrameJSON(360, "def456", 35.1, -119.1))
-	store.IngestAircraftJSON(replayFrameJSON(421, "def456", 35.2, -119.2))
+	store.IngestAircraftFrame(replayFrameForTest(120, "abc123", 34.1, -118.1))
+	store.IngestAircraftFrame(replayFrameForTest(181, "abc123", 34.2, -118.2))
+	store.IngestAircraftFrame(replayFrameForTest(360, "def456", 35.1, -119.1))
+	store.IngestAircraftFrame(replayFrameForTest(421, "def456", 35.2, -119.2))
 
 	manifest := store.Manifest()
 	if len(manifest.Blocks) != 1 {
@@ -91,7 +93,7 @@ func TestReplayStoreLoadCleansTempAndRebuildsIndex(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(blocksDir, ".partial.tmp"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, replayIndexName), []byte(`{"version":1,"blocks":[{"start":1,"end":2,"url":"/api/replay/blocks/1-2.json.zst","bytes":10}]}`), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, replayIndexName), []byte(`{"version":`+fmt.Sprint(replayManifestVersion)+`,"blocks":[{"start":1,"end":2,"url":"/api/replay/blocks/1-2.json.zst","bytes":10}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -119,9 +121,9 @@ func TestReplayStoreLoadCleansTempAndRebuildsIndex(t *testing.T) {
 
 func TestReplayStoreLoadMergesBlocksMissingFromIndex(t *testing.T) {
 	store := newTestReplayStore(t, 10_000_000)
-	store.IngestAircraftJSON(replayFrameJSON(120, "abc123", 34.1, -118.1))
-	store.IngestAircraftJSON(replayFrameJSON(181, "abc123", 34.2, -118.2))
-	store.IngestAircraftJSON(replayFrameJSON(241, "def456", 35.1, -119.1))
+	store.IngestAircraftFrame(replayFrameForTest(120, "abc123", 34.1, -118.1))
+	store.IngestAircraftFrame(replayFrameForTest(181, "abc123", 34.2, -118.2))
+	store.IngestAircraftFrame(replayFrameForTest(241, "def456", 35.1, -119.1))
 
 	blocks := store.Manifest().Blocks
 	if len(blocks) != 2 {
@@ -129,7 +131,7 @@ func TestReplayStoreLoadMergesBlocksMissingFromIndex(t *testing.T) {
 	}
 	if err := os.WriteFile(
 		filepath.Join(store.dir, replayIndexName),
-		[]byte(`{"version":1,"blocks":[{"start":120000,"end":180000,"url":"/api/replay/blocks/120000-180000.json.zst","bytes":`+fmt.Sprint(blocks[0].Bytes)+`}]}`),
+		[]byte(`{"version":`+fmt.Sprint(replayManifestVersion)+`,"blocks":[{"start":120000,"end":180000,"url":"/api/replay/blocks/120000-180000.json.zst","bytes":`+fmt.Sprint(blocks[0].Bytes)+`}]}`),
 		0o644,
 	); err != nil {
 		t.Fatal(err)
@@ -159,6 +161,115 @@ func TestReplayStoreLoadMergesBlocksMissingFromIndex(t *testing.T) {
 	}
 }
 
+func TestReplayStoreLoadIgnoresBlockWithUnsupportedVersion(t *testing.T) {
+	dir := t.TempDir()
+	blocksDir := filepath.Join(dir, replayBlocksDirName)
+	if err := os.MkdirAll(blocksDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now().Add(-time.Minute).UnixMilli()
+	end := start + int64(time.Minute/time.Millisecond)
+	name := replayBlockName(start, end)
+	if err := writeReplayBlockForTest(filepath.Join(blocksDir, name), replayBlockFile{
+		Version: replayManifestVersion - 1,
+		Start:   start,
+		End:     end,
+		StepMS:  5000,
+		Frames:  []ReplayFrame{{Ts: start}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(dir, replayIndexName),
+		[]byte(`{"version":`+fmt.Sprint(replayManifestVersion)+`,"blocks":[{"start":`+fmt.Sprint(start)+`,"end":`+fmt.Sprint(end)+`,"url":"/api/replay/blocks/`+name+`","bytes":1}]}`),
+		0o644,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	diagnostics := NewDiagnosticCollector()
+	store, err := NewReplayStore(ReplayOptions{
+		Enabled:            true,
+		Dir:                dir,
+		Retention:          time.Hour,
+		MaxBytes:           1_000_000,
+		BlockDuration:      time.Minute,
+		SampleInterval:     5 * time.Second,
+		StartupDiagnostics: diagnostics,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Manifest().Blocks; len(got) != 0 {
+		t.Fatalf("loaded incompatible replay block: %#v", got)
+	}
+	gotDiagnostics := diagnostics.Snapshot()
+	if len(gotDiagnostics) != 1 || gotDiagnostics[0].Code != "replay.cache.unsupported_version" {
+		t.Fatalf("diagnostics = %#v", gotDiagnostics)
+	}
+	if _, err := os.Stat(filepath.Join(blocksDir, name)); err != nil {
+		t.Fatalf("incompatible replay block was removed: %v", err)
+	}
+}
+
+func TestReplayStoreLoadIgnoresBlockWithUnknownFields(t *testing.T) {
+	dir := t.TempDir()
+	blocksDir := filepath.Join(dir, replayBlocksDirName)
+	if err := os.MkdirAll(blocksDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now().Add(-time.Minute).UnixMilli()
+	end := start + int64(time.Minute/time.Millisecond)
+	name := replayBlockName(start, end)
+	if err := writeReplayBlockForTest(filepath.Join(blocksDir, name), struct {
+		Version int           `json:"version"`
+		Start   int64         `json:"start"`
+		End     int64         `json:"end"`
+		StepMS  int64         `json:"step_ms"`
+		Frames  []ReplayFrame `json:"frames"`
+		Extra   string        `json:"extra"`
+	}{
+		Version: replayManifestVersion,
+		Start:   start,
+		End:     end,
+		StepMS:  5000,
+		Frames:  []ReplayFrame{{Ts: start}},
+		Extra:   "unexpected",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	diagnostics := NewDiagnosticCollector()
+	store, err := NewReplayStore(ReplayOptions{
+		Enabled:            true,
+		Dir:                dir,
+		Retention:          time.Hour,
+		MaxBytes:           1_000_000,
+		BlockDuration:      time.Minute,
+		SampleInterval:     5 * time.Second,
+		StartupDiagnostics: diagnostics,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Load(); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Manifest().Blocks; len(got) != 0 {
+		t.Fatalf("loaded replay block with unknown field: %#v", got)
+	}
+	gotDiagnostics := diagnostics.Snapshot()
+	if len(gotDiagnostics) != 1 || gotDiagnostics[0].Code != "replay.cache.unreadable" {
+		t.Fatalf("diagnostics = %#v", gotDiagnostics)
+	}
+	if _, err := os.Stat(filepath.Join(blocksDir, name)); err != nil {
+		t.Fatalf("replay block with unknown field was removed: %v", err)
+	}
+}
+
 func newTestReplayStore(t *testing.T, maxBytes int64) *ReplayStore {
 	t.Helper()
 	store, err := NewReplayStore(ReplayOptions{
@@ -178,22 +289,24 @@ func newTestReplayStore(t *testing.T, maxBytes int64) *ReplayStore {
 	return store
 }
 
-func replayFrameJSON(now float64, hex string, lat, lon float64) []byte {
-	body, _ := json.Marshal(map[string]any{
-		"now": now,
-		"aircraft": []map[string]any{{
-			"hex":      hex,
-			"flight":   "UAL123",
-			"r":        "N12345",
-			"t":        "B738",
-			"lat":      lat,
-			"lon":      lon,
-			"alt_baro": 12000,
-			"gs":       420,
-			"track":    90,
+func replayFrameForTest(now float64, hex string, lat, lon float64) identAircraftFrame {
+	return identAircraftFrame{
+		Schema:             "ident.aircraft.v1",
+		ObservedAtEpochSec: now,
+		Aircraft: []identAircraft{{
+			Hex:            hex,
+			IDKind:         aircraftIDKind(hex),
+			Source:         aircraftSource(""),
+			Flight:         "UAL123",
+			Registration:   "N12345",
+			TypeDesignator: "B738",
+			Lat:            floatPtrForTest(lat),
+			Lon:            floatPtrForTest(lon),
+			AltBaroFt:      floatPtrForTest(12000),
+			GsKt:           floatPtrForTest(420),
+			TrackDeg:       floatPtrForTest(90),
 		}},
-	})
-	return body
+	}
 }
 
 func totalReplayBytes(blocks []ReplayBlockIndex) int64 {
@@ -202,4 +315,26 @@ func totalReplayBytes(blocks []ReplayBlockIndex) int64 {
 		total += block.Bytes
 	}
 	return total
+}
+
+func writeReplayBlockForTest(path string, block any) error {
+	f, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	zw, err := zstd.NewWriter(f)
+	if err != nil {
+		_ = f.Close()
+		return err
+	}
+	encErr := json.NewEncoder(zw).Encode(block)
+	closeZstdErr := zw.Close()
+	closeFileErr := f.Close()
+	if encErr != nil {
+		return encErr
+	}
+	if closeZstdErr != nil {
+		return closeZstdErr
+	}
+	return closeFileErr
 }

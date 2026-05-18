@@ -72,7 +72,6 @@ export function Topbar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const toggleLabelField = useIdentStore((s) => s.toggleLabelField);
   const basemapId = useIdentStore((s) => s.map.basemapId);
   const setBasemap = useIdentStore((s) => s.setBasemap);
-  const updateAvailable = useIdentStore((s) => s.update.status === "available");
   const replay = useIdentStore((s) => s.replay);
   const wsStatus = useIdentStore((s) => s.connectionStatus.ws ?? "connecting");
 
@@ -149,12 +148,7 @@ export function Topbar({ onOpenSettings }: { onOpenSettings: () => void }) {
           <Toggle label={THEME_LABEL[theme]} onClick={cycleTheme} tooltip>
             <ThemeIcon size={15} strokeWidth={1.75} aria-hidden="true" />
           </Toggle>
-          <Toggle
-            label="Settings"
-            onClick={onOpenSettings}
-            mdOnly
-            indicator={updateAvailable}
-          >
+          <Toggle label="Settings" onClick={onOpenSettings} mdOnly>
             <Settings2 size={15} strokeWidth={1.75} aria-hidden="true" />
           </Toggle>
         </div>
@@ -316,12 +310,7 @@ export function Topbar({ onOpenSettings }: { onOpenSettings: () => void }) {
         <Toggle label={THEME_LABEL[theme]} onClick={cycleTheme} tooltip>
           <ThemeIcon size={15} strokeWidth={1.75} aria-hidden="true" />
         </Toggle>
-        <Toggle
-          label="Settings"
-          onClick={onOpenSettings}
-          mdOnly
-          indicator={updateAvailable}
-        >
+        <Toggle label="Settings" onClick={onOpenSettings} mdOnly>
           <Settings2 size={15} strokeWidth={1.75} aria-hidden="true" />
         </Toggle>
       </div>

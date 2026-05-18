@@ -52,6 +52,16 @@ func TestUpdateCheckerReportsAvailableRelease(t *testing.T) {
 	if status.Error != "" {
 		t.Fatalf("error = %q", status.Error)
 	}
+	diagnostic, ok := status.Diagnostic()
+	if !ok {
+		t.Fatal("available update did not produce diagnostic")
+	}
+	if diagnostic.Code != "update.release.available" || diagnostic.Severity != "info" {
+		t.Fatalf("diagnostic = %#v", diagnostic)
+	}
+	if diagnostic.ActionURL == "" || diagnostic.ActionLabel != "Release notes" {
+		t.Fatalf("diagnostic action = %#v", diagnostic)
+	}
 }
 
 func TestUpdateCheckerReportsCurrentRelease(t *testing.T) {

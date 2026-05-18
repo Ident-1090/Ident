@@ -207,7 +207,14 @@ func TestStaleEntryDroppedByJanitor(t *testing.T) {
 	if env["type"] != "routes" {
 		t.Fatalf("unexpected drop envelope type: %s", pubs[0])
 	}
-	data, ok := env["data"].([]any)
+	payload, ok := env["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected data object, got: %s", pubs[0])
+	}
+	if payload["schema"] != "ident.routes.v1" {
+		t.Fatalf("schema = %v, want ident.routes.v1 in %s", payload["schema"], pubs[0])
+	}
+	data, ok := payload["routes"].([]any)
 	if !ok || len(data) != 1 {
 		t.Fatalf("expected data[1], got: %s", pubs[0])
 	}
@@ -298,7 +305,14 @@ func TestRouteSnapshotsSortedAndExcludesNoRoute(t *testing.T) {
 	if env["type"] != "routes" {
 		t.Fatalf("unexpected type: %s", snaps[0])
 	}
-	data, ok := env["data"].([]any)
+	payload, ok := env["data"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected data object, got: %s", snaps[0])
+	}
+	if payload["schema"] != "ident.routes.v1" {
+		t.Fatalf("schema = %v, want ident.routes.v1 in %s", payload["schema"], snaps[0])
+	}
+	data, ok := payload["routes"].([]any)
 	if !ok || len(data) != 2 {
 		t.Fatalf("expected two entries (NOPE excluded), got: %s", snaps[0])
 	}
@@ -340,9 +354,16 @@ func TestParseRoutesetResponseShapes(t *testing.T) {
 	}
 }
 
-func TestExtractAircraftCallsigns(t *testing.T) {
-	body := []byte(`{"now":1,"aircraft":[{"hex":"abc","flight":"ual123"},{"hex":"def","flight":"  "},{"hex":"ghi","flight":"SWA44 "},{"hex":"jkl"}]}`)
-	got := extractAircraftCallsigns(body)
+func TestExtractAircraftCallsignsFromFrame(t *testing.T) {
+	frame := identAircraftFrame{
+		Aircraft: []identAircraft{
+			{Hex: "abc", IDKind: identAircraftIDICAO, Source: aircraftSourceADSBICAO, Flight: "ual123"},
+			{Hex: "def", IDKind: identAircraftIDICAO, Source: aircraftSourceADSBICAO, Flight: "  "},
+			{Hex: "ghi", IDKind: identAircraftIDICAO, Source: aircraftSourceADSBICAO, Flight: "SWA44 "},
+			{Hex: "jkl", IDKind: identAircraftIDICAO, Source: aircraftSourceADSBICAO},
+		},
+	}
+	got := extractAircraftCallsignsFromFrame(frame)
 	if len(got) != 2 || got[0] != "UAL123" || got[1] != "SWA44" {
 		t.Fatalf("unexpected: %+v", got)
 	}

@@ -16,17 +16,19 @@ import type {
   CategoryKey,
   ClockMode,
   HeyWhatsThatJson,
+  IdentCapabilitiesEnvelope,
+  IdentRangeOutline,
+  IdentReplayAvailability,
+  IdentStatus,
   InspectorTab,
   LabelMode,
   LayerKey,
-  OutlineJson,
   ReceiverJson,
   ReplayBlockFile,
   ReplayBlockIndex,
   ReplayFrame,
   ReplayManifest,
   RouteInfo,
-  StatsJson,
   ThemeMode,
   TrailPoint,
   TrailPointInput,
@@ -82,7 +84,7 @@ export interface FilterSlice {
   hasPosOnly: boolean;
   // Free-text field filters set by the omnibox grammar (e.g. `op:delta`).
   // Empty string = no filter. Matching is case-insensitive substring for
-  // operatorContains (over ac.ownOp / ac.desc) and case-insensitive prefix
+  // operatorContains (over ac.op / ac.desc) and case-insensitive prefix
   // for callsignPrefix (over ac.flight).
   operatorContains: string;
   callsignPrefix: string;
@@ -97,9 +99,9 @@ export interface FilterSlice {
   regPrefix: string;
   squawkEquals: string;
   typePrefix: string;
-  // readsb source-kind (ac.type): empty string means no filter. Shorthand
+  // Aircraft source-kind (ac.source): empty string means no filter. Shorthand
   // values `adsb`, `tisb` match any member of that prefix family; other
-  // values compare exactly against ac.type.
+  // values compare exactly against ac.source.
   sourceEquals: string;
   // Numeric range filters. null = no filter.
   gsRangeKt: [number, number] | null;
@@ -172,43 +174,9 @@ export interface LiveStateSlice {
   routesViaWs: boolean;
 }
 
-// Relay-pushed runtime config (`config` channel). Populated on WS connect;
-// client-side display surfaces fall back to deriving values from the
-// receiver envelope when a field is null.
+// Relay-pushed runtime config (`config` channel). Populated on WS connect.
 export interface ConfigSlice {
   station: string | null;
-}
-
-export type UpdateStatusKind =
-  | "idle"
-  | "checking"
-  | "current"
-  | "available"
-  | "unavailable"
-  | "disabled"
-  | "unknown";
-
-export interface VersionInfo {
-  version: string;
-  commit: string;
-  date: string;
-}
-
-export interface ReleaseInfo {
-  version: string;
-  name?: string;
-  url?: string;
-  publishedAt?: string;
-}
-
-export interface UpdateSlice {
-  enabled: boolean;
-  status: UpdateStatusKind;
-  current: VersionInfo | null;
-  latest: ReleaseInfo | null;
-  checkedAt: string | null;
-  lastSuccessAt: string | null;
-  error: string | null;
 }
 
 export type ReplayMode = "live" | "replay";
@@ -284,8 +252,9 @@ const DEFAULT_FILTER: FilterSlice = {
 export interface IdentState {
   aircraft: Map<string, Aircraft>;
   receiver: ReceiverJson | null;
-  stats: StatsJson | null;
-  outline: OutlineJson | null;
+  rangeOutline: IdentRangeOutline | null;
+  identStatus: IdentStatus | null;
+  capabilities: IdentCapabilitiesEnvelope | null;
   now: number;
   connectionStatus: Record<string, ConnStatus>;
   connectionStatusInfo: Record<string, ConnStatusInfo>;
@@ -334,19 +303,15 @@ export interface IdentState {
   // Relay-supplied runtime config (station name, …).
   config: ConfigSlice;
 
-  // GitHub release notification status. identd owns the GitHub request/cache
-  // and never installs updates; the browser only reads this local endpoint.
-  update: UpdateSlice;
-
   // File-backed replay. Receiver status and diagnostics remain live; this
   // swaps the traffic/trails display surface only.
   replay: ReplaySlice;
 
   // Ingestion.
   ingestAircraft: (frame: AircraftFrame) => void;
-  ingestReceiver: (r: ReceiverJson) => void;
-  ingestStats: (s: StatsJson) => void;
-  ingestOutline: (o: OutlineJson) => void;
+  ingestRangeOutline: (outline: IdentRangeOutline) => void;
+  ingestStatus: (s: IdentStatus) => void;
+  ingestCapabilities: (c: IdentCapabilitiesEnvelope) => void;
   ingestConfig: (c: Partial<ConfigSlice>) => void;
   setConnectionStatus: (
     channel: string,
@@ -375,9 +340,9 @@ export interface IdentState {
   setFilterSquawkEquals: (v: string) => void;
   setFilterTypePrefix: (v: string) => void;
   setFilterSourceEquals: (v: string) => void;
-  setFilterGsRangeKt: (r: [number, number] | null) => void;
-  setFilterDistRangeNm: (r: [number, number] | null) => void;
-  setFilterVsRangeFpm: (r: [number, number] | null) => void;
+  setFilterGsRangeKt: (range: [number, number] | null) => void;
+  setFilterDistRangeNm: (range: [number, number] | null) => void;
+  setFilterVsRangeFpm: (range: [number, number] | null) => void;
   setFilterHdgWindow: (center: number | null, tolerance: number | null) => void;
   setFilterMilitaryOnly: (v: boolean) => void;
   setFilterInViewOnly: (v: boolean) => void;
@@ -420,11 +385,9 @@ export interface IdentState {
   // Live feedback.
   recordSnapshot: () => void;
 
-  // Update notification.
-  setUpdateStatus: (next: Partial<UpdateSlice>) => void;
-
   // Replay.
   setReplayManifest: (manifest: ReplayManifest) => void;
+  ingestReplayAvailability: (envelope: IdentReplayAvailability) => void;
   setReplayBlock: (url: string, block: ReplayBlockFile) => void;
   setReplayRecent: (block: ReplayBlockFile | null) => void;
   setReplayLoading: (loading: boolean) => void;
@@ -446,8 +409,9 @@ function appendTrimmed(buf: number[] | undefined, value: number): number[] {
 }
 
 function aircraftFrameTimestampMs(frame: AircraftFrame): number {
-  return typeof frame.now === "number" && Number.isFinite(frame.now)
-    ? Math.round(frame.now * 1000)
+  return typeof frame.observedAtEpochSec === "number" &&
+    Number.isFinite(frame.observedAtEpochSec)
+    ? Math.round(frame.observedAtEpochSec * 1000)
     : Date.now();
 }
 
@@ -456,9 +420,9 @@ function aircraftFrameAdvanced(
   previousNow: number,
 ): boolean {
   return (
-    typeof frame.now === "number" &&
-    Number.isFinite(frame.now) &&
-    frame.now > previousNow
+    typeof frame.observedAtEpochSec === "number" &&
+    Number.isFinite(frame.observedAtEpochSec) &&
+    frame.observedAtEpochSec > previousNow
   );
 }
 
@@ -492,6 +456,65 @@ function replayAvailability(
   return { from, to };
 }
 
+interface ReplayAvailabilityUpdate {
+  enabled: boolean;
+  remoteFrom: number | null;
+  remoteTo: number | null;
+  blockSec: number;
+  // When omitted, the existing block index is preserved. Manifest fetches
+  // supply it; envelope updates do not, because the envelope carries only
+  // bounds and a count.
+  blocks?: ReplayBlockIndex[];
+}
+
+function applyReplayAvailability(
+  replay: ReplaySlice,
+  update: ReplayAvailabilityUpdate,
+): ReplaySlice {
+  const enabled = update.enabled;
+  const blocks = update.blocks ?? replay.blocks;
+  const available = replayAvailability(
+    update.remoteFrom,
+    update.remoteTo,
+    replay.recent ?? null,
+  );
+  const availableFrom = available.from;
+  const availableTo = available.to;
+  const requestedReplay =
+    enabled && replay.mode === "replay" && availableFrom != null;
+  const followsLiveEdge = requestedReplay && replayFollowsLiveEdge(replay);
+  const mode = requestedReplay && !followsLiveEdge ? "replay" : "live";
+  const playheadMs =
+    mode === "replay"
+      ? clampReplayPlayhead(
+          replay.playheadMs ?? availableTo ?? availableFrom ?? 0,
+          availableFrom,
+          availableTo,
+        )
+      : null;
+  return {
+    ...replay,
+    enabled,
+    availableFrom,
+    availableTo,
+    blockSec: update.blockSec > 0 ? update.blockSec : replay.blockSec,
+    blocks,
+    recent: enabled ? replay.recent : null,
+    mode,
+    playheadMs,
+    trailStartMs:
+      mode === "replay" ? (replay.trailStartMs ?? playheadMs) : null,
+    playing: mode === "replay" ? replay.playing : true,
+    viewWindow:
+      mode === "live" ? liveReplayWindow(replay.viewWindow) : replay.viewWindow,
+    followLiveEdge: false,
+    loading: followsLiveEdge ? false : replay.loading,
+    resumeAfterLoading: followsLiveEdge ? false : replay.resumeAfterLoading,
+    error: enabled ? replay.error : null,
+    errorUrl: enabled ? replay.errorUrl : null,
+  };
+}
+
 function normalizeReplayBlock(block: ReplayBlockFile): ReplayBlockFile {
   const frames = Array.isArray(block.frames)
     ? block.frames
@@ -506,7 +529,7 @@ function normalizeReplayBlock(block: ReplayBlockFile): ReplayBlockFile {
     ? block.end
     : (frames[frames.length - 1]?.ts ?? start);
   return {
-    version: 1,
+    version: 2,
     start,
     end,
     step_ms:
@@ -524,7 +547,7 @@ function appendRecentReplayFrame(
   if (!replay.enabled || frame.aircraft.length === 0) return replay;
   const followsLiveEdge = replayFollowsLiveEdge(replay);
   const prev = replay.recent ?? {
-    version: 1 as const,
+    version: 2 as const,
     start: frame.ts,
     end: frame.ts,
     step_ms: 1000,
@@ -539,7 +562,7 @@ function appendRecentReplayFrame(
   const frames = [...prev.frames, frame];
   const nextRecent = pruneRecentReplayFrames(
     {
-      version: 1,
+      version: 2,
       start: Math.min(prev.start, frame.ts),
       end: Math.max(prev.end, frame.ts),
       step_ms: prev.step_ms,
@@ -624,7 +647,7 @@ function retainAgedAircraft(
   previous: IdentState,
   frame: AircraftFrame,
 ): void {
-  const elapsedSec = frame.now - previous.now;
+  const elapsedSec = frame.observedAtEpochSec - previous.now;
   for (const [hex, aircraft] of previous.aircraft) {
     if (next.has(hex)) continue;
     const aged = ageAircraft(aircraft, elapsedSec);
@@ -639,8 +662,8 @@ function ageAircraft(aircraft: Aircraft, deltaSec: number): Aircraft {
   if (delta === 0) return aircraft;
   return {
     ...aircraft,
-    seen: ageSeconds(aircraft.seen, delta),
-    seen_pos: ageSeconds(aircraft.seen_pos, delta),
+    seenSec: ageSeconds(aircraft.seenSec, delta),
+    seenPosSec: ageSeconds(aircraft.seenPosSec, delta),
   };
 }
 
@@ -687,16 +710,6 @@ const INITIAL_CAMERA_STATE: CameraSlice = {
   lastUserInteraction: null,
 };
 
-const INITIAL_UPDATE_STATE: UpdateSlice = {
-  enabled: true,
-  status: "idle",
-  current: null,
-  latest: null,
-  checkedAt: null,
-  lastSuccessAt: null,
-  error: null,
-};
-
 const INITIAL_REPLAY_STATE: ReplaySlice = {
   enabled: false,
   availableFrom: null,
@@ -722,8 +735,9 @@ const INITIAL_REPLAY_STATE: ReplaySlice = {
 export const useIdentStore = create<IdentState>((set) => ({
   aircraft: new Map(),
   receiver: null,
-  stats: null,
-  outline: null,
+  rangeOutline: null,
+  identStatus: null,
+  capabilities: null,
   now: 0,
   connectionStatus: { ws: "connecting" },
   connectionStatusInfo: { ws: { isRetry: false } },
@@ -763,8 +777,6 @@ export const useIdentStore = create<IdentState>((set) => ({
 
   config: { station: null },
 
-  update: INITIAL_UPDATE_STATE,
-
   replay: INITIAL_REPLAY_STATE,
 
   ingestAircraft: (frame) =>
@@ -778,24 +790,27 @@ export const useIdentStore = create<IdentState>((set) => ({
       const retainedHexes = new Set(next.keys());
       const nowMs = aircraftFrameTimestampMs(frame);
 
-      // Push sampled numeric values (alt_baro, gs, rssi) into per-hex rolling
+      // Push sampled numeric values (altBaroFt, gs, rssi) into per-hex rolling
       // buffers. Keeping this inside ingestAircraft gives us a single call site
       // for live and replayed aircraft frames.
       const altTrendsByHex: Record<string, number[]> = { ...st.altTrendsByHex };
       const gsTrendsByHex: Record<string, number[]> = { ...st.gsTrendsByHex };
       const rssiBufByHex: Record<string, number[]> = { ...st.rssiBufByHex };
       for (const ac of frame.aircraft) {
-        if (typeof ac.alt_baro === "number") {
+        if (typeof ac.altBaroFt === "number") {
           altTrendsByHex[ac.hex] = appendTrimmed(
             altTrendsByHex[ac.hex],
-            ac.alt_baro,
+            ac.altBaroFt,
           );
         }
-        if (typeof ac.gs === "number") {
-          gsTrendsByHex[ac.hex] = appendTrimmed(gsTrendsByHex[ac.hex], ac.gs);
+        if (typeof ac.gsKt === "number") {
+          gsTrendsByHex[ac.hex] = appendTrimmed(gsTrendsByHex[ac.hex], ac.gsKt);
         }
-        if (typeof ac.rssi === "number") {
-          rssiBufByHex[ac.hex] = appendTrimmed(rssiBufByHex[ac.hex], ac.rssi);
+        if (typeof ac.rssiDbfs === "number") {
+          rssiBufByHex[ac.hex] = appendTrimmed(
+            rssiBufByHex[ac.hex],
+            ac.rssiDbfs,
+          );
         }
       }
       let trailsByHex = retainTrailsForAircraft(st.trailsByHex, retainedHexes);
@@ -816,7 +831,7 @@ export const useIdentStore = create<IdentState>((set) => ({
 
       return {
         aircraft: next,
-        now: frame.now,
+        now: frame.observedAtEpochSec,
         selectedHex: st.selectedHex,
         camera: st.camera,
         altTrendsByHex,
@@ -833,9 +848,38 @@ export const useIdentStore = create<IdentState>((set) => ({
       };
     }),
 
-  ingestReceiver: (r) => set({ receiver: r }),
-  ingestStats: (s) => set({ stats: s }),
-  ingestOutline: (o) => set({ outline: o }),
+  ingestRangeOutline: (rangeOutline) => set({ rangeOutline }),
+  ingestStatus: (status) =>
+    set((st) => {
+      const previous = st.identStatus;
+      const merged: IdentStatus = {
+        schema: status.schema,
+        producer: status.producer,
+        observedAt: status.observedAt,
+        freshness: status.freshness,
+        receiverPosition: status.receiverPosition ?? previous?.receiverPosition,
+        messageRate: status.messageRate ?? previous?.messageRate,
+        gain: status.gain ?? previous?.gain,
+        uptime: status.uptime ?? previous?.uptime,
+        maxRange: status.maxRange ?? previous?.maxRange,
+        diagnostics: status.diagnostics ?? previous?.diagnostics ?? [],
+      };
+      const pos =
+        merged.receiverPosition?.kind !== "unavailable"
+          ? merged.receiverPosition?.value
+          : undefined;
+      return {
+        identStatus: merged,
+        receiver: pos
+          ? {
+              lat: pos.lat,
+              lon: pos.lon,
+              version: merged.producer.version ?? merged.producer.kind,
+            }
+          : st.receiver,
+      };
+    }),
+  ingestCapabilities: (capabilities) => set({ capabilities }),
   ingestConfig: (c) => set((st) => ({ config: { ...st.config, ...c } })),
 
   setConnectionStatus: (channel, status, info) =>
@@ -863,24 +907,24 @@ export const useIdentStore = create<IdentState>((set) => ({
   recordAircraftSample: (hex, sample) =>
     set((st) => {
       const altTrendsByHex =
-        typeof sample.alt_baro === "number"
+        typeof sample.altBaroFt === "number"
           ? {
               ...st.altTrendsByHex,
-              [hex]: appendTrimmed(st.altTrendsByHex[hex], sample.alt_baro),
+              [hex]: appendTrimmed(st.altTrendsByHex[hex], sample.altBaroFt),
             }
           : st.altTrendsByHex;
       const gsTrendsByHex =
-        typeof sample.gs === "number"
+        typeof sample.gsKt === "number"
           ? {
               ...st.gsTrendsByHex,
-              [hex]: appendTrimmed(st.gsTrendsByHex[hex], sample.gs),
+              [hex]: appendTrimmed(st.gsTrendsByHex[hex], sample.gsKt),
             }
           : st.gsTrendsByHex;
       const rssiBufByHex =
-        typeof sample.rssi === "number"
+        typeof sample.rssiDbfs === "number"
           ? {
               ...st.rssiBufByHex,
-              [hex]: appendTrimmed(st.rssiBufByHex[hex], sample.rssi),
+              [hex]: appendTrimmed(st.rssiBufByHex[hex], sample.rssiDbfs),
             }
           : st.rssiBufByHex;
       return { altTrendsByHex, gsTrendsByHex, rssiBufByHex };
@@ -931,12 +975,12 @@ export const useIdentStore = create<IdentState>((set) => ({
     set((st) => ({ filter: { ...st.filter, typePrefix: v } })),
   setFilterSourceEquals: (v) =>
     set((st) => ({ filter: { ...st.filter, sourceEquals: v } })),
-  setFilterGsRangeKt: (r) =>
-    set((st) => ({ filter: { ...st.filter, gsRangeKt: r } })),
-  setFilterDistRangeNm: (r) =>
-    set((st) => ({ filter: { ...st.filter, distRangeNm: r } })),
-  setFilterVsRangeFpm: (r) =>
-    set((st) => ({ filter: { ...st.filter, vsRangeFpm: r } })),
+  setFilterGsRangeKt: (range) =>
+    set((st) => ({ filter: { ...st.filter, gsRangeKt: range } })),
+  setFilterDistRangeNm: (range) =>
+    set((st) => ({ filter: { ...st.filter, distRangeNm: range } })),
+  setFilterVsRangeFpm: (range) =>
+    set((st) => ({ filter: { ...st.filter, vsRangeFpm: range } })),
   setFilterHdgWindow: (center, tolerance) =>
     set((st) => ({
       filter: { ...st.filter, hdgCenter: center, hdgTolerance: tolerance },
@@ -1096,61 +1140,30 @@ export const useIdentStore = create<IdentState>((set) => ({
   recordSnapshot: () =>
     set((st) => ({ liveState: { ...st.liveState, lastMsgTs: Date.now() } })),
 
-  setUpdateStatus: (next) =>
-    set((st) => ({ update: { ...st.update, ...next } })),
-
   setReplayManifest: (manifest) =>
-    set((st) => {
-      const enabled = manifest.enabled;
-      const available = replayAvailability(
-        manifest.from ?? null,
-        manifest.to ?? null,
-        st.replay.recent ?? null,
-      );
-      const availableFrom = available.from;
-      const availableTo = available.to;
-      const requestedReplay =
-        enabled && st.replay.mode === "replay" && availableFrom != null;
-      const followsLiveEdge =
-        requestedReplay && replayFollowsLiveEdge(st.replay);
-      const mode = requestedReplay && !followsLiveEdge ? "replay" : "live";
-      const playheadMs =
-        mode === "replay"
-          ? clampReplayPlayhead(
-              st.replay.playheadMs ?? availableTo ?? availableFrom ?? 0,
-              availableFrom,
-              availableTo,
-            )
-          : null;
-      return {
-        replay: {
-          ...st.replay,
-          enabled,
-          availableFrom,
-          availableTo,
-          blockSec:
-            manifest.block_sec > 0 ? manifest.block_sec : st.replay.blockSec,
-          blocks: Array.isArray(manifest.blocks) ? manifest.blocks : [],
-          recent: enabled ? st.replay.recent : null,
-          mode,
-          playheadMs,
-          trailStartMs:
-            mode === "replay" ? (st.replay.trailStartMs ?? playheadMs) : null,
-          playing: mode === "replay" ? st.replay.playing : true,
-          viewWindow:
-            mode === "live"
-              ? liveReplayWindow(st.replay.viewWindow)
-              : st.replay.viewWindow,
-          followLiveEdge: false,
-          loading: followsLiveEdge ? false : st.replay.loading,
-          resumeAfterLoading: followsLiveEdge
-            ? false
-            : st.replay.resumeAfterLoading,
-          error: enabled ? st.replay.error : null,
-          errorUrl: enabled ? st.replay.errorUrl : null,
-        },
-      };
-    }),
+    set((st) => ({
+      replay: applyReplayAvailability(st.replay, {
+        enabled: manifest.enabled,
+        remoteFrom: manifest.from ?? null,
+        remoteTo: manifest.to ?? null,
+        blockSec: manifest.block_sec,
+        blocks: Array.isArray(manifest.blocks) ? manifest.blocks : undefined,
+      }),
+    })),
+
+  ingestReplayAvailability: (envelope) =>
+    set((st) => ({
+      // Envelope reports seconds; store keeps ms for compatibility with the
+      // replay block/seek path. Convert at the boundary.
+      replay: applyReplayAvailability(st.replay, {
+        enabled: envelope.enabled,
+        remoteFrom:
+          envelope.fromEpochSec != null ? envelope.fromEpochSec * 1000 : null,
+        remoteTo:
+          envelope.toEpochSec != null ? envelope.toEpochSec * 1000 : null,
+        blockSec: envelope.blockSec,
+      }),
+    })),
 
   setReplayBlock: (url, block) =>
     set((st) => {
@@ -1671,12 +1684,11 @@ export function trailPointFromAircraft(
     ts,
     ground,
   };
-  if (typeof ac.seen_pos === "number" && ac.seen_pos > 20) point.stale = true;
-  if (typeof ac.gs === "number") point.gs = ac.gs;
-  if (typeof ac.track === "number") point.track = ac.track;
-  if (ac.type) point.source = ac.type;
+  if (typeof ac.gsKt === "number") point.gs = ac.gsKt;
+  if (typeof ac.trackDeg === "number") point.track = ac.trackDeg;
+  if (ac.source) point.source = ac.source;
   if (alt_source) point.alt_source = alt_source;
-  if (typeof ac.alt_geom === "number") point.alt_geom = ac.alt_geom;
+  if (typeof ac.altGeomFt === "number") point.altGeomFt = ac.altGeomFt;
   if (segmentState) {
     point.segment = nextTrailSegment(segmentState, point);
   }
@@ -1684,21 +1696,19 @@ export function trailPointFromAircraft(
 }
 
 function aircraftOnGround(ac: Aircraft): boolean {
-  return (
-    ac.alt_baro === "ground" || ac.airground === 1 || ac.airground === "ground"
-  );
+  return ac.onGround === true;
 }
 
 function aircraftTrailAltitude(
   ac: Aircraft,
   ground: boolean,
 ): { alt: TrailPoint["alt"]; alt_source?: TrailPoint["alt_source"] } {
-  if (typeof ac.alt_baro === "number") {
-    return { alt: ac.alt_baro, alt_source: "baro" };
+  if (typeof ac.altBaroFt === "number") {
+    return { alt: ac.altBaroFt, alt_source: "baro" };
   }
   if (ground) return { alt: null };
-  if (typeof ac.alt_geom === "number") {
-    return { alt: ac.alt_geom, alt_source: "geom" };
+  if (typeof ac.altGeomFt === "number") {
+    return { alt: ac.altGeomFt, alt_source: "geom" };
   }
   return { alt: null };
 }
@@ -1951,15 +1961,20 @@ function replayLoadedBlocksFromReplay(replay: ReplaySlice): ReplayBlockFile[] {
 }
 
 /**
- * Convert stats.last1min.messages_valid (a count over the past 60 s window)
- * into a per-second rate and append to the rolling buffer. Exported for direct
+ * Append the normalized message rate to the rolling buffer. Exported for direct
  * invocation from tests — the 1 Hz timer below is the production call site.
  */
 export function sampleMpsOnce(): void {
   const st = useIdentStore.getState();
-  const valid = st.stats?.last1min?.messages_valid;
-  const rate =
-    typeof valid === "number" && Number.isFinite(valid) ? valid / 60 : 0;
+  const messageRate = st.identStatus?.messageRate;
+  const normalizedRate =
+    messageRate && messageRate.kind !== "unavailable"
+      ? messageRate.value.hz
+      : undefined;
+  let rate = 0;
+  if (typeof normalizedRate === "number" && Number.isFinite(normalizedRate)) {
+    rate = normalizedRate;
+  }
   const nextBuf = st.liveState.mpsBuffer.slice();
   nextBuf.push(rate);
   if (nextBuf.length > MPS_BUFFER_LEN)

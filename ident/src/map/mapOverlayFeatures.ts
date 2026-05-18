@@ -58,7 +58,7 @@ export function buildAircraftFeatureCollection(
           aircraftOnGround(ac),
           ac.emergency,
         ),
-        track: typeof ac.track === "number" ? ac.track : 0,
+        track: typeof ac.trackDeg === "number" ? ac.trackDeg : 0,
         icon: aircraftIconId(ac),
         labelCs: labelAtoms.cs,
         labelType: labelAtoms.type,
@@ -68,9 +68,9 @@ export function buildAircraftFeatureCollection(
         labelSpeed: labelAtoms.speed,
         labelAltSpeed: labelAtoms.altSpeed,
         labelRoute: labelAtoms.route,
-        selectedLabelAnchor: selectedLabelAnchor(ac.track),
-        selectedLabelJustify: selectedLabelJustify(ac.track),
-        selectedLabelOffset: selectedLabelOffset(ac.track),
+        selectedLabelAnchor: selectedLabelAnchor(ac.trackDeg),
+        selectedLabelJustify: selectedLabelJustify(ac.trackDeg),
+        selectedLabelOffset: selectedLabelOffset(ac.trackDeg),
         priority: labelPriority(ac, args.selectedHex, args.searchQuery),
         selected,
         hovered,
@@ -81,18 +81,18 @@ export function buildAircraftFeatureCollection(
   return featureCollection(features);
 }
 
-function selectedLabelOffset(track: number | undefined): [number, number] {
-  if (typeof track !== "number") return [1.35, 0];
-  const rad = (track * Math.PI) / 180;
+function selectedLabelOffset(trackDeg: number | undefined): [number, number] {
+  if (typeof trackDeg !== "number") return [1.35, 0];
+  const rad = (trackDeg * Math.PI) / 180;
   return [roundOffset(Math.cos(rad) * 2.05), roundOffset(Math.sin(rad) * 2.35)];
 }
 
-function selectedLabelAnchor(track: number | undefined): "left" | "right" {
-  return selectedLabelOffset(track)[0] < -0.2 ? "right" : "left";
+function selectedLabelAnchor(trackDeg: number | undefined): "left" | "right" {
+  return selectedLabelOffset(trackDeg)[0] < -0.2 ? "right" : "left";
 }
 
-function selectedLabelJustify(track: number | undefined): "left" | "right" {
-  return selectedLabelAnchor(track);
+function selectedLabelJustify(trackDeg: number | undefined): "left" | "right" {
+  return selectedLabelAnchor(trackDeg);
 }
 
 function roundOffset(value: number): number {
@@ -114,12 +114,12 @@ function aircraftLabelAtoms(
   route: string;
 } {
   const cs = (ac.flight?.trim() || ac.hex).toUpperCase();
-  const type = ac.t ?? "-";
+  const type = ac.typeDesignator ?? "-";
   const sqk = ac.squawk?.trim();
-  const alt = altitudeLabel(ac.alt_baro, units.altitude);
+  const alt = altitudeLabel(ac.altBaroFt, units.altitude);
   const speed =
-    typeof ac.gs === "number"
-      ? compactAirSpeedFromKnots(ac.gs, units.horizontalSpeed)
+    typeof ac.gsKt === "number"
+      ? compactAirSpeedFromKnots(ac.gsKt, units.horizontalSpeed)
       : "";
   return {
     cs,
@@ -180,13 +180,21 @@ export function buildPredictorFeatureCollection(
     (candidate) => candidate.hex === args.selectedHex,
   );
   if (!ac || ac.lat == null || ac.lon == null) return featureCollection([]);
-  if (ac.alt_baro === "ground") return featureCollection([]);
-  if (typeof ac.track !== "number" || typeof ac.gs !== "number" || ac.gs <= 0) {
+  if (ac.onGround) return featureCollection([]);
+  if (
+    typeof ac.trackDeg !== "number" ||
+    typeof ac.gsKt !== "number" ||
+    ac.gsKt <= 0
+  ) {
     return featureCollection([]);
   }
-  const distNm = (ac.gs * PREDICTOR_SEC) / 3600;
+  const distNm = (ac.gsKt * PREDICTOR_SEC) / 3600;
   const start: [number, number] = [ac.lon, ac.lat];
-  const end = destinationPoint({ lng: ac.lon, lat: ac.lat }, ac.track, distNm);
+  const end = destinationPoint(
+    { lng: ac.lon, lat: ac.lat },
+    ac.trackDeg,
+    distNm,
+  );
   const endCoord: [number, number] = [end.lng, end.lat];
   return featureCollection([
     {
@@ -225,13 +233,11 @@ function routeInfoFor(
 }
 
 function aircraftAltitude(ac: Aircraft): number | null {
-  return typeof ac.alt_baro === "number" ? ac.alt_baro : null;
+  return typeof ac.altBaroFt === "number" ? ac.altBaroFt : null;
 }
 
 function aircraftOnGround(ac: Aircraft): boolean {
-  return (
-    ac.alt_baro === "ground" || ac.airground === 1 || ac.airground === "ground"
-  );
+  return ac.onGround === true;
 }
 
 function routeLabel(route: RouteInfo): string {
@@ -241,10 +247,9 @@ function routeLabel(route: RouteInfo): string {
 }
 
 function altitudeLabel(
-  alt: number | "ground" | undefined,
+  alt: number | undefined,
   unit: OverlayUnits["altitude"],
 ): string {
-  if (alt === "ground") return "GND";
   if (typeof alt !== "number") return "-";
   return compactAltitudeFromFeet(alt, unit);
 }
@@ -264,7 +269,7 @@ function labelPriority(
   if (isEmergencyAc(ac)) return 1;
   const normalizedQuery = query.trim().toLowerCase();
   if (normalizedQuery.length > 0) {
-    const haystack = [ac.hex, ac.flight, ac.r, ac.squawk]
+    const haystack = [ac.hex, ac.flight, ac.reg, ac.squawk]
       .filter(
         (value): value is string =>
           typeof value === "string" && value.length > 0,
@@ -272,7 +277,7 @@ function labelPriority(
       .map((value) => value.toLowerCase());
     if (haystack.some((value) => value.includes(normalizedQuery))) return 2;
   }
-  const key = categoryKeyFor(ac.category, ac.dbFlags);
+  const key = categoryKeyFor(ac.cat, ac.dbFlags);
   if (key === "airline") return 3;
   if (key === "bizjet" || key === "mil") return 4;
   if (key === "rotor" || key === "ga") return 5;

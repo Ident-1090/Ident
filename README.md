@@ -45,14 +45,16 @@ Ident is built for common self-hosted ADS-B receiver stacks.
 
 | Stack | Support |
 | --- | --- |
-| readsb | Live aircraft, receiver metadata, stats, and range outline. |
-| ultrafeeder | readsb-compatible live aircraft, receiver metadata, stats, and range outline. |
-| dump1090-fa | Live aircraft display from JSON output. Optional metadata depends on the install. |
-| PiAware | Installs that expose dump1090-fa JSON output. |
+| readsb native JSON | Live aircraft, receiver metadata, stats, and range outline. |
+| dump1090-fa native JSON, including PiAware installs | Live aircraft, receiver metadata, stats, and range where the decoder provides enough data. |
+| dump978-fa native JSON, including SkyAware978 installs | Live UAT aircraft and receiver metadata where available. |
 
 The basic requirement is read-only access to the directory where your receiver
 writes `aircraft.json`. If optional files are missing, Ident still shows live
 traffic with fewer receiver details.
+
+Other decoder layouts may work when they expose the same files, but they are not
+part of the supported compatibility set yet.
 
 ## Install
 
@@ -106,8 +108,8 @@ http://receiver.local:8080/
 
 If your receiver is not named `receiver.local`, use its hostname or IP address.
 
-Most readsb and PiAware-style installs need no config change. If Ident cannot
-find traffic, edit `/etc/ident/identd.env` and set the receiver JSON directory:
+Most supported installs need no config change. If Ident cannot find traffic,
+edit `/etc/ident/identd.env` and set the receiver JSON directory:
 
 ```sh
 IDENT_DATA_DIR=/run/readsb
@@ -151,7 +153,7 @@ JSON volume with the decoder service:
 ```yaml
 services:
   receiver:
-    # Your existing readsb, dump1090-fa, or ultrafeeder service.
+    # Your existing decoder service.
     volumes:
       - receiver-json:/run/readsb
 
@@ -234,6 +236,7 @@ Common paths are:
 ```text
 /run/readsb
 /run/dump1090-fa
+/run/skyaware978
 ```
 
 Check the receiver host:
@@ -241,6 +244,7 @@ Check the receiver host:
 ```sh
 ls /run/readsb/aircraft.json
 ls /run/dump1090-fa/aircraft.json
+ls /run/skyaware978/aircraft.json
 ```
 
 Use the path that exists as `IDENT_DATA_DIR` or `--data-dir`.
@@ -279,6 +283,19 @@ IDENT_OUTLINE_FILE=outline.json
 
 For PiAware and dump1090-fa, set `IDENT_DATA_DIR` to the directory where
 `aircraft.json` is written.
+
+Ident usually detects the upstream type from `receiver.json`. If a receiver
+setup needs an explicit selection, set `IDENT_UPSTREAM_TYPE` or pass
+`--upstream-type`.
+
+```sh
+IDENT_UPSTREAM_TYPE=dump1090-fa
+```
+
+Supported values are `readsb`, `dump1090-fa`, and `skyaware978`. The aliases
+`piaware`, `dump978-fa`, and `dump978` are also accepted. An invalid value is
+ignored and reported in the status diagnostics while Ident falls back to
+automatic detection.
 
 ### Trails
 
@@ -350,7 +367,6 @@ browser
   -> /api/ws        live traffic, config, and routes
   -> /api/trails/*  recent trail seed
   -> /api/replay/*  replay manifest and finalized replay blocks
-  -> /api/update.json
   -> /healthz       service health
 
 identd
@@ -367,9 +383,10 @@ know where the decoder stores files on disk.
 
 ## Updates
 
-Ident checks GitHub Releases through `identd` and shows a settings indicator
-when a newer release is available. Browsers only call the local Ident service;
-they do not call GitHub directly.
+Ident checks GitHub Releases through `identd` and reports available releases
+through the diagnostics notification center. Browsers only receive the latest
+available release notice from the local Ident service; they do not call GitHub
+directly.
 
 Ident does not replace the running binary, package, or container. Updates are
 installed by the operator through the release artifact, package, or container
@@ -394,6 +411,7 @@ may contact outside services:
 - map tile providers for selected map styles
 - route lookup services when route hints are enabled
 - aircraft photo APIs when photo cards are enabled
+- GitHub Releases when update checks are enabled
 
 Put authentication in front of Ident before exposing it outside a private
 network.
@@ -434,8 +452,8 @@ http://localhost:8080/
 
 ### Receiver Fixture
 
-For UI work and end-to-end tests without a live decoder, generate readsb-style
-receiver and trail history files into an ignored local directory:
+For UI work and end-to-end tests without a live decoder, generate receiver and
+trail history fixture files into an ignored local directory:
 
 ```sh
 node scripts/generate-receiver-fixture.mjs \

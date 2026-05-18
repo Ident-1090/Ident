@@ -60,6 +60,32 @@ func TestLOSCacheDownloadsAndCachesByResolvedURL(t *testing.T) {
 	}
 }
 
+func TestLOSCacheFetchRejectsMalformedJSON(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("{not valid json"))
+	}))
+	defer ts.Close()
+
+	cacheDir := t.TempDir()
+	cache := NewLOSCache(LOSOptions{
+		PanoramaID: "abc123",
+		Alts:       "40000ft",
+		CacheDir:   cacheDir,
+		BaseURL:    ts.URL,
+	})
+
+	body, err := cache.Load(context.Background())
+	if err == nil {
+		t.Fatalf("expected error for malformed JSON, got body = %q", body)
+	}
+	if body != nil {
+		t.Fatalf("expected nil body for malformed JSON, got %q", body)
+	}
+	if _, err := os.Stat(filepath.Join(cacheDir, "upintheair.json")); !os.IsNotExist(err) {
+		t.Fatalf("expected no cached output file for malformed JSON, stat err = %v", err)
+	}
+}
+
 func TestLOSCacheClearsStaleOutputWhenDisabled(t *testing.T) {
 	cacheDir := t.TempDir()
 	outFile := filepath.Join(cacheDir, "upintheair.json")

@@ -20,10 +20,6 @@ vi.mock("../data/feed", () => ({
   startFeed: vi.fn(() => () => {}),
 }));
 
-vi.mock("../data/update", () => ({
-  startUpdateStatusPolling: vi.fn(() => () => {}),
-}));
-
 vi.mock("../rails/Rail", () => ({
   Rail: ({
     collapsed,
@@ -73,8 +69,6 @@ vi.mock("../mobile/MobileShell", () => ({
     </button>
   ),
 }));
-vi.mock("./UpdatePrompt", () => ({ UpdatePrompt: () => null }));
-
 describe("App layout", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -124,7 +118,9 @@ describe("App layout", () => {
 
   it("renders a floating inspector when the selected aircraft exists", () => {
     useIdentStore.setState({
-      aircraft: new Map([["abc123", { hex: "abc123" }]]),
+      aircraft: new Map([
+        ["abc123", { hex: "abc123", idKind: "icao", source: "adsb_icao" }],
+      ]),
       selectedHex: "abc123",
     });
 
@@ -186,7 +182,9 @@ describe("App layout", () => {
 
   it("dismisses the floating inspector on Escape", () => {
     useIdentStore.setState({
-      aircraft: new Map([["abc123", { hex: "abc123" }]]),
+      aircraft: new Map([
+        ["abc123", { hex: "abc123", idKind: "icao", source: "adsb_icao" }],
+      ]),
       selectedHex: "abc123",
     });
 
@@ -208,7 +206,9 @@ describe("App layout", () => {
   it("keeps the inspector selected when Escape is closing settings", () => {
     mediaQueryMockState.matches = true;
     useIdentStore.setState({
-      aircraft: new Map([["abc123", { hex: "abc123" }]]),
+      aircraft: new Map([
+        ["abc123", { hex: "abc123", idKind: "icao", source: "adsb_icao" }],
+      ]),
       selectedHex: "abc123",
     });
 

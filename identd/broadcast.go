@@ -1,7 +1,7 @@
 package main
 
 import (
-	"log"
+	"log/slog"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -14,7 +14,7 @@ const defaultQueueDepth = 8
 // Frames are delivered as text WebSocket messages to all connected clients.
 //
 // Channels come in two flavors:
-//   - "single" channels (aircraft/receiver/stats/outline) keep one latest
+//   - "single" channels (aircraft/status/capabilities/config) keep one latest
 //     envelope. Publishing overwrites; snapshot-on-connect replays that one.
 //   - "provider" channels (routes/trails) accept pre-built envelopes one at
 //     a time and expose snapshots through pluggable providers.
@@ -48,9 +48,16 @@ func (h *Hub) Publish(name string, fileBytes []byte) {
 		return
 	}
 	env := wrapEnvelope(name, fileBytes)
+	h.PublishSnapshotEnvelope(name, env)
+}
 
+func (h *Hub) PublishSnapshotEnvelope(name string, env []byte) {
+	if len(env) == 0 {
+		return
+	}
+	stored := append([]byte(nil), env...)
 	h.mu.Lock()
-	h.channels[name] = env
+	h.channels[name] = stored
 	clients := make([]*Client, 0, len(h.clients))
 	for c := range h.clients {
 		clients = append(clients, c)
@@ -59,9 +66,9 @@ func (h *Hub) Publish(name string, fileBytes []byte) {
 
 	for _, c := range clients {
 		select {
-		case c.send <- env:
+		case c.send <- stored:
 		default:
-			log.Printf("hub: dropping slow client on channel %q (send buffer full)", name)
+			slog.Warn("hub: dropping slow client on channel (send buffer full)", "channel", name)
 			h.drop(c)
 		}
 	}
@@ -104,7 +111,7 @@ func (h *Hub) AddSnapshotProvider(fn func() [][]byte) {
 	h.providers = append(h.providers, fn)
 }
 
-// PublishRoute broadcasts a pre-built route envelope (`{"type":"route",
+// PublishRoute broadcasts a pre-built routes envelope (`{"type":"routes",
 // ...}`) to all connected clients. Unlike Publish, nothing is cached in
 // the Hub itself — the RouteCache is the snapshot source of truth via
 // SetRouteProvider.
@@ -127,7 +134,7 @@ func (h *Hub) PublishEnvelope(env []byte, label string) {
 		select {
 		case c.send <- env:
 		default:
-			log.Printf("hub: dropping slow client on %s publish (send buffer full)", label)
+			slog.Warn("hub: dropping slow client on publish (send buffer full)", "channel", label)
 			h.drop(c)
 		}
 	}

@@ -299,7 +299,17 @@ describe("MobileShell", () => {
 
   it("renders selected aircraft with the inspector sheet already expanded", () => {
     useIdentStore.setState({
-      aircraft: new Map([["abc123", { hex: "abc123", flight: "UAL123" }]]),
+      aircraft: new Map([
+        [
+          "abc123",
+          {
+            hex: "abc123",
+            idKind: "icao",
+            source: "adsb_icao",
+            flight: "UAL123",
+          },
+        ],
+      ]),
       selectedHex: "abc123",
     });
 
@@ -316,7 +326,17 @@ describe("MobileShell", () => {
 
   it("uses a custom tooltip for the sheet snap handle", () => {
     useIdentStore.setState({
-      aircraft: new Map([["abc123", { hex: "abc123", flight: "UAL123" }]]),
+      aircraft: new Map([
+        [
+          "abc123",
+          {
+            hex: "abc123",
+            idKind: "icao",
+            source: "adsb_icao",
+            flight: "UAL123",
+          },
+        ],
+      ]),
       selectedHex: "abc123",
     });
 
@@ -353,12 +373,13 @@ describe("MobileShell", () => {
           "abc123",
           {
             hex: "abc123",
+            idKind: "icao",
             flight: "UAL123",
-            alt_baro: 34000,
+            altBaroFt: 34000,
             lat: 37.42,
             lon: -122.08,
-            seen: 0,
-            type: "adsb_icao",
+            seenSec: 0,
+            source: "adsb_icao",
           },
         ],
       ]),
@@ -417,7 +438,17 @@ describe("MobileShell", () => {
 
   it("keeps the selected sheet mounted when it collapses", () => {
     useIdentStore.setState({
-      aircraft: new Map([["abc123", { hex: "abc123", flight: "UAL123" }]]),
+      aircraft: new Map([
+        [
+          "abc123",
+          {
+            hex: "abc123",
+            idKind: "icao",
+            source: "adsb_icao",
+            flight: "UAL123",
+          },
+        ],
+      ]),
       selectedHex: "abc123",
     });
 

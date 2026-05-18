@@ -13,18 +13,20 @@ import { FiltersPanel } from "./FiltersPanel";
 
 const AIRLINER: Aircraft = {
   hex: "aaa111",
+  idKind: "icao",
   flight: "UAL123",
-  category: "A3",
-  seen: 0,
-  type: "adsb_icao",
+  cat: "A3",
+  seenSec: 0,
+  source: "adsb_icao",
 };
 
 const ROTOR: Aircraft = {
   hex: "bbb222",
+  idKind: "icao",
   flight: "N12345",
-  category: "A7",
-  seen: 0,
-  type: "adsb_icao",
+  cat: "A7",
+  seenSec: 0,
+  source: "adsb_icao",
 };
 
 describe("FiltersPanel", () => {
@@ -129,12 +131,12 @@ describe("FiltersPanel", () => {
     expect(container.textContent).toContain("Helo");
     expect(
       container.querySelector<HTMLButtonElement>(
-        'button[aria-label="Filter category: Airline"]',
+        'button[aria-label="Filter cat: Airline"]',
       )?.textContent,
     ).toContain("1");
     expect(
       container.querySelector<HTMLButtonElement>(
-        'button[aria-label="Filter category: Helo"]',
+        'button[aria-label="Filter cat: Helo"]',
       )?.textContent,
     ).toContain("1");
   });
@@ -149,7 +151,7 @@ describe("FiltersPanel", () => {
     });
 
     const airline = container.querySelector<HTMLButtonElement>(
-      'button[aria-label="Filter category: Airline"]',
+      'button[aria-label="Filter cat: Airline"]',
     );
     if (!airline) throw new Error("expected airline category chip");
     act(() => {

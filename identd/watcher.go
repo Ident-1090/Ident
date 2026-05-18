@@ -2,7 +2,7 @@ package main
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"time"
@@ -66,7 +66,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 			}
 			return nil
 		case err := <-fw.Errors:
-			log.Printf("watcher %s: %v", w.name, err)
+			slog.Warn("watcher", "name", w.name, "path", w.path(), "err", err)
 		case ev, ok := <-fw.Events:
 			if !ok {
 				return nil

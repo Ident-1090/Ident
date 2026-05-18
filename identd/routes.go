@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strings"
@@ -135,9 +135,9 @@ func normalizeCallsign(s string) string {
 	return strings.ToUpper(strings.TrimSpace(s))
 }
 
-// RouteSnapshots returns the single snapshot envelope ({"type":"routes",
-// "data":[…]}) containing every currently-known affirmative route in
-// deterministic (sorted by callsign) order. Used for snapshot-on-connect.
+// RouteSnapshots returns the single versioned snapshot envelope containing
+// every currently-known affirmative route in deterministic (sorted by callsign)
+// order. Used for snapshot-on-connect.
 // Returns an empty slice when the cache has nothing to send so the server
 // doesn't queue a no-op.
 func (c *RouteCache) RouteSnapshots() [][]byte {
@@ -247,7 +247,7 @@ func (c *RouteCache) fetchBatch(ctx context.Context, callsigns []string) {
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.upstreamURL, bytes.NewReader(body))
 	if err != nil {
-		log.Printf("routes: build request: %v", err)
+		slog.Warn("routes: build request", "err", err, "callsigns", len(callsigns))
 		c.requeue(callsigns)
 		return
 	}
@@ -256,7 +256,7 @@ func (c *RouteCache) fetchBatch(ctx context.Context, callsigns []string) {
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		log.Printf("routes: upstream %s unreachable (%d callsigns requeued): %v", c.upstreamURL, len(callsigns), err)
+		slog.Warn("routes: upstream unreachable", "err", err, "addr", c.upstreamURL, "callsigns", len(callsigns))
 		c.requeue(callsigns)
 		return
 	}
@@ -269,14 +269,14 @@ func (c *RouteCache) fetchBatch(ctx context.Context, callsigns []string) {
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		// Transient (4xx other than 404, 5xx) — retry next tick.
-		log.Printf("routes: upstream %s returned HTTP %d (%d callsigns requeued)", c.upstreamURL, resp.StatusCode, len(callsigns))
+		slog.Warn("routes: upstream returned HTTP status", "addr", c.upstreamURL, "status", resp.StatusCode, "callsigns", len(callsigns))
 		c.requeue(callsigns)
 		return
 	}
 
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("routes: reading upstream body: %v", err)
+		slog.Warn("routes: reading upstream body", "err", err, "addr", c.upstreamURL, "callsigns", len(callsigns))
 		c.requeue(callsigns)
 		return
 	}
@@ -361,7 +361,7 @@ func (c *RouteCache) sweep() {
 	c.hub.PublishRoute(buildRoutesEnvelope(entries, now))
 }
 
-// routeEnvEntry is a single entry in a `routes` envelope's `data` array.
+// routeEnvEntry is a single entry in a `routes` envelope payload.
 // Affirmative routes carry origin/destination (and optionally a route
 // string); eviction entries carry only Callsign + Dropped=true.
 type routeEnvEntry struct {
@@ -370,6 +370,12 @@ type routeEnvEntry struct {
 	Destination string `json:"destination,omitempty"`
 	Route       string `json:"route,omitempty"`
 	Dropped     bool   `json:"dropped,omitempty"`
+}
+
+type identRoutes struct {
+	Schema             string          `json:"schema"`
+	ObservedAtEpochSec int64           `json:"observedAtEpochSec"`
+	Routes             []routeEnvEntry `json:"routes"`
 }
 
 func routeEnvEntryFromResult(callsign string, r RouteResult) routeEnvEntry {
@@ -382,15 +388,17 @@ func routeEnvEntryFromResult(callsign string, r RouteResult) routeEnvEntry {
 }
 
 func buildRoutesEnvelope(entries []routeEnvEntry, now time.Time) []byte {
-	type routesEnv struct {
-		Type string          `json:"type"`
-		Now  int64           `json:"now"`
-		Data []routeEnvEntry `json:"data"`
+	type routesEnvelope struct {
+		Type string      `json:"type"`
+		Data identRoutes `json:"data"`
 	}
-	b, _ := json.Marshal(routesEnv{
+	b, _ := json.Marshal(routesEnvelope{
 		Type: "routes",
-		Now:  now.Unix(),
-		Data: entries,
+		Data: identRoutes{
+			Schema:             "ident.routes.v1",
+			ObservedAtEpochSec: now.Unix(),
+			Routes:             entries,
+		},
 	})
 	return b
 }
