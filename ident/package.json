@@ -27,12 +27,12 @@
   },
   "dependencies": {
     "cmdk": "^1.1.1",
-    "country-flag-icons": "^1.6.16",
-    "lucide-react": "^1.11.0",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
+    "country-flag-icons": "^1.6.17",
+    "lucide-react": "^1.16.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "ts-pattern": "^5.9.0",
-    "zustand": "^5.0.12"
+    "zustand": "^5.0.13"
   },
   "devDependencies": {
     "@biomejs/biome": "2.4.13",
