@@ -372,12 +372,12 @@ func TestTrailStoreIgnoresUnreadableRestartCache(t *testing.T) {
 		t.Fatalf("write cache: %v", err)
 	}
 
-	diagnostics := NewDiagnosticCollector()
+	diagnostics := NewDiagnosticStore(DiagnosticStoreOptions{})
 	store := NewTrailStore(TrailOptions{
-		MemoryWindow:       2 * time.Hour,
-		SampleInterval:     time.Second,
-		RestartCacheDir:    dir,
-		StartupDiagnostics: diagnostics,
+		MemoryWindow:    2 * time.Hour,
+		SampleInterval:  time.Second,
+		RestartCacheDir: dir,
+		Diagnostics:     diagnostics,
 	})
 	if err := store.LoadRestartCache(); err != nil {
 		t.Fatalf("load restart cache: %v", err)
@@ -420,12 +420,12 @@ func TestTrailStoreIgnoresRestartCacheWithoutCurrentVersion(t *testing.T) {
 		t.Fatalf("close file: %v", closeFileErr)
 	}
 
-	diagnostics := NewDiagnosticCollector()
+	diagnostics := NewDiagnosticStore(DiagnosticStoreOptions{})
 	store := NewTrailStore(TrailOptions{
-		MemoryWindow:       2 * time.Hour,
-		SampleInterval:     time.Second,
-		RestartCacheDir:    dir,
-		StartupDiagnostics: diagnostics,
+		MemoryWindow:    2 * time.Hour,
+		SampleInterval:  time.Second,
+		RestartCacheDir: dir,
+		Diagnostics:     diagnostics,
 	})
 	if err := store.LoadRestartCache(); err != nil {
 		t.Fatalf("load restart cache: %v", err)
@@ -472,12 +472,12 @@ func TestTrailStoreIgnoresRestartCacheWithUnknownFields(t *testing.T) {
 		t.Fatalf("close file: %v", closeFileErr)
 	}
 
-	diagnostics := NewDiagnosticCollector()
+	diagnostics := NewDiagnosticStore(DiagnosticStoreOptions{})
 	store := NewTrailStore(TrailOptions{
-		MemoryWindow:       2 * time.Hour,
-		SampleInterval:     time.Second,
-		RestartCacheDir:    dir,
-		StartupDiagnostics: diagnostics,
+		MemoryWindow:    2 * time.Hour,
+		SampleInterval:  time.Second,
+		RestartCacheDir: dir,
+		Diagnostics:     diagnostics,
 	})
 	if err := store.LoadRestartCache(); err != nil {
 		t.Fatalf("load restart cache: %v", err)

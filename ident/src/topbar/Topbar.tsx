@@ -141,7 +141,7 @@ export function Topbar({ onOpenSettings }: { onOpenSettings: () => void }) {
 
   if (initialLoading) {
     return (
-      <header className="[grid-area:topbar] flex items-stretch overflow-hidden min-w-0 bg-paper border-b border-(--color-line) text-[13px]">
+      <header className="[grid-area:topbar] flex items-stretch min-w-0 bg-paper border-b border-(--color-line) text-[13px]">
         <TopbarBrand site={site} />
         <TopbarSkeleton />
         <div className="flex items-stretch shrink-0">
@@ -157,7 +157,7 @@ export function Topbar({ onOpenSettings }: { onOpenSettings: () => void }) {
   }
 
   return (
-    <header className="[grid-area:topbar] flex items-stretch overflow-hidden min-w-0 bg-paper border-b border-(--color-line) text-[13px]">
+    <header className="[grid-area:topbar] flex items-stretch min-w-0 bg-paper border-b border-(--color-line) text-[13px]">
       <TopbarBrand site={site} />
 
       {/* Health — clock + map-display controls. Hidden on phone; the drawer

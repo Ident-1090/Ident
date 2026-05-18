@@ -18,7 +18,10 @@ import { BASEMAPS, type BasemapId } from "../map/styles";
 import { FiltersPanel } from "../rails/FiltersPanel";
 import { TrafficList } from "../rails/TrafficList";
 import { MobileReplayDock, MobileReplayFab } from "../replay/ReplayControls";
-import { useReceiverDiagnostics } from "../statusbar/StatusBar";
+import {
+  DiagnosticsCenter,
+  useReceiverDiagnostics,
+} from "../statusbar/StatusBar";
 import { SectionHead } from "../ui/SectionHead";
 import { SegButton, Segmented } from "../ui/Segmented";
 import { Tooltip } from "../ui/Tooltip";
@@ -94,6 +97,7 @@ export function MobileShell({
   const selectedHex = useIdentStore((s) => s.selectedHex);
   const aircraft = useIdentStore(selectDisplayAircraftMap);
   const select = useIdentStore((s) => s.select);
+  const { producerLabel, diagnostics } = useReceiverDiagnostics();
   const hasSelected = selectedHex != null && aircraft.has(selectedHex);
 
   useLayoutEffect(() => {
@@ -125,6 +129,11 @@ export function MobileShell({
         <MobileReplayFab
           open={replayDockOpen}
           onOpenChange={setReplayDockOpen}
+        />
+        <DiagnosticsCenter
+          producerLabel={producerLabel}
+          diagnostics={diagnostics}
+          variant="mobile"
         />
       </div>
 

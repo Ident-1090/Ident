@@ -97,9 +97,20 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 	// Hub channels cache snapshot envelopes for new clients. Some are backed by
 	// watched producer files; config and replay availability are published by
 	// identd itself.
-	hubNames := []string{"config", "capabilities", "status", "aircraft", "rangeOutline", "replay.availability"}
+	hubNames := []string{"config", "capabilities", "status", "aircraft", "rangeOutline", "replay.availability", "diagnostics"}
 	hub := NewHub(hubNames)
-	statusNormalizer := NewProducerStatusNormalizerWithUpstreamType(cfg.UpstreamType)
+	diagnostics := NewDiagnosticStore(DiagnosticStoreOptions{
+		Publish: func(env []byte) {
+			hub.PublishSnapshotEnvelope("diagnostics", env)
+		},
+	})
+	defer diagnostics.Stop()
+	go diagnostics.Run(ctx)
+	statusNormalizer := NewProducerStatusNormalizerWithOptions(ProducerStatusNormalizerOptions{
+		UpstreamType:  cfg.UpstreamType,
+		ReplayEnabled: cfg.ReplayEnable,
+	})
+	statusNormalizer.SetDiagnosticStore(diagnostics)
 
 	lineOfSightCache := NewLOSCache(LOSOptions{
 		PanoramaID: cfg.LineOfSightPanoramaID,
@@ -120,12 +131,11 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 	hub.SetRouteProvider(routes.RouteSnapshots)
 	routes.Run(ctx)
 
-	startupDiagnostics := NewDiagnosticCollector()
 	trails := NewTrailStore(TrailOptions{
-		MemoryWindow:       cfg.TrailsMemoryWindow,
-		SampleInterval:     cfg.TrailsSampleInterval,
-		RestartCacheDir:    cfg.TrailsRestartCacheDir,
-		StartupDiagnostics: startupDiagnostics,
+		MemoryWindow:    cfg.TrailsMemoryWindow,
+		SampleInterval:  cfg.TrailsSampleInterval,
+		RestartCacheDir: cfg.TrailsRestartCacheDir,
+		Diagnostics:     diagnostics,
 	})
 	if cfg.TrailsRestartCache {
 		if err := trails.LoadRestartCache(); err != nil {
@@ -135,13 +145,13 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 	}
 
 	replay, err := NewReplayStore(ReplayOptions{
-		Enabled:            cfg.ReplayEnable,
-		Dir:                cfg.ReplayDir,
-		Retention:          cfg.ReplayRetention,
-		MaxBytes:           cfg.ReplayMaxBytes,
-		BlockDuration:      cfg.ReplayBlockDuration,
-		SampleInterval:     cfg.ReplaySampleInterval,
-		StartupDiagnostics: startupDiagnostics,
+		Enabled:        cfg.ReplayEnable,
+		Dir:            cfg.ReplayDir,
+		Retention:      cfg.ReplayRetention,
+		MaxBytes:       cfg.ReplayMaxBytes,
+		BlockDuration:  cfg.ReplayBlockDuration,
+		SampleInterval: cfg.ReplaySampleInterval,
+		Diagnostics:    diagnostics,
 		OnAvailability: func(manifest ReplayManifest) {
 			publishReplayAvailabilityEnvelope(hub, manifest)
 		},
@@ -152,7 +162,6 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 	if err := replay.Load(); err != nil {
 		return err
 	}
-	publishStartupDiagnostics(hub, statusNormalizer, startupDiagnostics.Drain())
 
 	srv := NewServerWithOptions(ctx, hub, ServerOptions{
 		BasePath: cfg.BasePath,
@@ -171,8 +180,7 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 	debounce := time.Duration(cfg.DebounceMs) * time.Millisecond
 
 	readiness := make(chan string, len(producerFiles))
-	for _, c := range producerFiles {
-		c := c
+	startWatcher := func(c channelSpec) {
 		path := filepath.Join(cfg.DataDir, c.file)
 		w := NewWatcher(path, debounce, func(b []byte) {
 			aircraftFrame := publishProducerUpdate(hub, statusNormalizer, c.name, b)
@@ -207,6 +215,8 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 		}
 	}()
 
+	// Start the HTTP server before classification gates the data watchers so
+	// the UI stays reachable while the receiver file is missing or malformed.
 	go func() {
 		slog.Info("listening", "addr", cfg.Addr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -215,8 +225,79 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 	}()
 
 	if cfg.UpdateCheck {
-		go runUpdateDiagnostics(ctx, hub, statusNormalizer, NewUpdateChecker(updateCheckerOptions(cfg)), cfg.UpdateInterval)
+		go runUpdateDiagnostics(ctx, diagnostics, NewUpdateChecker(updateCheckerOptions(cfg)), cfg.UpdateInterval)
 	}
+
+	// Start the receiver watcher and block on classification before
+	// kicking off the data watchers. Aircraft / stats / outline ingest
+	// would otherwise emit one awaiting_classification warning per
+	// tick — refuse to run those channels until we know what we're
+	// reading. A periodic re-log keeps long waits visible without
+	// auto-fallback complexity (operators can see the system is alive).
+	var dataChannels []channelSpec
+	for _, c := range producerFiles {
+		if c.name == "receiver" {
+			startWatcher(c)
+		} else {
+			dataChannels = append(dataChannels, c)
+		}
+	}
+	receiverPath := filepath.Join(cfg.DataDir, cfg.ReceiverFile)
+	slog.Info("awaiting producer classification", "file", receiverPath)
+	classifyDone := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-classifyDone:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				slog.Info("still awaiting producer classification", "file", receiverPath)
+			}
+		}
+	}()
+	select {
+	case <-statusNormalizer.Classified():
+		close(classifyDone)
+		slog.Info("producer classified, starting data watchers")
+	case <-ctx.Done():
+		close(classifyDone)
+		wg.Wait()
+		return nil
+	}
+	for _, c := range dataChannels {
+		startWatcher(c)
+	}
+
+	// Receiver-derived conditions (producer.ident.unknown, config.adapter.*)
+	// emit from IngestReceiverJSON only when receiver.json changes on disk.
+	// A stable misconfiguration would otherwise expire from the diagnostic
+	// store within receiverConditionTTL; the heartbeat re-Notes any active
+	// condition so it stays surfaced until the underlying state changes.
+	//
+	// Wait for classification first — pre-classification the awaiting-loop
+	// above already surfaces "still awaiting producer classification" every
+	// 30s, so running the heartbeat too would double-emit producer.ident.unknown.
+	go func() {
+		select {
+		case <-statusNormalizer.Classified():
+		case <-ctx.Done():
+			return
+		}
+		ticker := time.NewTicker(reemitReceiverInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				statusNormalizer.ReemitReceiverConditions()
+			}
+		}
+	}()
 
 	select {
 	case <-sigs:
@@ -233,13 +314,6 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 
 	wg.Wait()
 	return nil
-}
-
-func publishStartupDiagnostics(hub *Hub, normalizer *ProducerStatusNormalizer, diagnostics []diagnostic) {
-	if len(diagnostics) == 0 {
-		return
-	}
-	hub.PublishSnapshotEnvelope("status", normalizer.DiagnosticStatusEnvelope(diagnostics...))
 }
 
 func loadConfig() Config {
@@ -360,20 +434,27 @@ func updateCheckerOptions(cfg Config) UpdateCheckerOptions {
 	}
 }
 
-func runUpdateDiagnostics(ctx context.Context, hub *Hub, normalizer *ProducerStatusNormalizer, checker *UpdateChecker, interval time.Duration) {
+func runUpdateDiagnostics(ctx context.Context, store *DiagnosticStore, checker *UpdateChecker, interval time.Duration) {
 	if checker == nil {
 		return
 	}
 	if interval <= 0 {
 		interval = defaultUpdateInterval
 	}
-	var lastDiag *diagnostic
+	// The update poll interval is the natural TTL: each tick re-Notes the
+	// current diagnostic, refreshing its visibility window. The store
+	// guarantees identity-based replacement, so periodic re-emission is
+	// idempotent on the wire (debounced) and on the UI.
+	ttl := interval + time.Minute
+	// Failed checks fade after a shorter window so a single transient
+	// network blip clears on the next successful poll instead of lingering
+	// until the full availability TTL.
+	failureTTL := interval / 4
+	if failureTTL <= 0 {
+		failureTTL = time.Hour
+	}
 	for {
-		env, current := nextUpdateDiagnosticEnvelope(ctx, normalizer, checker, lastDiag)
-		if env != nil {
-			hub.PublishSnapshotEnvelope("status", env)
-		}
-		lastDiag = current
+		applyUpdateDiagnostic(ctx, store, checker, ttl, failureTTL)
 		timer := time.NewTimer(interval)
 		select {
 		case <-ctx.Done():
@@ -384,37 +465,34 @@ func runUpdateDiagnostics(ctx context.Context, hub *Hub, normalizer *ProducerSta
 	}
 }
 
-// nextUpdateDiagnosticEnvelope returns the envelope to publish (nil when the
-// update status has not changed since lastDiag) and the diagnostic the caller
-// should treat as the new baseline. The status envelope itself carries an
-// observedAt timestamp that changes every tick, so dedup happens on the
-// underlying diagnostic content rather than the envelope bytes.
-func nextUpdateDiagnosticEnvelope(ctx context.Context, normalizer *ProducerStatusNormalizer, checker *UpdateChecker, lastDiag *diagnostic) ([]byte, *diagnostic) {
+// applyUpdateDiagnostic emits the current update diagnostic to the store, or
+// drops it (lets TTL expire) when there's nothing to announce. Re-emission
+// with the same identity refreshes TTL but does not duplicate. When the
+// underlying check failed the operator gets a warning so silent failures
+// don't hide stale "no update available" snapshots.
+func applyUpdateDiagnostic(ctx context.Context, store *DiagnosticStore, checker *UpdateChecker, ttl, failureTTL time.Duration) {
 	status := checker.Status(ctx)
-	var current *diagnostic
-	if d, ok := status.Diagnostic(); ok {
-		current = &d
+	if status.Status == UpdateUnavailable && status.Error != "" {
+		store.Note("update", "update.check.failed", severityWarning,
+			"Update check failed: "+status.Error,
+			WithTTL(failureTTL),
+		)
+		return
 	}
-	if diagnosticPtrEqual(current, lastDiag) {
-		return nil, lastDiag
+	d, ok := status.Diagnostic()
+	if !ok {
+		return
 	}
-	var diagnostics []diagnostic
-	if current != nil {
-		diagnostics = []diagnostic{*current}
+	severity, severityOK := parseSeverity(string(d.Severity))
+	if !severityOK {
+		slog.Error("update diagnostic: unknown severity", "raw", string(d.Severity), "code", d.Code)
+		return
 	}
-	env := normalizer.SetExternalDiagnostics("update", diagnostics)
-	return env, current
-}
-
-// diagnosticPtrEqual relies on `diagnostic` being a value-equality-safe
-// struct (only comparable fields — strings, ints, bools). Adding a slice
-// or map field would make `*a == *b` either fail to compile (good) or
-// drift to identity semantics (bad). Audit this if `diagnostic` grows.
-func diagnosticPtrEqual(a, b *diagnostic) bool {
-	if a == nil || b == nil {
-		return a == b
+	opts := []DiagnosticOpt{WithTTL(ttl)}
+	if d.Action != nil {
+		opts = append(opts, WithActionLink(d.Action.Label, d.Action.URL))
 	}
-	return *a == *b
+	store.Note(d.Channel, d.Code, severity, d.Message, opts...)
 }
 
 // publishConfigEnvelope caches the one-shot runtime config snapshot on the
@@ -424,6 +502,12 @@ type identConfig struct {
 	Schema      string          `json:"schema"`
 	Station     string          `json:"station,omitempty"`
 	LineOfSight json.RawMessage `json:"lineOfSight,omitempty"`
+	Ident       identBuild      `json:"ident"`
+}
+
+type identBuild struct {
+	Version     string `json:"version,omitempty"`
+	ShortCommit string `json:"shortCommit,omitempty"`
 }
 
 func publishConfigEnvelope(hub *Hub, cfg Config, lineOfSight []byte) {
@@ -431,6 +515,7 @@ func publishConfigEnvelope(hub *Hub, cfg Config, lineOfSight []byte) {
 		Schema:      "ident.config.v1",
 		Station:     cfg.StationName,
 		LineOfSight: json.RawMessage(lineOfSight),
+		Ident:       currentIdentBuild(),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
@@ -438,6 +523,25 @@ func publishConfigEnvelope(hub *Hub, cfg Config, lineOfSight []byte) {
 		return
 	}
 	hub.Publish("config", body)
+}
+
+func currentIdentBuild() identBuild {
+	info := CurrentVersionInfo()
+	return identBuild{
+		Version:     strings.TrimSpace(info.Version),
+		ShortCommit: shortCommit(info.Commit),
+	}
+}
+
+func shortCommit(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || trimmed == "unknown" {
+		return ""
+	}
+	if len(trimmed) <= 7 {
+		return trimmed
+	}
+	return trimmed[:7]
 }
 
 func envOr(getenv func(string) string, key, def string) string {

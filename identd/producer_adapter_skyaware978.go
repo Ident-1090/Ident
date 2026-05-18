@@ -18,15 +18,13 @@ func (skyaware978Adapter) Detect(receiver producerReceiverJSON) (identProducer, 
 
 func (skyaware978Adapter) Capabilities(receiver producerReceiverJSON) identCapabilities {
 	caps := commonProducerCapabilities(receiver)
-	caps.MessageRate = capabilityIdentDerived
 	caps.Gain = capabilityUnavailable
 	caps.Uptime = capabilityUnavailable
-	caps.MaxRange = capabilityIdentDerived
 	return caps
 }
 
-func (skyaware978Adapter) StatusFromStats(identProducer, producerStatsJSON) (identStatus, bool) {
-	return identStatus{}, false
+func (skyaware978Adapter) StatusFromStats(identProducer, producerStatsJSON) (identStatus, []diagnostic, bool) {
+	return identStatus{}, nil, false
 }
 
 func (skyaware978Adapter) AircraftFrame(frame producerAircraftJSON) (identAircraftFrame, []diagnostic, bool) {

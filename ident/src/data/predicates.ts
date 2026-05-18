@@ -15,6 +15,7 @@ export interface FilterState {
   altMaxFt?: number;
   emergencyOnly?: boolean;
   hideGround?: boolean;
+  groundOnly?: boolean;
   positionOnly?: boolean;
   query?: string;
 
@@ -48,7 +49,7 @@ export interface FilterState {
   // Keyword toggles.
   militaryOnly?: boolean;
   inViewOnly?: boolean;
-  expressionBranches?: FilterState[] | null;
+  expression?: FilterExpressionState | null;
 
   // Context needed by some clauses. `receiver` is required for nm:…;
   // `viewportHexes` is required for inview. When missing, the corresponding
@@ -56,6 +57,12 @@ export interface FilterState {
   receiver?: { lat: number; lon: number };
   viewportHexes?: Set<string> | null;
 }
+
+export type FilterExpressionState =
+  | { kind: "clause"; filter: FilterState }
+  | { kind: "and"; terms: FilterExpressionState[] }
+  | { kind: "or"; terms: FilterExpressionState[] }
+  | { kind: "not"; term: FilterExpressionState };
 
 // Map an aircraft.cat letter code (A0..C7) to a semantic category key.
 // When `dbFlags` is provided and its low bit is set, readsb has tagged the
@@ -94,24 +101,17 @@ function anyCategoryKeySelected(rec: Record<CategoryKey, boolean>): boolean {
 }
 
 export function matchesFilter(ac: Aircraft, f: FilterState): boolean {
-  if (f.expressionBranches && f.expressionBranches.length > 0) {
-    return f.expressionBranches.some((branch) =>
-      matchesFilter(ac, {
-        ...branch,
-        query: f.query,
-        routeByCallsign: f.routeByCallsign,
-        receiver: f.receiver,
-        viewportHexes: f.viewportHexes,
-        expressionBranches: null,
-      }),
-    );
+  if (f.expression) {
+    if (!matchesFilterExpression(ac, f.expression, f)) return false;
   }
 
   const hideGround = f.hideGround ?? false;
+  const groundOnly = f.groundOnly ?? false;
   const hasPosOnly = f.hasPosOnly ?? f.positionOnly ?? false;
   const emergOnly = f.emergOnly ?? f.emergencyOnly ?? false;
 
   if (hideGround && isGroundAircraft(ac)) return false;
+  if (groundOnly && !isGroundAircraft(ac)) return false;
   if (hasPosOnly && (ac.lat == null || ac.lon == null)) return false;
   if (emergOnly && (!ac.emergency || ac.emergency === "none")) return false;
 
@@ -274,6 +274,33 @@ export function matchesFilter(ac: Aircraft, f: FilterState): boolean {
   }
 
   return true;
+}
+
+function matchesFilterExpression(
+  ac: Aircraft,
+  expression: FilterExpressionState,
+  context: FilterState,
+): boolean {
+  if (expression.kind === "and") {
+    return expression.terms.every((term) =>
+      matchesFilterExpression(ac, term, context),
+    );
+  }
+  if (expression.kind === "or") {
+    return expression.terms.some((term) =>
+      matchesFilterExpression(ac, term, context),
+    );
+  }
+  if (expression.kind === "not") {
+    return !matchesFilterExpression(ac, expression.term, context);
+  }
+  return matchesFilter(ac, {
+    ...expression.filter,
+    expression: null,
+    routeByCallsign: context.routeByCallsign,
+    receiver: context.receiver,
+    viewportHexes: context.viewportHexes,
+  });
 }
 
 function isGroundAircraft(ac: Aircraft): boolean {

@@ -86,6 +86,10 @@ describe("Topbar basemap picker", () => {
   });
 
   it("More maps opens a menu and closes on click outside", () => {
+    expect(container.querySelector("header")?.className).not.toContain(
+      "overflow-hidden",
+    );
+
     const others = findButton(container, "More maps")!;
     expect(container.querySelector('[role="menu"]')).toBeNull();
     act(() => {
@@ -105,17 +109,15 @@ describe("Topbar basemap picker", () => {
     act(() => {
       findButton(container, "More maps")!.click();
     });
-    const positron = findButton(container, "Positron map")!;
-    expect(positron.textContent).toBe("POSITRON");
+    const osm = findButton(container, "OpenStreetMap")!;
+    expect(osm.textContent).toBe("OSM");
     act(() => {
-      positron.click();
+      osm.click();
     });
-    expect(useIdentStore.getState().map.basemapId).toBe("cartoPositron");
+    expect(useIdentStore.getState().map.basemapId).toBe("osm");
     expect(container.querySelector('[role="menu"]')).toBeNull();
     // More maps button now shows the active others label.
-    expect(findButton(container, "More maps")!.textContent).toContain(
-      "POSITRON",
-    );
+    expect(findButton(container, "More maps")!.textContent).toContain("OSM");
     expect(
       findButton(container, "More maps")!.getAttribute("aria-pressed"),
     ).toBe("true");

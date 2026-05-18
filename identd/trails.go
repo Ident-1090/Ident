@@ -23,10 +23,10 @@ const (
 )
 
 type TrailOptions struct {
-	MemoryWindow       time.Duration
-	SampleInterval     time.Duration
-	RestartCacheDir    string
-	StartupDiagnostics *DiagnosticCollector
+	MemoryWindow    time.Duration
+	SampleInterval  time.Duration
+	RestartCacheDir string
+	Diagnostics     *DiagnosticStore
 }
 
 type TrailStore struct {
@@ -42,7 +42,7 @@ type TrailStore struct {
 
 	cacheGeneration      uint64
 	cacheSavedGeneration uint64
-	startupDiagnostics   *DiagnosticCollector
+	diagnostics          *DiagnosticStore
 }
 
 type trailPoint struct {
@@ -79,13 +79,13 @@ type trailAircraftState struct {
 
 func NewTrailStore(options TrailOptions) *TrailStore {
 	return &TrailStore{
-		memoryWindow:       options.MemoryWindow,
-		sampleInterval:     options.SampleInterval,
-		cacheDir:           options.RestartCacheDir,
-		aircraft:           map[string][]trailPoint{},
-		trailStates:        map[string]trailAircraftState{},
-		snapshotDirty:      true,
-		startupDiagnostics: options.StartupDiagnostics,
+		memoryWindow:   options.MemoryWindow,
+		sampleInterval: options.SampleInterval,
+		cacheDir:       options.RestartCacheDir,
+		aircraft:       map[string][]trailPoint{},
+		trailStates:    map[string]trailAircraftState{},
+		snapshotDirty:  true,
+		diagnostics:    options.Diagnostics,
 	}
 }
 
@@ -180,7 +180,7 @@ func (s *TrailStore) LoadRestartCache() error {
 	gz, err := gzip.NewReader(f)
 	if err != nil {
 		slog.Warn("trails: ignoring unreadable cache", "err", err, "path", filepath.Join(s.cacheDir, restartTrailCacheName))
-		s.recordDiagnostic(warningDiagnostic("trails", "trails.cache.unreadable", "trail restart cache could not be read"))
+		s.noteWarning("trails.cache.unreadable", "trail restart cache could not be read")
 		return nil
 	}
 	defer gz.Close()
@@ -188,12 +188,12 @@ func (s *TrailStore) LoadRestartCache() error {
 	var cached trailCacheFile
 	if err := decodeIdentJSON(gz, &cached); err != nil {
 		slog.Warn("trails: ignoring unreadable cache", "err", err, "path", filepath.Join(s.cacheDir, restartTrailCacheName))
-		s.recordDiagnostic(warningDiagnostic("trails", "trails.cache.unreadable", "trail restart cache could not be read"))
+		s.noteWarning("trails.cache.unreadable", "trail restart cache could not be read")
 		return nil
 	}
 	if cached.Version != trailCacheVersion {
 		slog.Warn("trails: ignoring cache version", "version", cached.Version, "want", trailCacheVersion, "path", filepath.Join(s.cacheDir, restartTrailCacheName))
-		s.recordDiagnostic(warningDiagnostic("trails", "trails.cache.unsupported_version", "trail restart cache version is not supported"))
+		s.noteWarning("trails.cache.unsupported_version", "trail restart cache version is not supported")
 		return nil
 	}
 
@@ -210,8 +210,15 @@ func (s *TrailStore) LoadRestartCache() error {
 	return nil
 }
 
-func (s *TrailStore) recordDiagnostic(d diagnostic) {
-	s.startupDiagnostics.Record(d)
+// noteWarning emits a persistent trail-side diagnostic. Cache failures are
+// startup-time conditions that don't re-evaluate later, so we hold them
+// indefinitely (WithTTL(0)) and let the operator clear the underlying
+// cache to make them stop.
+func (s *TrailStore) noteWarning(code, message string) {
+	if s.diagnostics == nil {
+		return
+	}
+	s.diagnostics.Note("trails", code, severityWarning, message, WithTTL(0))
 }
 
 func (s *TrailStore) SaveRestartCache() error {

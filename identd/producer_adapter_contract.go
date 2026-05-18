@@ -6,7 +6,7 @@ type producerAdapter interface {
 	Kind() identProducerKind
 	Detect(receiver producerReceiverJSON) (identProducer, bool)
 	Capabilities(receiver producerReceiverJSON) identCapabilities
-	StatusFromStats(producer identProducer, stats producerStatsJSON) (identStatus, bool)
+	StatusFromStats(producer identProducer, stats producerStatsJSON) (identStatus, []diagnostic, bool)
 	AircraftFrame(frame producerAircraftJSON) (identAircraftFrame, []diagnostic, bool)
 	AircraftCounter(frame producerAircraftJSON) (aircraftCounterSample, bool)
 	RangeOutline(outline producerOutlineJSON) (identRangeOutline, []diagnostic, bool)
@@ -56,7 +56,6 @@ type capabilitiesPayload struct {
 
 type identStatus struct {
 	Schema           string                 `json:"schema"`
-	Producer         identProducer          `json:"producer"`
 	ObservedAt       *observedAtValue       `json:"observedAt"`
 	Freshness        freshness              `json:"freshness"`
 	ReceiverPosition *receiverPositionValue `json:"receiverPosition,omitempty"`
@@ -64,14 +63,11 @@ type identStatus struct {
 	Gain             *gainValue             `json:"gain,omitempty"`
 	Uptime           *uptimeValue           `json:"uptime,omitempty"`
 	MaxRange         *maxRangeValue         `json:"maxRange,omitempty"`
-	Diagnostics      []diagnostic           `json:"diagnostics"`
 }
 
-func newIdentStatus(producer identProducer, diagnostics ...diagnostic) identStatus {
+func newIdentStatus() identStatus {
 	return identStatus{
-		Schema:      "ident.status.v1",
-		Producer:    producer,
-		Diagnostics: append([]diagnostic(nil), diagnostics...),
+		Schema: "ident.status.v1",
 	}
 }
 
@@ -236,15 +232,6 @@ const (
 	reasonMalformedFile          unavailableReason = "malformed_file"
 )
 
-type diagnostic struct {
-	Severity    string `json:"severity"`
-	Channel     string `json:"channel"`
-	Code        string `json:"code"`
-	Message     string `json:"message"`
-	ActionLabel string `json:"actionLabel,omitempty"`
-	ActionURL   string `json:"actionUrl,omitempty"`
-}
-
 type freshness struct {
 	AircraftAgeSec         *float64 `json:"aircraftAgeSec"`
 	StatsAgeSec            *float64 `json:"statsAgeSec"`
@@ -302,7 +289,6 @@ const (
 
 type identRangeOutline struct {
 	Schema             string             `json:"schema"`
-	Producer           identProducer      `json:"producer"`
 	ObservedAtEpochSec float64            `json:"observedAtEpochSec"`
 	Source             rangeOutlineSource `json:"source"`
 	Scope              rangeOutlineScope  `json:"scope"`
@@ -317,7 +303,6 @@ type producerAircraftJSON struct {
 
 type identAircraftFrame struct {
 	Schema             string          `json:"schema"`
-	Producer           identProducer   `json:"producer"`
 	ObservedAtEpochSec float64         `json:"observedAtEpochSec"`
 	FrameMessagesTotal *float64        `json:"frameMessagesTotal,omitempty"`
 	Aircraft           []identAircraft `json:"aircraft"`

@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { labelFieldsKey, startMapTimingTrace } from "../debug/mapTiming";
 import type { BasemapId } from "../map/styles";
 import { deriveFilterFromQuery } from "../omnibox/grammar";
+import type { FilterExpressionState } from "./predicates";
 import {
   type LabelFields,
   normalizeUnitOverrides,
@@ -16,7 +17,9 @@ import type {
   CategoryKey,
   ClockMode,
   HeyWhatsThatJson,
+  IdentBuildInfo,
   IdentCapabilitiesEnvelope,
+  IdentDiagnostic,
   IdentRangeOutline,
   IdentReplayAvailability,
   IdentStatus,
@@ -81,6 +84,7 @@ export interface FilterSlice {
   altRangeFt: [number, number];
   emergOnly: boolean;
   hideGround: boolean;
+  groundOnly: boolean;
   hasPosOnly: boolean;
   // Free-text field filters set by the omnibox grammar (e.g. `op:delta`).
   // Empty string = no filter. Matching is case-insensitive substring for
@@ -113,9 +117,7 @@ export interface FilterSlice {
   // Keyword toggles not covered by the fields above.
   militaryOnly: boolean;
   inViewOnly: boolean;
-  // Disjunctive branches for grouped / OR omnibox expressions. null means the
-  // flat fields above describe the whole filter.
-  expressionBranches: FilterSlice[] | null;
+  expression: FilterExpressionState | null;
 }
 
 export interface MapSlice {
@@ -177,6 +179,7 @@ export interface LiveStateSlice {
 // Relay-pushed runtime config (`config` channel). Populated on WS connect.
 export interface ConfigSlice {
   station: string | null;
+  ident: IdentBuildInfo | null;
 }
 
 export type ReplayMode = "live" | "replay";
@@ -229,6 +232,7 @@ const DEFAULT_FILTER: FilterSlice = {
   altRangeFt: [0, 45000],
   emergOnly: false,
   hideGround: false,
+  groundOnly: false,
   hasPosOnly: false,
   operatorContains: "",
   callsignPrefix: "",
@@ -246,7 +250,7 @@ const DEFAULT_FILTER: FilterSlice = {
   hdgTolerance: null,
   militaryOnly: false,
   inViewOnly: false,
-  expressionBranches: null,
+  expression: null,
 };
 
 export interface IdentState {
@@ -254,6 +258,10 @@ export interface IdentState {
   receiver: ReceiverJson | null;
   rangeOutline: IdentRangeOutline | null;
   identStatus: IdentStatus | null;
+  // Live diagnostics, snapshot-replaced on every `diagnostics` envelope. The
+  // backend store dedupes by (channel, code, scope); the wire payload is
+  // already the authoritative full set, so consumers replace, never merge.
+  diagnostics: IdentDiagnostic[];
   capabilities: IdentCapabilitiesEnvelope | null;
   now: number;
   connectionStatus: Record<string, ConnStatus>;
@@ -311,6 +319,7 @@ export interface IdentState {
   ingestAircraft: (frame: AircraftFrame) => void;
   ingestRangeOutline: (outline: IdentRangeOutline) => void;
   ingestStatus: (s: IdentStatus) => void;
+  ingestDiagnostics: (diagnostics: IdentDiagnostic[]) => void;
   ingestCapabilities: (c: IdentCapabilitiesEnvelope) => void;
   ingestConfig: (c: Partial<ConfigSlice>) => void;
   setConnectionStatus: (
@@ -737,6 +746,7 @@ export const useIdentStore = create<IdentState>((set) => ({
   receiver: null,
   rangeOutline: null,
   identStatus: null,
+  diagnostics: [],
   capabilities: null,
   now: 0,
   connectionStatus: { ws: "connecting" },
@@ -775,7 +785,7 @@ export const useIdentStore = create<IdentState>((set) => ({
 
   liveState: { lastMsgTs: 0, mpsBuffer: [], routesViaWs: false },
 
-  config: { station: null },
+  config: { station: null, ident: null },
 
   replay: INITIAL_REPLAY_STATE,
 
@@ -854,7 +864,6 @@ export const useIdentStore = create<IdentState>((set) => ({
       const previous = st.identStatus;
       const merged: IdentStatus = {
         schema: status.schema,
-        producer: status.producer,
         observedAt: status.observedAt,
         freshness: status.freshness,
         receiverPosition: status.receiverPosition ?? previous?.receiverPosition,
@@ -862,24 +871,45 @@ export const useIdentStore = create<IdentState>((set) => ({
         gain: status.gain ?? previous?.gain,
         uptime: status.uptime ?? previous?.uptime,
         maxRange: status.maxRange ?? previous?.maxRange,
-        diagnostics: status.diagnostics ?? previous?.diagnostics ?? [],
       };
       const pos =
         merged.receiverPosition?.kind !== "unavailable"
           ? merged.receiverPosition?.value
           : undefined;
+      // Producer identity lives in the capabilities envelope; pull from
+      // there for the receiver-display label instead of duplicating it on
+      // every status envelope.
+      const producer = st.capabilities?.producer;
       return {
         identStatus: merged,
         receiver: pos
           ? {
               lat: pos.lat,
               lon: pos.lon,
-              version: merged.producer.version ?? merged.producer.kind,
+              version: producer?.version ?? producer?.kind ?? "unknown",
             }
           : st.receiver,
       };
     }),
-  ingestCapabilities: (capabilities) => set({ capabilities }),
+  // Snapshot replacement: the diagnostics envelope is the full set, identity
+  // dedup happens on the backend, so the frontend just replaces.
+  ingestDiagnostics: (diagnostics) => set({ diagnostics }),
+  ingestCapabilities: (capabilities) =>
+    set((st) => {
+      // Capabilities can arrive AFTER a status envelope on snapshot
+      // replay or reconnect ordering. ingestStatus reads producer
+      // info from capabilities at merge time and falls back to
+      // "unknown" if absent — so we recompute the receiver label
+      // here to resolve the race instead of leaving "unknown" stuck.
+      const next: Partial<IdentState> = { capabilities };
+      if (st.receiver) {
+        next.receiver = {
+          ...st.receiver,
+          version: capabilities.producer.version ?? capabilities.producer.kind,
+        };
+      }
+      return next;
+    }),
   ingestConfig: (c) => set((st) => ({ config: { ...st.config, ...c } })),
 
   setConnectionStatus: (channel, status, info) =>

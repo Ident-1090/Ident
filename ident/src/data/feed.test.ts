@@ -189,6 +189,24 @@ describe("startFeed route envelopes", () => {
     stop();
   });
 
+  it("writes relay-supplied Ident build info from a config envelope into store", () => {
+    const stop = startFeed();
+    wsHarness.instances[0].emitText(
+      JSON.stringify({
+        type: "config",
+        data: {
+          schema: "ident.config.v1",
+          ident: { version: "dev", shortCommit: "abc1234" },
+        },
+      }),
+    );
+    expect(useIdentStore.getState().config.ident).toEqual({
+      version: "dev",
+      shortCommit: "abc1234",
+    });
+    stop();
+  });
+
   it("writes relay-supplied lineOfSight rings from the config envelope into store", () => {
     const stop = startFeed();
     wsHarness.instances[0].emitText(
@@ -654,6 +672,52 @@ describe("startFeed route envelopes", () => {
     stop();
   });
 
+  it("replaces the diagnostics slice on each diagnostics envelope (snapshot replacement)", () => {
+    const stop = startFeed();
+    useIdentStore.setState({
+      diagnostics: [
+        {
+          severity: "warning",
+          channel: "stale",
+          code: "stale.code",
+          message: "should be replaced",
+        },
+      ],
+    });
+    wsHarness.instances[0].emitText(
+      JSON.stringify({
+        type: "diagnostics",
+        data: {
+          schema: "ident.diagnostics.v1",
+          diagnostics: [
+            {
+              severity: "error",
+              channel: "stats",
+              code: "stats.adapter.malformed_file",
+              message: "stats.json could not be parsed",
+            },
+          ],
+        },
+      }),
+    );
+
+    const incoming = useIdentStore.getState().diagnostics;
+    expect(incoming).toHaveLength(1);
+    expect(incoming[0].code).toBe("stats.adapter.malformed_file");
+
+    // A subsequent envelope with an empty list clears the slice entirely —
+    // the wire payload IS the full set, not a delta.
+    wsHarness.instances[0].emitText(
+      JSON.stringify({
+        type: "diagnostics",
+        data: { schema: "ident.diagnostics.v1", diagnostics: [] },
+      }),
+    );
+    expect(useIdentStore.getState().diagnostics).toHaveLength(0);
+
+    stop();
+  });
+
   it("does not refresh feed freshness from auxiliary websocket envelopes", () => {
     const stop = startFeed();
     wsHarness.instances[0].emitText(
@@ -694,7 +758,6 @@ describe("startFeed route envelopes", () => {
             source: "stats_last1min_messages_valid",
             value: { hz: 42, basisSec: 60 },
           },
-          diagnostics: [],
         },
       }),
     );

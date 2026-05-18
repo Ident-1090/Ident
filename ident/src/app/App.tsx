@@ -37,7 +37,14 @@ function AppContent() {
   const aircraft = useIdentStore(selectDisplayAircraftMap);
   const selected = useIdentStore((s) => s.selectedHex);
   const select = useIdentStore((s) => s.select);
+  const replayEnabled = useIdentStore((s) => s.replay.enabled);
+  const replayAvailableFrom = useIdentStore((s) => s.replay.availableFrom);
+  const replayAvailableTo = useIdentStore((s) => s.replay.availableTo);
+  const wsStatus = useIdentStore((s) => s.connectionStatus.ws);
   const hasSelectedAircraft = selected != null && aircraft.has(selected);
+  const hasReplayWindow =
+    replayEnabled && replayAvailableFrom != null && replayAvailableTo != null;
+  const showReplayRow = hasReplayWindow || wsStatus === "connecting";
 
   useEffect(() => {
     const stop = startFeed();
@@ -76,7 +83,7 @@ function AppContent() {
   // Desktop keeps the traffic rail at its full width; the map column absorbs
   // narrower windows instead of compressing the sidebar.
   const base =
-    "app-shell grid w-screen relative grid-rows-[1fr] md:grid-rows-[48px_32px_1fr_30px] " +
+    `app-shell grid w-screen relative grid-rows-[1fr] ${showReplayRow ? "md:grid-rows-[48px_32px_1fr_30px]" : "md:grid-rows-[48px_0px_1fr_30px]"} ` +
     "grid-cols-[1fr] " +
     "md:[grid-template-areas:'topbar_topbar''left_replay''left_canvas''status_status'] " +
     "[grid-template-areas:'canvas']";

@@ -36,7 +36,7 @@ func TestProducerStatusNormalizerUsesIngestClockForStatsFreshnessWhenStatsTimeMi
 	n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2"}`))
 
 	envs := n.IngestStatsJSON([]byte(`{
-		"last1min":{"messages":6000},
+		"last1min":{"messages":6000,"local":{"gain_db":18.6}},
 		"total":{"start":1699990000}
 	}`))
 
@@ -66,20 +66,18 @@ func TestProducerStatusNormalizerAddsAircraftObservedAtAndFreshness(t *testing.T
 
 func TestProducerStatusNormalizerReportsMalformedStatsJSON(t *testing.T) {
 	n := NewProducerStatusNormalizer()
+	store := attachDiagnosticStoreForTest(n)
 	n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2"}`))
 
-	envs := n.IngestStatsJSON([]byte(`{"last1min":`))
+	if envs := n.IngestStatsJSON([]byte(`{"last1min":`)); len(envs) != 0 {
+		t.Fatalf("malformed stats should not publish a status envelope: %d", len(envs))
+	}
 
-	status := findEnvelope(t, envs, "status")
-	diagnostics, ok := status["diagnostics"].([]any)
+	diag, ok := findDiagnostic(store.Snapshot(), "stats.adapter.malformed_file")
 	if !ok {
-		t.Fatalf("diagnostics = %#v", status["diagnostics"])
+		t.Fatalf("diagnostic codes = %#v", diagnosticCodes(store.Snapshot()))
 	}
-	if len(diagnostics) != 1 {
-		t.Fatalf("diagnostics = %#v", diagnostics)
-	}
-	diag := diagnostics[0].(map[string]any)
-	if diag["code"] != "stats.adapter.malformed_file" || diag["severity"] != "error" {
+	if diag.Severity != "error" {
 		t.Fatalf("diagnostic = %#v", diag)
 	}
 }
@@ -104,13 +102,13 @@ func TestProducerStatusNormalizerLogsDiagnosticsWithStableCode(t *testing.T) {
 func TestAppendEnvelopeReportsMarshalFailures(t *testing.T) {
 	envs := appendEnvelope(nil, "aircraft", func() {})
 
-	status := findEnvelope(t, envs, "status")
-	diagnostics, ok := status["diagnostics"].([]any)
-	if !ok {
-		t.Fatalf("diagnostics = %#v", status["diagnostics"])
+	payload := findEnvelope(t, envs, "diagnostics")
+	if payload["schema"] != "ident.diagnostics.v1" {
+		t.Fatalf("schema = %#v", payload["schema"])
 	}
-	if len(diagnostics) != 1 {
-		t.Fatalf("diagnostics = %#v", diagnostics)
+	diagnostics, ok := payload["diagnostics"].([]any)
+	if !ok || len(diagnostics) != 1 {
+		t.Fatalf("diagnostics = %#v", payload["diagnostics"])
 	}
 	diag := diagnostics[0].(map[string]any)
 	if diag["channel"] != "adapter" || diag["code"] != "adapter.marshal_failed" || diag["severity"] != "error" {
@@ -160,27 +158,260 @@ func TestProducerStatusNormalizerBootstrapsCounterAfterProducerChange(t *testing
 
 func TestProducerStatusNormalizerReportsInvalidAircraftBoolean(t *testing.T) {
 	n := NewProducerStatusNormalizer()
+	store := attachDiagnosticStoreForTest(n)
 	n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2"}`))
 
-	status := findEnvelope(t, ingestAircraftJSONForTest(t, n, `{
+	ingestAircraftJSONForTest(t, n, `{
 		"now":100,
 		"messages":1000,
 		"aircraft":[{"hex":"abc123","alert":2,"spi":"yes"}]
-	}`), "status")
+	}`)
 
-	diagnostics, ok := status["diagnostics"].([]any)
+	// Both "alert" and "spi" share the same diagnostic identity
+	// (aircraft, aircraft.adapter.invalid_bool); the store dedups
+	// re-emissions so the snapshot reports a single entry with the
+	// last-seen message.
+	diag, ok := findDiagnostic(store.Snapshot(), "aircraft.adapter.invalid_bool")
 	if !ok {
-		t.Fatalf("diagnostics = %#v", status["diagnostics"])
+		t.Fatalf("diagnostic codes = %#v", diagnosticCodes(store.Snapshot()))
 	}
-	if len(diagnostics) != 2 {
-		t.Fatalf("diagnostics = %#v", diagnostics)
+	if diag.Channel != "aircraft" {
+		t.Fatalf("diagnostic = %#v", diag)
 	}
-	for _, raw := range diagnostics {
-		diag := raw.(map[string]any)
-		if diag["channel"] != "aircraft" || diag["code"] != "aircraft.adapter.invalid_bool" {
-			t.Fatalf("diagnostic = %#v", diag)
-		}
+}
+
+func TestProducerStatusNormalizerCapabilityPromotionSurvivesReceiverReingest(t *testing.T) {
+	// Once a capability is promoted via observed live data, a subsequent
+	// receiver.json touch of the SAME producer must not silently
+	// demote it back to the conservative baseline. Capability flicker
+	// is what the persistent-observation contract is meant to prevent.
+	n := NewProducerStatusNormalizer()
+	n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2","lat":37.5,"lon":-122.2}`))
+
+	// Live stats observation promotes gain to producer_provided.
+	_ = n.IngestStatsJSON([]byte(`{"last1min":{"start":1700000000,"end":1700000060,"messages":600,"local":{"gain_db":18.6}}}`))
+
+	// Receiver re-ingest of the same producer kind must keep gain promoted.
+	envs := n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2","lat":37.5,"lon":-122.2}`))
+	caps := findEnvelope(t, envs, "capabilities")["capabilities"].(map[string]any)
+	if caps["gain"] != "producer_provided" {
+		t.Fatalf("gain demoted by receiver reingest: %#v", caps["gain"])
 	}
+}
+
+func TestProducerStatusNormalizerCapabilityResetsOnProducerKindChange(t *testing.T) {
+	// A producer-kind transition must wipe observed promotions —
+	// capabilities from the previous producer should not bleed into
+	// the new one.
+	n := NewProducerStatusNormalizer()
+	n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2"}`))
+	_ = n.IngestStatsJSON([]byte(`{"last1min":{"start":1700000000,"end":1700000060,"messages":600,"local":{"gain_db":18.6}}}`))
+
+	envs := n.IngestReceiverJSON([]byte(`{"version":"dump978-fa 8.2"}`))
+	caps := findEnvelope(t, envs, "capabilities")["capabilities"].(map[string]any)
+	if caps["gain"] != "unavailable" {
+		t.Fatalf("gain leaked across producer kind change: %#v", caps["gain"])
+	}
+}
+
+func TestProducerStatusNormalizerStatusEnvelopeCarriesPersistentLiveValues(t *testing.T) {
+	// Pin the normalizer clock to the data so the staleness gate in
+	// currentStatus() doesn't fire on the fixture's old timestamps.
+	n := NewProducerStatusNormalizerWithClock(func() time.Time {
+		return time.Unix(1_700_000_100, 0)
+	})
+	_ = attachDiagnosticStoreForTest(n)
+	n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2","lat":37.5,"lon":-122.2}`))
+
+	// Stats publishes uptime + gain + messageRate.
+	statsEnvs := n.IngestStatsJSON([]byte(`{
+		"last1min":{"start":1700000040,"end":1700000100,"messages":6000,"local":{"gain_db":18.6}},
+		"total":{"start":1699990000}
+	}`))
+	firstStatus := findEnvelope(t, statsEnvs, "status")
+	if firstStatus["uptime"] == nil || firstStatus["gain"] == nil || firstStatus["messageRate"] == nil {
+		t.Fatalf("stats envelope missing live values: %#v", firstStatus)
+	}
+
+	receiverEnvs := n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2","lat":37.5,"lon":-122.2}`))
+	secondStatus := findEnvelope(t, receiverEnvs, "status")
+	if secondStatus["uptime"] == nil {
+		t.Fatalf("uptime vanished from status envelope after receiver re-ingest: %#v", secondStatus)
+	}
+	if secondStatus["gain"] == nil {
+		t.Fatalf("gain vanished from status envelope after receiver re-ingest: %#v", secondStatus)
+	}
+	if secondStatus["messageRate"] == nil {
+		t.Fatalf("messageRate vanished from status envelope after receiver re-ingest: %#v", secondStatus)
+	}
+}
+
+func TestProducerStatusNormalizerResetsPersistentLiveValuesOnProducerChange(t *testing.T) {
+	n := NewProducerStatusNormalizerWithClock(func() time.Time {
+		return time.Unix(1_700_000_100, 0)
+	})
+	_ = attachDiagnosticStoreForTest(n)
+	n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2"}`))
+	_ = n.IngestStatsJSON([]byte(`{
+		"last1min":{"start":1700000040,"end":1700000100,"messages":6000,"local":{"gain_db":18.6}},
+		"total":{"start":1699990000}
+	}`))
+
+	switched := n.IngestReceiverJSON([]byte(`{"version":"dump978-fa 8.2"}`))
+	status := findEnvelope(t, switched, "status")
+	if status["gain"] != nil || status["uptime"] != nil {
+		t.Fatalf("live values bled across producer kind change: %#v", status)
+	}
+}
+
+func TestProducerStatusNormalizerStaleStatsRateSuppressedEvenWhenAircraftFresh(t *testing.T) {
+	// A stats-derived messageRate from t=0 must NOT live indefinitely
+	// just because the aircraft watcher keeps ticking. dump1090-fa stops
+	// emitting stats; aircraft frames keep arriving but their counter
+	// fails (no top-level Messages field), so the aircraft path bails
+	// early without updating lastAircraftMessageRate. Per-source split
+	// catches this; a single shared slot would keep the 250s-old stats
+	// rate in the envelope under aircraft's freshness signal.
+	clock := time.Unix(1_700_000_100, 0)
+	n := NewProducerStatusNormalizerWithClock(func() time.Time { return clock })
+	_ = attachDiagnosticStoreForTest(n)
+	n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2","lat":37.5,"lon":-122.2}`))
+	_ = n.IngestStatsJSON([]byte(`{
+		"last1min":{"start":1700000040,"end":1700000100,"messages":6000,"local":{"gain_db":18.6}},
+		"total":{"start":1699990000}
+	}`))
+
+	// Advance the wall clock past statsStaleThresholdSec (180s) without
+	// further stats. Aircraft watcher keeps firing — but with no
+	// top-level Messages, AircraftCounter returns ok=false and the path
+	// early-returns without touching lastAircraftMessageRate.
+	clock = time.Unix(1_700_000_400, 0)
+	ingestAircraftJSONForTest(t, n, `{"now":1700000400,"aircraft":[]}`)
+
+	// Receiver-only re-ingest exercises currentStatus() with both
+	// sources past their thresholds for messageRate.
+	envs := n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2","lat":37.5,"lon":-122.2}`))
+	status := findEnvelope(t, envs, "status")
+	if status["messageRate"] != nil {
+		t.Fatalf("stale stats-derived messageRate kept alive by aircraft freshness: %#v", status["messageRate"])
+	}
+}
+
+func TestProducerStatusNormalizerDoesNotFireStatsStaleForProducerWithoutStats(t *testing.T) {
+	// dump978-fa legitimately produces no stats.json. The staleness gate
+	// for stats-only fields (Gain, Uptime) must not trip when the
+	// aircraft path populates lastAircraftMessageRate — that's not a
+	// stats source going stale; it's a producer that never had one.
+	n := NewProducerStatusNormalizer()
+	store := attachDiagnosticStoreForTest(n)
+	n.IngestReceiverJSON([]byte(`{"version":"dump978-fa 8.2"}`))
+	ingestAircraftJSONForTest(t, n, `{"now":100,"messages":1000,"aircraft":[]}`)
+	ingestAircraftJSONForTest(t, n, `{"now":105,"messages":1050,"aircraft":[]}`)
+
+	if _, ok := findDiagnostic(store.Snapshot(), "stats.source.stale"); ok {
+		t.Fatalf("stats.source.stale fired for a producer that never emits stats: %#v", diagnosticCodes(store.Snapshot()))
+	}
+}
+
+func TestProducerStatusNormalizerResetsObservedTimestampsOnProducerChange(t *testing.T) {
+	// Stale observed-at timestamps from a prior producer would mis-gate
+	// the new producer's first ingest. Producer-kind change must reset
+	// the source clocks alongside the cached live values.
+	clock := time.Unix(1_700_000_100, 0)
+	n := NewProducerStatusNormalizerWithClock(func() time.Time { return clock })
+	_ = attachDiagnosticStoreForTest(n)
+	n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2"}`))
+	_ = n.IngestStatsJSON([]byte(`{
+		"last1min":{"start":1700000040,"end":1700000100,"messages":6000,"local":{"gain_db":18.6}},
+		"total":{"start":1699990000}
+	}`))
+
+	// Switch producer well after the prior producer's stats clock. If
+	// lastStatsObservedAt leaked across, the new producer's first stats
+	// envelope would carry a multi-hundred-second statsAgeSec from the
+	// old producer's clock rather than the ~0s of its own fresh sample.
+	clock = time.Unix(1_700_000_500, 0)
+	n.IngestReceiverJSON([]byte(`{"version":"readsb 3.16","readsb":true}`))
+
+	// First stats sample for the new producer (readsb uses top-level
+	// gain_db / now and last1min.messages_valid). statsAgeSec must
+	// reflect the new producer's own observed-at, not a carryover.
+	envs := n.IngestStatsJSON([]byte(`{
+		"now":1700000500,
+		"gain_db":12.0,
+		"last1min":{"start":1700000440,"end":1700000500,"messages_valid":3000},
+		"total":{"start":1700000000}
+	}`))
+	status := findEnvelope(t, envs, "status")
+	freshness, ok := status["freshness"].(map[string]any)
+	if !ok {
+		t.Fatalf("freshness missing: %#v", status)
+	}
+	if age, _ := freshness["statsAgeSec"].(float64); age != 0 {
+		t.Fatalf("statsAgeSec = %v, want 0 (carryover from previous producer)", age)
+	}
+	if status["gain"] == nil || status["messageRate"] == nil {
+		t.Fatalf("new producer's first stats envelope missing fresh values: %#v", status)
+	}
+}
+
+func TestProducerStatusNormalizerReemitReceiverConditionsKeepsActiveEntries(t *testing.T) {
+	// receiver.json may not change for hours; a stable misconfiguration
+	// must keep its diagnostic alive past a single TTL window. The
+	// heartbeat re-emit re-Notes any active receiver-derived condition
+	// so the entry refreshes even when no IngestReceiverJSON fires.
+	n := NewProducerStatusNormalizer()
+	store := attachDiagnosticStoreForTest(n)
+	n.IngestReceiverJSON([]byte(`{"version":"unknown-thing"}`))
+	if _, ok := findDiagnostic(store.Snapshot(), "producer.ident.unknown"); !ok {
+		t.Fatal("classification failure should surface producer.ident.unknown")
+	}
+	n.ReemitReceiverConditions()
+	if _, ok := findDiagnostic(store.Snapshot(), "producer.ident.unknown"); !ok {
+		t.Fatal("heartbeat re-emit lost the active condition")
+	}
+}
+
+func TestProducerStatusNormalizerReemitReceiverConditionsSilentWhenClassified(t *testing.T) {
+	// Once classification succeeds, the heartbeat must NOT keep emitting
+	// a stale producer.ident.unknown — stop emitting IS the clear.
+	n := NewProducerStatusNormalizer()
+	store := attachDiagnosticStoreForTest(n)
+	n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2"}`))
+	// Sanity: classification should not have emitted the unknown condition.
+	if _, ok := findDiagnostic(store.Snapshot(), "producer.ident.unknown"); ok {
+		t.Fatal("classification succeeded but producer.ident.unknown is in the store")
+	}
+	n.ReemitReceiverConditions()
+	if _, ok := findDiagnostic(store.Snapshot(), "producer.ident.unknown"); ok {
+		t.Fatal("heartbeat re-emitted producer.ident.unknown on a classified producer")
+	}
+}
+
+func TestProducerStatusNormalizerClassifiedChannel(t *testing.T) {
+	n := NewProducerStatusNormalizer()
+	select {
+	case <-n.Classified():
+		t.Fatal("Classified() closed before any ingest")
+	default:
+	}
+
+	n.IngestReceiverJSON([]byte(`{"version":"unknown-thing"}`))
+	select {
+	case <-n.Classified():
+		t.Fatal("Classified() closed on unclassifiable receiver.json")
+	default:
+	}
+
+	n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2"}`))
+	select {
+	case <-n.Classified():
+	default:
+		t.Fatal("Classified() not closed after successful classification")
+	}
+
+	// A subsequent producer-kind flip must not panic by re-closing the channel.
+	n.IngestReceiverJSON([]byte(`{"version":"readsb 3.16.15"}`))
 }
 
 func TestProducerStatusNormalizerKeepsReceiverPositionWhenSameProducerOmitsCoords(t *testing.T) {
@@ -207,12 +438,11 @@ func TestProducerStatusNormalizerKeepsReceiverPositionAcrossTransientUnknownRein
 	// partial file, unfamiliar version string) shouldn't nuke the
 	// previously-good receiver position. The persistent-snapshot fix
 	// loses its purpose if a single bad classification clears state.
-	n.IngestReceiverJSON([]byte(`{"version":"some-other-thing"}`))
+	envs := n.IngestReceiverJSON([]byte(`{"version":"some-other-thing"}`))
 
-	status := findEnvelope(t, n.IngestStatsJSON([]byte(`{"last1min":{"messages":600,"start":1000,"end":1060,"local":{"gain_db":18.6}}}`)), "status")
-	// After fallback-to-unknown the adapter is nil so stats ingestion takes
-	// the "awaiting_classification" path; the prior receiver position should
-	// still ride along on subsequent status envelopes.
+	// The receiver-stage status envelope must still carry the prior
+	// position even though detection failed on the latest receiver.json.
+	status := findEnvelope(t, envs, "status")
 	pos, ok := status["receiverPosition"].(map[string]any)
 	if !ok || pos["kind"] != "producer_provided" {
 		t.Fatalf("receiverPosition lost after transient unknown classification: %#v", status["receiverPosition"])
@@ -238,23 +468,20 @@ func TestProducerStatusNormalizerStatusEnvelopeCarriesPersistentSnapshot(t *test
 
 func TestProducerStatusNormalizerReportsInvalidAircraftAltitude(t *testing.T) {
 	n := NewProducerStatusNormalizer()
+	store := attachDiagnosticStoreForTest(n)
 	n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2"}`))
 
-	status := findEnvelope(t, ingestAircraftJSONForTest(t, n, `{
+	ingestAircraftJSONForTest(t, n, `{
 		"now":100,
 		"messages":1000,
 		"aircraft":[{"hex":"abc123","alt_baro":"FL340"}]
-	}`), "status")
+	}`)
 
-	diagnostics, ok := status["diagnostics"].([]any)
+	diag, ok := findDiagnostic(store.Snapshot(), "aircraft.adapter.invalid_altitude")
 	if !ok {
-		t.Fatalf("diagnostics = %#v", status["diagnostics"])
+		t.Fatalf("diagnostic codes = %#v", diagnosticCodes(store.Snapshot()))
 	}
-	if len(diagnostics) != 1 {
-		t.Fatalf("diagnostics = %#v", diagnostics)
-	}
-	diag := diagnostics[0].(map[string]any)
-	if diag["channel"] != "aircraft" || diag["code"] != "aircraft.adapter.invalid_altitude" {
+	if diag.Channel != "aircraft" {
 		t.Fatalf("diagnostic = %#v", diag)
 	}
 }
@@ -299,10 +526,15 @@ func TestProducerStatusNormalizerEmitsProducerChangedOnKindFlip(t *testing.T) {
 
 func TestProducerStatusNormalizerKeepsAircraftAfterMalformedStats(t *testing.T) {
 	n := NewProducerStatusNormalizer()
+	store := attachDiagnosticStoreForTest(n)
 	n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2"}`))
 
-	malformed := n.IngestStatsJSON([]byte(`{"last1min":`))
-	assertDiagnostic(t, findEnvelope(t, malformed, "status"), "stats.adapter.malformed_file")
+	if envs := n.IngestStatsJSON([]byte(`{"last1min":`)); len(envs) != 0 {
+		t.Fatalf("malformed stats should not publish a status envelope: %d", len(envs))
+	}
+	if _, ok := findDiagnostic(store.Snapshot(), "stats.adapter.malformed_file"); !ok {
+		t.Fatalf("malformed stats diagnostic missing from store: %#v", diagnosticCodes(store.Snapshot()))
+	}
 
 	envs, frame := n.IngestAircraftJSONWithFrame([]byte(`{
 		"now":100,
@@ -412,9 +644,8 @@ func TestPublishProducerUpdatePublishesAircraftThroughDetectedAdapter(t *testing
 	if aircraft["schema"] != "ident.aircraft.v1" {
 		t.Fatalf("schema = %v, want ident.aircraft.v1", aircraft["schema"])
 	}
-	producer := aircraft["producer"].(map[string]any)
-	if producer["kind"] != "dump1090-fa" {
-		t.Fatalf("producer = %#v", producer)
+	if _, ok := aircraft["producer"]; ok {
+		t.Fatalf("aircraft frame must not carry producer; only ident.capabilities.v1 does")
 	}
 	if aircraft["producer_private"] != nil {
 		t.Fatalf("producer private top-level field leaked into aircraft frame: %#v", aircraft)
@@ -457,6 +688,7 @@ func TestPublishProducerUpdatePublishesAircraftThroughDetectedAdapter(t *testing
 
 func TestProducerStatusNormalizerUpstreamOverrideWinsOverDetection(t *testing.T) {
 	n := NewProducerStatusNormalizerWithUpstreamType("dump1090-fa")
+	store := attachDiagnosticStoreForTest(n)
 
 	envs := n.IngestReceiverJSON([]byte(`{"version":"readsb 3.16","readsb":true}`))
 
@@ -465,15 +697,14 @@ func TestProducerStatusNormalizerUpstreamOverrideWinsOverDetection(t *testing.T)
 	if producer["kind"] != "dump1090-fa" {
 		t.Fatalf("producer = %#v", producer)
 	}
-	status := findEnvelope(t, envs, "status")
-	diag := status["diagnostics"].([]any)[0].(map[string]any)
-	if diag["code"] != "config.adapter.override_mismatch" {
-		t.Fatalf("diagnostic = %#v", diag)
+	if _, ok := findDiagnostic(store.Snapshot(), "config.adapter.override_mismatch"); !ok {
+		t.Fatalf("diagnostic codes = %#v", diagnosticCodes(store.Snapshot()))
 	}
 }
 
 func TestProducerStatusNormalizerInvalidUpstreamOverrideFallsBackToDetection(t *testing.T) {
 	n := NewProducerStatusNormalizerWithUpstreamType("not-supported")
+	store := attachDiagnosticStoreForTest(n)
 
 	envs := n.IngestReceiverJSON([]byte(`{"version":"readsb 3.16","readsb":true}`))
 
@@ -482,22 +713,18 @@ func TestProducerStatusNormalizerInvalidUpstreamOverrideFallsBackToDetection(t *
 	if producer["kind"] != "readsb" {
 		t.Fatalf("producer = %#v", producer)
 	}
-	status := findEnvelope(t, envs, "status")
-	diagnostics := status["diagnostics"].([]any)
-	if len(diagnostics) != 1 {
-		t.Fatalf("diagnostics = %#v", diagnostics)
+	diag, ok := findDiagnostic(store.Snapshot(), "config.adapter.invalid_upstream_type")
+	if !ok {
+		t.Fatalf("diagnostic codes = %#v", diagnosticCodes(store.Snapshot()))
 	}
-	diag := diagnostics[0].(map[string]any)
-	if diag["channel"] != "config" || diag["code"] != "config.adapter.invalid_upstream_type" {
-		t.Fatalf("diagnostic = %#v", diag)
-	}
-	if !strings.Contains(diag["message"].(string), "not-supported") {
+	if diag.Channel != "config" || !strings.Contains(diag.Message, "not-supported") {
 		t.Fatalf("diagnostic should include raw value: %#v", diag)
 	}
 }
 
 func TestProducerStatusNormalizerUnsupportedUpstreamOverrideFallsBackToDetection(t *testing.T) {
-	n := newProducerStatusNormalizer([]producerAdapter{readsbAdapter{}}, time.Now, "dump1090-fa")
+	n := newProducerStatusNormalizer([]producerAdapter{readsbAdapter{}}, time.Now, ProducerStatusNormalizerOptions{UpstreamType: "dump1090-fa"})
+	store := attachDiagnosticStoreForTest(n)
 
 	envs := n.IngestReceiverJSON([]byte(`{"version":"readsb 3.16","readsb":true}`))
 
@@ -506,16 +733,11 @@ func TestProducerStatusNormalizerUnsupportedUpstreamOverrideFallsBackToDetection
 	if producer["kind"] != "readsb" {
 		t.Fatalf("producer = %#v", producer)
 	}
-	status := findEnvelope(t, envs, "status")
-	diagnostics := status["diagnostics"].([]any)
-	if len(diagnostics) != 1 {
-		t.Fatalf("diagnostics = %#v", diagnostics)
+	diag, ok := findDiagnostic(store.Snapshot(), "config.adapter.unsupported_upstream_type")
+	if !ok {
+		t.Fatalf("diagnostic codes = %#v", diagnosticCodes(store.Snapshot()))
 	}
-	diag := diagnostics[0].(map[string]any)
-	if diag["channel"] != "config" || diag["code"] != "config.adapter.unsupported_upstream_type" {
-		t.Fatalf("diagnostic = %#v", diag)
-	}
-	if !strings.Contains(diag["message"].(string), "dump1090-fa") {
+	if diag.Channel != "config" || !strings.Contains(diag.Message, "dump1090-fa") {
 		t.Fatalf("diagnostic should include raw value: %#v", diag)
 	}
 }
@@ -555,9 +777,8 @@ func TestPublishProducerUpdatePublishesRangeOutlineThroughDetectedAdapter(t *tes
 	if outline["schema"] != "ident.rangeOutline.v1" || outline["scope"] != "last24h" {
 		t.Fatalf("range outline = %#v", outline)
 	}
-	producer := outline["producer"].(map[string]any)
-	if producer["kind"] != "readsb" {
-		t.Fatalf("range outline producer = %#v", producer)
+	if _, ok := outline["producer"]; ok {
+		t.Fatalf("rangeOutline envelope must not carry producer; only ident.capabilities.v1 does")
 	}
 	coords := outline["coordinates"].([]any)
 	first := coords[0].([]any)
@@ -584,18 +805,13 @@ func TestPublishProducerUpdatePublishesRangeOutlineThroughDetectedAdapter(t *tes
 func TestPublishProducerUpdateReportsMalformedRangeOutline(t *testing.T) {
 	hub := NewHub([]string{"capabilities", "status", "rangeOutline"})
 	n := NewProducerStatusNormalizer()
+	store := attachDiagnosticStoreForTest(n)
 
 	publishProducerUpdate(hub, n, "receiver", []byte(`{"version":"readsb 3.16","readsb":true,"lat":0,"lon":0}`))
 	publishProducerUpdate(hub, n, "outline", []byte(`{"actualRange":{"last24h":{"points":[[0,1],[1,0]]}}}`))
 
-	status := findSnapshotEnvelope(t, hub.Snapshots(), "status")
-	diagnostics := status["diagnostics"].([]any)
-	if len(diagnostics) != 1 {
-		t.Fatalf("diagnostics = %#v", diagnostics)
-	}
-	diag := diagnostics[0].(map[string]any)
-	if diag["channel"] != "outline" || diag["code"] != "outline.adapter.malformed_outline" {
-		t.Fatalf("diagnostic = %#v", diag)
+	if _, ok := findDiagnostic(store.Snapshot(), "outline.adapter.malformed_outline"); !ok {
+		t.Fatalf("diagnostic codes = %#v", diagnosticCodes(store.Snapshot()))
 	}
 	for _, snap := range hub.Snapshots() {
 		if decodeEnvelope(t, snap).Type == "rangeOutline" {
@@ -699,6 +915,33 @@ func ingestAircraftJSONForTest(t *testing.T, n *ProducerStatusNormalizer, body s
 	t.Helper()
 	envs, _ := n.IngestAircraftJSONWithFrame([]byte(body))
 	return envs
+}
+
+// attachDiagnosticStoreForTest wires a synchronous-publish store onto the
+// normalizer so tests can read the diagnostic snapshot directly after each
+// ingest. Debounce is disabled so each Note triggers a publish; tests that
+// care only about Snapshot() ignore the publisher entirely.
+func attachDiagnosticStoreForTest(n *ProducerStatusNormalizer) *DiagnosticStore {
+	store := NewDiagnosticStore(DiagnosticStoreOptions{Debounce: -1})
+	n.SetDiagnosticStore(store)
+	return store
+}
+
+func diagnosticCodes(diagnostics []diagnostic) []string {
+	codes := make([]string, 0, len(diagnostics))
+	for _, d := range diagnostics {
+		codes = append(codes, d.Code)
+	}
+	return codes
+}
+
+func findDiagnostic(diagnostics []diagnostic, code string) (diagnostic, bool) {
+	for _, d := range diagnostics {
+		if d.Code == code {
+			return d, true
+		}
+	}
+	return diagnostic{}, false
 }
 
 type decodedEnvelope struct {

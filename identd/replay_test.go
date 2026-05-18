@@ -161,61 +161,10 @@ func TestReplayStoreLoadMergesBlocksMissingFromIndex(t *testing.T) {
 	}
 }
 
-func TestReplayStoreLoadIgnoresBlockWithUnsupportedVersion(t *testing.T) {
-	dir := t.TempDir()
-	blocksDir := filepath.Join(dir, replayBlocksDirName)
-	if err := os.MkdirAll(blocksDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	start := time.Now().Add(-time.Minute).UnixMilli()
-	end := start + int64(time.Minute/time.Millisecond)
-	name := replayBlockName(start, end)
-	if err := writeReplayBlockForTest(filepath.Join(blocksDir, name), replayBlockFile{
-		Version: replayManifestVersion - 1,
-		Start:   start,
-		End:     end,
-		StepMS:  5000,
-		Frames:  []ReplayFrame{{Ts: start}},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(
-		filepath.Join(dir, replayIndexName),
-		[]byte(`{"version":`+fmt.Sprint(replayManifestVersion)+`,"blocks":[{"start":`+fmt.Sprint(start)+`,"end":`+fmt.Sprint(end)+`,"url":"/api/replay/blocks/`+name+`","bytes":1}]}`),
-		0o644,
-	); err != nil {
-		t.Fatal(err)
-	}
-
-	diagnostics := NewDiagnosticCollector()
-	store, err := NewReplayStore(ReplayOptions{
-		Enabled:            true,
-		Dir:                dir,
-		Retention:          time.Hour,
-		MaxBytes:           1_000_000,
-		BlockDuration:      time.Minute,
-		SampleInterval:     5 * time.Second,
-		StartupDiagnostics: diagnostics,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Load(); err != nil {
-		t.Fatal(err)
-	}
-	if got := store.Manifest().Blocks; len(got) != 0 {
-		t.Fatalf("loaded incompatible replay block: %#v", got)
-	}
-	gotDiagnostics := diagnostics.Snapshot()
-	if len(gotDiagnostics) != 1 || gotDiagnostics[0].Code != "replay.cache.unsupported_version" {
-		t.Fatalf("diagnostics = %#v", gotDiagnostics)
-	}
-	if _, err := os.Stat(filepath.Join(blocksDir, name)); err != nil {
-		t.Fatalf("incompatible replay block was removed: %v", err)
-	}
-}
-
-func TestReplayStoreLoadIgnoresBlockWithUnknownFields(t *testing.T) {
+func TestReplayStoreLoadIncludesBlocksWithoutPreflightDecode(t *testing.T) {
+	// We trust the filename + Stat. Decoding every block at startup
+	// is what dominated boot time on large caches; the client decodes
+	// on read and surfaces its own diagnostic on failure.
 	dir := t.TempDir()
 	blocksDir := filepath.Join(dir, replayBlocksDirName)
 	if err := os.MkdirAll(blocksDir, 0o755); err != nil {
@@ -242,15 +191,15 @@ func TestReplayStoreLoadIgnoresBlockWithUnknownFields(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	diagnostics := NewDiagnosticCollector()
+	diagnostics := NewDiagnosticStore(DiagnosticStoreOptions{})
 	store, err := NewReplayStore(ReplayOptions{
-		Enabled:            true,
-		Dir:                dir,
-		Retention:          time.Hour,
-		MaxBytes:           1_000_000,
-		BlockDuration:      time.Minute,
-		SampleInterval:     5 * time.Second,
-		StartupDiagnostics: diagnostics,
+		Enabled:        true,
+		Dir:            dir,
+		Retention:      time.Hour,
+		MaxBytes:       1_000_000,
+		BlockDuration:  time.Minute,
+		SampleInterval: 5 * time.Second,
+		Diagnostics:    diagnostics,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -258,15 +207,11 @@ func TestReplayStoreLoadIgnoresBlockWithUnknownFields(t *testing.T) {
 	if err := store.Load(); err != nil {
 		t.Fatal(err)
 	}
-	if got := store.Manifest().Blocks; len(got) != 0 {
-		t.Fatalf("loaded replay block with unknown field: %#v", got)
+	if got := store.Manifest().Blocks; len(got) != 1 {
+		t.Fatalf("manifest = %#v, want 1 entry (filename trusted, no preflight)", got)
 	}
-	gotDiagnostics := diagnostics.Snapshot()
-	if len(gotDiagnostics) != 1 || gotDiagnostics[0].Code != "replay.cache.unreadable" {
-		t.Fatalf("diagnostics = %#v", gotDiagnostics)
-	}
-	if _, err := os.Stat(filepath.Join(blocksDir, name)); err != nil {
-		t.Fatalf("replay block with unknown field was removed: %v", err)
+	if gotDiagnostics := diagnostics.Snapshot(); len(gotDiagnostics) != 0 {
+		t.Fatalf("startup diagnostics should be empty without preflight: %#v", gotDiagnostics)
 	}
 }
 

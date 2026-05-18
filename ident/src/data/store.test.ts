@@ -1837,6 +1837,7 @@ describe("filter setters", () => {
         altRangeFt: [0, 45000],
         emergOnly: false,
         hideGround: false,
+        groundOnly: false,
         hasPosOnly: false,
         operatorContains: "",
         callsignPrefix: "",
@@ -1854,7 +1855,7 @@ describe("filter setters", () => {
         hdgTolerance: null,
         militaryOnly: false,
         inViewOnly: false,
-        expressionBranches: null,
+        expression: null,
       },
     });
   });
@@ -2236,8 +2237,10 @@ describe("notification suppression persistence", () => {
       channel: "update",
       code: "update.release.available",
       message: "Ident v1.1.0 is available.",
-      actionLabel: "Release notes",
-      actionUrl: "https://example.invalid/v1.1.0",
+      action: {
+        label: "Release notes",
+        url: "https://example.invalid/v1.1.0",
+      },
     });
     usePreferencesStore.getState().suppressNotification(hash, "snooze");
 
@@ -2276,6 +2279,31 @@ describe("notification suppression persistence", () => {
       fresh.usePreferencesStore.getState().notificationSuppressions,
     ).toEqual([]);
   });
+
+  it("clears a notification suppression by hash", () => {
+    resetPreferencesStoreForTests();
+    usePreferencesStore.getState().suppressNotification("n:update", "ignore");
+
+    usePreferencesStore.getState().clearNotificationSuppression("n:update");
+
+    expect(usePreferencesStore.getState().notificationSuppressions).toEqual([]);
+  });
+
+  it("hashes only identity fields, so mutable updates keep the same key", () => {
+    const a = diagnosticIdentity({
+      severity: "warning",
+      channel: "x",
+      code: "y",
+      message: "A",
+    });
+    const b = diagnosticIdentity({
+      severity: "warning",
+      channel: "x",
+      code: "y",
+      message: "B",
+    });
+    expect(a).toBe(b);
+  });
 });
 
 describe("trailPointFromAircraft", () => {
@@ -2309,7 +2337,6 @@ describe("liveState msg-rate buffer", () => {
     useIdentStore.setState({
       identStatus: {
         schema: "ident.status.v1",
-        producer: { kind: "readsb" },
         observedAt: {
           kind: "producer_provided",
           source: "stats_now",
@@ -2325,7 +2352,6 @@ describe("liveState msg-rate buffer", () => {
           source: "stats_last1min_messages_valid",
           value: { hz: 10, basisSec: 60 },
         },
-        diagnostics: [],
       },
     });
     for (let i = 0; i < 75; i++) sampleMpsOnce();
@@ -2347,7 +2373,6 @@ describe("liveState msg-rate buffer", () => {
     useIdentStore.setState({
       identStatus: {
         schema: "ident.status.v1",
-        producer: { kind: "skyaware978" },
         observedAt: {
           kind: "producer_provided",
           source: "aircraft_now",
@@ -2359,7 +2384,6 @@ describe("liveState msg-rate buffer", () => {
           receiverObservedAgeSec: null,
         },
         messageRate: { kind: "unavailable", reason: "counter_reset" },
-        diagnostics: [],
       },
     });
     sampleMpsOnce();
@@ -2374,7 +2398,6 @@ describe("normalized status ingest", () => {
     const store = useIdentStore.getState();
     store.ingestStatus({
       schema: "ident.status.v1",
-      producer: { kind: "readsb", version: "3.14" },
       observedAt: {
         kind: "producer_provided",
         source: "aircraft_now",
@@ -2399,11 +2422,9 @@ describe("normalized status ingest", () => {
           computation: "max_receiver_to_outline_vertex",
         },
       },
-      diagnostics: [],
     });
     store.ingestStatus({
       schema: "ident.status.v1",
-      producer: { kind: "readsb", version: "3.14" },
       observedAt: {
         kind: "producer_provided",
         source: "stats_now",
@@ -2419,7 +2440,6 @@ describe("normalized status ingest", () => {
         source: "stats_last1min_messages_valid",
         value: { hz: 12, basisSec: 60 },
       },
-      diagnostics: [],
     });
 
     const status = useIdentStore.getState().identStatus;
@@ -2474,10 +2494,18 @@ describe("search slice setter", () => {
       .setSearchQuery("op:United alt:>30000 !ground cat:a2");
     const st = useIdentStore.getState();
     expect(st.search.query).toBe("op:United alt:>30000 !ground cat:a2");
-    expect(st.filter.operatorContains).toBe("United");
-    expect(st.filter.altRangeFt).toEqual([30000, 45000]);
-    expect(st.filter.hideGround).toBe(true);
-    expect(st.filter.categories.airline).toBe(true);
+    expect(st.filter.expression).toMatchObject({
+      kind: "and",
+      terms: [
+        { kind: "clause", filter: { operatorContains: "United" } },
+        { kind: "clause", filter: { altRangeFt: [30000, 45000] } },
+        {
+          kind: "not",
+          term: { kind: "clause", filter: { groundOnly: true } },
+        },
+        { kind: "clause", filter: { categories: { airline: true } } },
+      ],
+    });
   });
 
   it("plain search text clears structured filter derivation", () => {
@@ -2492,14 +2520,23 @@ describe("search slice setter", () => {
     expect(st.filter.altRangeFt).toEqual([0, 45000]);
   });
 
-  it("derives expression branches from grouped OR query text", () => {
+  it("derives an expression tree from grouped OR query text", () => {
     useIdentStore.getState().setSearchQuery("cs:FDX | (cs:UPS alt:>5000)");
     const st = useIdentStore.getState();
     expect(st.search.query).toBe("cs:FDX | (cs:UPS alt:>5000)");
-    expect(st.filter.expressionBranches).toHaveLength(2);
-    expect(st.filter.expressionBranches?.[0].callsignPrefix).toBe("FDX");
-    expect(st.filter.expressionBranches?.[1].callsignPrefix).toBe("UPS");
-    expect(st.filter.expressionBranches?.[1].altRangeFt).toEqual([5000, 45000]);
+    expect(st.filter.expression).toMatchObject({
+      kind: "or",
+      terms: [
+        { kind: "clause", filter: { callsignPrefix: "FDX" } },
+        {
+          kind: "and",
+          terms: [
+            { kind: "clause", filter: { callsignPrefix: "UPS" } },
+            { kind: "clause", filter: { altRangeFt: [5000, 45000] } },
+          ],
+        },
+      ],
+    });
   });
 
   it("resetFilter clears both derived filter and query text", () => {

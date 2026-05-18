@@ -100,6 +100,16 @@ func identSchemaSpecs() []identSchemaSpec {
 			}, []string{"nm", "scope", "computation"}), []string{"outline_last24h_vertices", "outline_alltime_vertices", "outline_points_vertices", "outline_other_vertices", "stats_max_distance_meters"})
 			return schema
 		}},
+		{"ident.diagnostics.v1", "Ident diagnostics", func(t *testing.T) *jsonschema.Schema {
+			schema := inferIdentSchema[identDiagnostics](t, "ident.diagnostics.v1", "Ident diagnostics")
+			requireConstSchema(schema, "ident.diagnostics.v1")
+			// The envelope wrapper guarantees a non-nil slice
+			// (newIdentDiagnostics replaces nil with []). Drop the "null"
+			// variant the schema generator inferred from the bare slice
+			// type so the wire contract matches what's actually emitted.
+			schema.Properties["diagnostics"].Types = []string{"array"}
+			return schema
+		}},
 	}
 }
 
@@ -113,6 +123,7 @@ func identTypeSchemaOverrides() map[reflect.Type]*jsonschema.Schema {
 		reflect.TypeFor[rangeOutlineScope]():   stringEnumSchema(string(rangeOutlineScopeLast24h), string(rangeOutlineScopeAlltime), string(rangeOutlineScopePoints), string(rangeOutlineScopeOther)),
 		reflect.TypeFor[statusValueKind]():     stringEnumSchema(string(statusValueProducerProvided), string(statusValueIdentDerived), string(statusValueUnavailable)),
 		reflect.TypeFor[unavailableReason]():   stringEnumSchema(unavailableReasonStrings()...),
+		reflect.TypeFor[diagnosticSeverity]():  stringEnumSchema(string(severityInfo), string(severityWarning), string(severityError)),
 		reflect.TypeFor[json.RawMessage]():     anyObjectSchema(),
 		reflect.TypeFor[map[string]any]():      anyObjectSchema(),
 		reflect.TypeFor[map[string]float64]():  anyObjectSchema(),

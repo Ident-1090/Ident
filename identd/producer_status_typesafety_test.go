@@ -19,8 +19,7 @@ import (
 // because *gainValue is not assignable to *messageRateValue.
 func TestStatusPerSlotWrappersPreserveWireShape(t *testing.T) {
 	status := identStatus{
-		Schema:   "ident.status.v1",
-		Producer: identProducer{Kind: producerReadsb, Version: "readsb 1.0"},
+		Schema: "ident.status.v1",
 		ObservedAt: observedAtProvided("stats_now", observedAtStatusValue{
 			EpochSec: 1_700_000_100,
 		}),
@@ -42,7 +41,6 @@ func TestStatusPerSlotWrappersPreserveWireShape(t *testing.T) {
 			Scope:       "stats",
 			Computation: "producer_reported_distance",
 		}),
-		Diagnostics: []diagnostic{},
 	}
 
 	got := mustMarshalJSON(t, status)
@@ -81,8 +79,7 @@ func TestStatusPerSlotWrappersPreserveWireShape(t *testing.T) {
 // "ident_derived" kind tag preserved on the wire.
 func TestStatusPerSlotWrappersDerivedKind(t *testing.T) {
 	status := identStatus{
-		Schema:   "ident.status.v1",
-		Producer: identProducer{Kind: producerSkyaware978},
+		Schema: "ident.status.v1",
 		ObservedAt: observedAtDerived("ingest_clock", observedAtStatusValue{
 			EpochSec: 1_700_000_120,
 		}),
@@ -90,7 +87,6 @@ func TestStatusPerSlotWrappersDerivedKind(t *testing.T) {
 			Hz:       25,
 			BasisSec: 10,
 		}),
-		Diagnostics: []diagnostic{},
 	}
 
 	decoded := mustDecodeJSON(t, mustMarshalJSON(t, status))
@@ -107,10 +103,8 @@ func TestStatusPerSlotWrappersDerivedKind(t *testing.T) {
 func TestStatusPerSlotWrappersUnavailableKind(t *testing.T) {
 	status := identStatus{
 		Schema:      "ident.status.v1",
-		Producer:    identProducer{Kind: producerDump1090FA},
 		ObservedAt:  observedAtDerived("ingest_clock", observedAtStatusValue{EpochSec: 1}),
 		MessageRate: messageRateUnavailable(reasonAwaitingSecondSample),
-		Diagnostics: []diagnostic{},
 	}
 
 	decoded := mustDecodeJSON(t, mustMarshalJSON(t, status))
@@ -127,10 +121,8 @@ func TestStatusPerSlotWrappersUnavailableKind(t *testing.T) {
 // matching the previous interface-typed behavior under `omitempty`.
 func TestStatusPerSlotWrappersOmitWhenNil(t *testing.T) {
 	status := identStatus{
-		Schema:      "ident.status.v1",
-		Producer:    identProducer{Kind: producerUnknown},
-		ObservedAt:  observedAtDerived("ingest_clock", observedAtStatusValue{EpochSec: 1}),
-		Diagnostics: []diagnostic{},
+		Schema:     "ident.status.v1",
+		ObservedAt: observedAtDerived("ingest_clock", observedAtStatusValue{EpochSec: 1}),
 	}
 
 	decoded := mustDecodeJSON(t, mustMarshalJSON(t, status))

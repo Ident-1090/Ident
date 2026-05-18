@@ -28,14 +28,14 @@ const (
 var replayBlockNameRE = regexp.MustCompile(`^\d+-\d+\.json\.zst$`)
 
 type ReplayOptions struct {
-	Enabled            bool
-	Dir                string
-	Retention          time.Duration
-	MaxBytes           int64
-	BlockDuration      time.Duration
-	SampleInterval     time.Duration
-	OnAvailability     func(ReplayManifest)
-	StartupDiagnostics *DiagnosticCollector
+	Enabled        bool
+	Dir            string
+	Retention      time.Duration
+	MaxBytes       int64
+	BlockDuration  time.Duration
+	SampleInterval time.Duration
+	OnAvailability func(ReplayManifest)
+	Diagnostics    *DiagnosticStore
 }
 
 type ReplayStore struct {
@@ -50,12 +50,12 @@ type ReplayStore struct {
 	sampleInterval time.Duration
 	onAvailability func(ReplayManifest)
 
-	blocks             []ReplayBlockIndex
-	byName             map[string]ReplayBlockIndex
-	active             *replayActiveBlock
-	lastSample         int64
-	activeDirty        bool
-	startupDiagnostics *DiagnosticCollector
+	blocks      []ReplayBlockIndex
+	byName      map[string]ReplayBlockIndex
+	active      *replayActiveBlock
+	lastSample  int64
+	activeDirty bool
+	diagnostics *DiagnosticStore
 }
 
 type ReplayManifest struct {
@@ -108,16 +108,16 @@ func NewReplayStore(options ReplayOptions) (*ReplayStore, error) {
 		sampleInterval = 5 * time.Second
 	}
 	store := &ReplayStore{
-		enabled:            options.Enabled,
-		dir:                options.Dir,
-		blocksDir:          filepath.Join(options.Dir, replayBlocksDirName),
-		retention:          options.Retention,
-		maxBytes:           options.MaxBytes,
-		blockDuration:      blockDuration,
-		sampleInterval:     sampleInterval,
-		onAvailability:     options.OnAvailability,
-		startupDiagnostics: options.StartupDiagnostics,
-		byName:             map[string]ReplayBlockIndex{},
+		enabled:        options.Enabled,
+		dir:            options.Dir,
+		blocksDir:      filepath.Join(options.Dir, replayBlocksDirName),
+		retention:      options.Retention,
+		maxBytes:       options.MaxBytes,
+		blockDuration:  blockDuration,
+		sampleInterval: sampleInterval,
+		onAvailability: options.OnAvailability,
+		diagnostics:    options.Diagnostics,
+		byName:         map[string]ReplayBlockIndex{},
 	}
 	if !options.Enabled {
 		return store, nil
@@ -270,12 +270,12 @@ func (s *ReplayStore) loadIndexedBlocks() []ReplayBlockIndex {
 	var idx replayIndexFile
 	if err := decodeIdentJSON(f, &idx); err != nil {
 		slog.Warn("replay: ignoring unreadable index", "err", err, "path", filepath.Join(s.dir, replayIndexName))
-		s.recordDiagnostic(warningDiagnostic("replay", "replay.cache.unreadable", "replay index could not be read"))
+		s.noteWarning("replay.cache.unreadable", "replay index could not be read")
 		return nil
 	}
 	if idx.Version != replayManifestVersion {
 		slog.Warn("replay: ignoring index version", "version", idx.Version, "want", replayManifestVersion, "path", filepath.Join(s.dir, replayIndexName))
-		s.recordDiagnostic(warningDiagnostic("replay", "replay.cache.unsupported_version", "replay index version is not supported"))
+		s.noteWarning("replay.cache.unsupported_version", "replay index version is not supported")
 		return nil
 	}
 	return s.validateBlocks(idx.Blocks)
@@ -318,9 +318,11 @@ func (s *ReplayStore) validateBlocks(blocks []ReplayBlockIndex) []ReplayBlockInd
 		if err != nil || info.IsDir() {
 			continue
 		}
-		if !s.validateBlockVersion(name) {
-			continue
-		}
+		// Trust the parsed filename + Stat info. Decoding the block at
+		// startup decompresses the full zstd payload per file and is the
+		// dominant cost of a slow boot; the client decompresses on read
+		// anyway, and surfaces its own diagnostic if the block is
+		// undecodeable. Validation here only duplicated that work.
 		out = append(out, ReplayBlockIndex{
 			Start: start,
 			End:   end,
@@ -332,23 +334,15 @@ func (s *ReplayStore) validateBlocks(blocks []ReplayBlockIndex) []ReplayBlockInd
 	return out
 }
 
-func (s *ReplayStore) validateBlockVersion(name string) bool {
-	block, err := readZstdReplayBlock(filepath.Join(s.blocksDir, name))
-	if err != nil {
-		slog.Warn("replay: ignoring unreadable block", "name", name, "path", filepath.Join(s.blocksDir, name), "err", err)
-		s.recordDiagnostic(warningDiagnostic("replay", "replay.cache.unreadable", "replay block could not be read"))
-		return false
+// noteWarning emits a persistent replay-side diagnostic. The entry stays
+// visible (TTL 0) until something explicitly displaces it; replay startup
+// is the only emitter today so the index either reads cleanly or the
+// warning persists for the operator.
+func (s *ReplayStore) noteWarning(code, message string) {
+	if s.diagnostics == nil {
+		return
 	}
-	if block.Version != replayManifestVersion {
-		slog.Warn("replay: ignoring block version", "name", name, "version", block.Version, "want", replayManifestVersion)
-		s.recordDiagnostic(warningDiagnostic("replay", "replay.cache.unsupported_version", "replay block version is not supported"))
-		return false
-	}
-	return true
-}
-
-func (s *ReplayStore) recordDiagnostic(d diagnostic) {
-	s.startupDiagnostics.Record(d)
+	s.diagnostics.Note("replay", code, severityWarning, message, WithTTL(0))
 }
 
 func (s *ReplayStore) finalizeLocked(active *replayActiveBlock, nowMs int64) (ReplayManifest, bool, error) {

@@ -24,14 +24,15 @@ func (readsbAdapter) Capabilities(receiver producerReceiverJSON) identCapabiliti
 	return caps
 }
 
-func (readsbAdapter) StatusFromStats(producer identProducer, stats producerStatsJSON) (identStatus, bool) {
-	status := newIdentStatus(producer)
+func (readsbAdapter) StatusFromStats(_ identProducer, stats producerStatsJSON) (identStatus, []diagnostic, bool) {
+	status := newIdentStatus()
+	var diagnostics []diagnostic
 	if stats.Last1Min.MessagesValid != nil {
 		if rate, basisSec, ok := statsWindowRate(stats.Last1Min, *stats.Last1Min.MessagesValid); ok {
 			status.MessageRate = messageRateProvided("stats_last1min_messages_valid", messageRateStatusValue{Hz: rate, BasisSec: basisSec})
 		} else {
 			status.MessageRate = messageRateUnavailable(reasonMalformedFile)
-			status.Diagnostics = append(status.Diagnostics, warningDiagnostic("stats", "stats.readsb.missing_window_duration", "stats window is missing start/end"))
+			diagnostics = append(diagnostics, warningDiagnostic("stats", "stats.readsb.missing_window_duration", "stats window is missing start/end"))
 		}
 	}
 	if stats.GainDB != nil {
@@ -47,7 +48,7 @@ func (readsbAdapter) StatusFromStats(producer identProducer, stats producerStats
 			Computation: "producer_reported_distance",
 		})
 	}
-	return status, status.MessageRate != nil || status.Gain != nil || status.Uptime != nil || status.MaxRange != nil
+	return status, diagnostics, status.MessageRate != nil || status.Gain != nil || status.Uptime != nil || status.MaxRange != nil
 }
 
 func (readsbAdapter) AircraftFrame(frame producerAircraftJSON) (identAircraftFrame, []diagnostic, bool) {

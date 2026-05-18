@@ -8,6 +8,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  diagnosticIdentity,
   resetPreferencesStoreForTests,
   usePreferencesStore,
 } from "../data/preferences";
@@ -37,14 +38,15 @@ describe("StatusBar", () => {
     vi.setSystemTime(new Date("2026-04-22T12:00:00Z"));
     resetPreferencesStoreForTests();
     useIdentStore.setState({
+      diagnostics: [],
       receiver: {
         lat: 37.4,
         lon: -122.1,
-        version: "wiedehopf readsb v3.14.1676",
+        version: "readsb v3.14.1676",
       },
       capabilities: {
         schema: "ident.capabilities.v1",
-        producer: { kind: "readsb", version: "wiedehopf readsb v3.14.1676" },
+        producer: { kind: "readsb", version: "readsb v3.14.1676" },
         capabilities: {
           aircraft: "producer_provided",
           receiverPosition: "producer_provided",
@@ -61,7 +63,6 @@ describe("StatusBar", () => {
       },
       identStatus: {
         schema: "ident.status.v1",
-        producer: { kind: "readsb", version: "wiedehopf readsb v3.14.1676" },
         observedAt: {
           kind: "producer_provided",
           source: "stats_now",
@@ -101,7 +102,6 @@ describe("StatusBar", () => {
             computation: "max_receiver_to_outline_vertex",
           },
         },
-        diagnostics: [],
       },
       rangeOutline: null,
       connectionStatus: { ws: "open" },
@@ -110,6 +110,10 @@ describe("StatusBar", () => {
         lastMsgTs: Date.now(),
         mpsBuffer: [10],
         routesViaWs: false,
+      },
+      config: {
+        station: null,
+        ident: { version: "dev", shortCommit: "abc1234" },
       },
     });
     container = document.createElement("div");
@@ -138,7 +142,8 @@ describe("StatusBar", () => {
     expect(container.textContent).toContain("2m");
     expect(container.textContent).toContain("24h Range");
     expect(container.textContent).toContain("120 NM");
-    expect(container.textContent).toContain("wiedehopf");
+    expect(container.textContent).toContain("DIAGNOSTICS");
+    expect(container.textContent).not.toContain("MHz ES");
   });
 
   it("uses custom tooltips for unavailable status reasons", () => {
@@ -237,25 +242,22 @@ describe("StatusBar", () => {
   });
 
   it("opens a diagnostics notification center from the right status slot", () => {
-    useIdentStore.setState((state) => ({
-      identStatus: {
-        ...state.identStatus!,
-        diagnostics: [
-          {
-            severity: "warning",
-            channel: "aircraft",
-            code: "aircraft.adapter.invalid_bool",
-            message: "aircraft alert value must be boolean or 0/1",
-          },
-          {
-            severity: "error",
-            channel: "outline",
-            code: "outline.adapter.malformed_outline",
-            message: "outline.json did not contain a valid polygon",
-          },
-        ],
-      },
-    }));
+    useIdentStore.setState({
+      diagnostics: [
+        {
+          severity: "warning",
+          channel: "aircraft",
+          code: "aircraft.adapter.invalid_bool",
+          message: "aircraft alert value must be boolean or 0/1",
+        },
+        {
+          severity: "error",
+          channel: "outline",
+          code: "outline.adapter.malformed_outline",
+          message: "outline.json did not contain a valid polygon",
+        },
+      ],
+    });
 
     act(() => {
       root.render(<StatusBar />);
@@ -275,6 +277,7 @@ describe("StatusBar", () => {
 
     const panel = document.querySelector('[role="dialog"]')!;
     expect(panel.textContent).toContain("Diagnostics");
+    expect(panel.textContent).toContain("Ident abc1234");
     expect(panel.textContent).toContain("aircraft.adapter.invalid_bool");
     expect(panel.textContent).toContain("aircraft alert value must be boolean");
     expect(panel.textContent).toContain("outline.adapter.malformed_outline");
@@ -287,7 +290,7 @@ describe("StatusBar", () => {
     expect(document.querySelector('[role="dialog"]')).toBeNull();
   });
 
-  it("keeps the upstream identity in the notification center when clean", () => {
+  it("uses the diagnostics entry point label when clean", () => {
     act(() => {
       root.render(<StatusBar />);
     });
@@ -295,7 +298,8 @@ describe("StatusBar", () => {
     const button = container.querySelector<HTMLButtonElement>(
       '[data-testid="diagnostics-center-button"]',
     )!;
-    expect(button.textContent).toContain("readsb wiedehopf");
+    expect(button.textContent).toContain("DIAGNOSTICS");
+    expect(button.textContent).not.toContain("MHz ES");
     expect(button.getAttribute("aria-expanded")).toBe("false");
   });
 
@@ -305,15 +309,14 @@ describe("StatusBar", () => {
       channel: "update",
       code: "update.release.available",
       message: "Ident v1.1.0 is available.",
-      actionLabel: "Release notes",
-      actionUrl: "https://github.com/Ident-1090/Ident/releases/tag/v1.1.0",
-    } as IdentDiagnostic;
-    useIdentStore.setState((state) => ({
-      identStatus: {
-        ...state.identStatus!,
-        diagnostics: [updateDiagnostic],
+      action: {
+        label: "Release notes",
+        url: "https://github.com/Ident-1090/Ident/releases/tag/v1.1.0",
       },
-    }));
+    } as IdentDiagnostic;
+    useIdentStore.setState({
+      diagnostics: [updateDiagnostic],
+    });
 
     act(() => {
       root.render(<StatusBar />);
@@ -323,14 +326,27 @@ describe("StatusBar", () => {
       '[data-testid="notification-popup"]',
     );
     expect(popup?.textContent).toContain("Ident v1.1.0 is available.");
-    expect(popup?.textContent).toContain("Snooze 7 days");
-    expect(popup?.textContent).toContain("Ignore on this device");
+    expect(popup?.textContent).not.toContain("Snooze 7 days");
+    expect(popup?.textContent).not.toContain("Ignore on this device");
     expect(
       popup?.querySelector('a[href*="/releases/tag/v1.1.0"]'),
     ).toBeTruthy();
 
+    const close = popup!.querySelector<HTMLButtonElement>(
+      'button[aria-label="Close notification"]',
+    );
+    expect(close).toBeTruthy();
+
+    const center = container.querySelector<HTMLButtonElement>(
+      '[data-testid="diagnostics-center-button"]',
+    )!;
+    act(() => center.click());
+    const panel = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(panel.textContent).toContain("Snooze 7 days");
+    expect(panel.textContent).toContain("Ignore on this device");
+
     const snooze = Array.from(
-      popup!.querySelectorAll<HTMLButtonElement>("button"),
+      panel.querySelectorAll<HTMLButtonElement>("button"),
     ).find((button) => button.textContent === "Snooze 7 days");
     expect(snooze).toBeTruthy();
 
@@ -350,13 +366,17 @@ describe("StatusBar", () => {
     act(() => {
       root.render(<StatusBar />);
     });
+    act(() => center.click());
     const returnedPopup = document.querySelector<HTMLElement>(
       '[data-testid="notification-popup"]',
     );
     expect(returnedPopup?.textContent).toContain("Ident v1.1.0 is available.");
 
+    act(() => center.click());
+    const returnedPanel =
+      document.querySelector<HTMLElement>('[role="dialog"]')!;
     const ignore = Array.from(
-      returnedPopup!.querySelectorAll<HTMLButtonElement>("button"),
+      returnedPanel.querySelectorAll<HTMLButtonElement>("button"),
     ).find((button) => button.textContent === "Ignore on this device");
     expect(ignore).toBeTruthy();
 
@@ -369,6 +389,184 @@ describe("StatusBar", () => {
     expect(
       document.querySelector('[data-testid="notification-popup"]'),
     ).toBeNull();
+  });
+
+  it("prunes expired snoozes while the app stays mounted", () => {
+    const diagnostic = {
+      severity: "warning",
+      channel: "stats",
+      code: "stats.dump1090fa.missing_window_duration",
+      message: "stats window is missing start/end",
+    } as IdentDiagnostic;
+    useIdentStore.setState({ diagnostics: [diagnostic] });
+
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    const center = container.querySelector<HTMLButtonElement>(
+      '[data-testid="diagnostics-center-button"]',
+    )!;
+    act(() => center.click());
+    const snooze = Array.from(
+      document.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent === "Snooze 7 days");
+    expect(snooze).toBeTruthy();
+
+    act(() => snooze!.click());
+    expect(
+      usePreferencesStore.getState().notificationSuppressions,
+    ).toHaveLength(1);
+
+    act(() => {
+      vi.advanceTimersByTime(7 * 24 * 60 * 60 * 1000 + 1000);
+    });
+
+    expect(usePreferencesStore.getState().notificationSuppressions).toEqual([]);
+    const persisted = localStorage.getItem("ident.preferences") ?? "";
+    expect(persisted).not.toContain("snoozedUntil");
+  });
+
+  it("opens the diagnostics panel on the popup diagnostic", () => {
+    const warning = {
+      severity: "warning",
+      channel: "stats",
+      code: "stats.dump1090fa.missing_window_duration",
+      message: "stats window is missing start/end",
+    } as IdentDiagnostic;
+    useIdentStore.setState({ diagnostics: [warning] });
+
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    const popup = document.querySelector<HTMLElement>(
+      '[data-testid="notification-popup"]',
+    )!;
+    const details = popup.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open diagnostic details"]',
+    )!;
+    act(() => details.click());
+
+    const panel = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    const row = panel.querySelector<HTMLElement>(
+      `[data-diagnostic-key="${diagnosticIdentity(warning)}"]`,
+    )!;
+    expect(row).toBeTruthy();
+    expect(row.dataset.highlighted).toBe("true");
+    expect(row.className).toContain(
+      "animate-[diagnostic-highlight-fade_3s_ease-out_forwards]",
+    );
+    expect(panel.textContent).toContain("stats window is missing start/end");
+    expect(
+      document.querySelector('[data-testid="notification-popup"]'),
+    ).toBeNull();
+
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(row.dataset.highlighted).toBe("false");
+  });
+
+  it("shows suppressed diagnostics and restores notification delivery", () => {
+    const ignored = {
+      severity: "warning",
+      channel: "stats",
+      code: "stats.dump1090fa.missing_window_duration",
+      message: "stats window is missing start/end",
+    } as IdentDiagnostic;
+    const hash = diagnosticIdentity(ignored);
+    usePreferencesStore.getState().suppressNotification(hash, "ignore");
+    useIdentStore.setState({ diagnostics: [ignored] });
+
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    const center = container.querySelector<HTMLButtonElement>(
+      '[data-testid="diagnostics-center-button"]',
+    )!;
+    act(() => center.click());
+    let panel = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(panel.textContent).toContain("No active diagnostics");
+    expect(panel.textContent).not.toContain(
+      "stats window is missing start/end",
+    );
+
+    const showSuppressed = Array.from(
+      panel.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.getAttribute("aria-label") === "Show ignored");
+    if (!showSuppressed) throw new Error("missing show ignored button");
+    act(() => showSuppressed.click());
+
+    panel = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(panel.textContent).toContain("stats window is missing start/end");
+    expect(panel.textContent).toContain("Ignored on this device");
+
+    const restore = Array.from(
+      panel.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.textContent === "Restore notifications");
+    expect(restore).toBeTruthy();
+    expect(restore!.className).toContain("border-(--color-line-strong)");
+    act(() => restore!.click());
+
+    expect(usePreferencesStore.getState().notificationSuppressions).toEqual([]);
+    panel = document.querySelector<HTMLElement>('[role="dialog"]')!;
+    expect(panel.textContent).toContain("Snooze 7 days");
+    expect(panel.textContent).toContain("Ignore on this device");
+  });
+
+  it("copies a diagnostic report with runtime context", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    useIdentStore.setState({
+      diagnostics: [
+        {
+          severity: "warning",
+          channel: "stats",
+          code: "stats.dump1090fa.missing_window_duration",
+          message: "stats window is missing start/end",
+        },
+      ],
+    });
+
+    act(() => {
+      root.render(<StatusBar />);
+    });
+    const center = container.querySelector<HTMLButtonElement>(
+      '[data-testid="diagnostics-center-button"]',
+    )!;
+    act(() => center.click());
+
+    const copy = Array.from(
+      document.querySelectorAll<HTMLButtonElement>("button"),
+    ).find(
+      (button) => button.getAttribute("aria-label") === "Copy diagnostics",
+    );
+    expect(copy).toBeTruthy();
+
+    await act(async () => {
+      copy!.click();
+    });
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(copy!.className).toContain("text-(--color-live)");
+    const report = JSON.parse(writeText.mock.calls[0][0]);
+    expect(report).toMatchObject({
+      schema: "ident.diagnosticReport.v1",
+      ident: { version: "dev", shortCommit: "abc1234" },
+      producer: { kind: "readsb", version: "readsb v3.14.1676" },
+      capabilities: { gain: "producer_provided" },
+      status: { schema: "ident.status.v1" },
+      diagnostics: [
+        {
+          code: "stats.dump1090fa.missing_window_duration",
+        },
+      ],
+    });
   });
 
   it("renders the feed state as a compact HUD cell", () => {

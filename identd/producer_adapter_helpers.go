@@ -2,14 +2,16 @@ package main
 
 import (
 	"encoding/json"
+	"log/slog"
 	"math"
 	"sort"
 	"strings"
 )
 
 const (
-	metersPerNm = 1852
-	nmPerRadian = (180 * 60) / math.Pi
+	metersPerNm               = 1852
+	nmPerRadian               = (180 * 60) / math.Pi
+	identAircraftLostAfterSec = 30
 )
 
 func commonProducerCapabilities(receiver producerReceiverJSON) identCapabilities {
@@ -27,7 +29,7 @@ func commonProducerCapabilities(receiver producerReceiverJSON) identCapabilities
 		RangeOutline:      capabilityUnavailable,
 		SignalDiagnostics: capabilityUnavailable,
 		Meteorology:       capabilityUnavailable,
-		Replay:            capabilityIdentDerived,
+		Replay:            capabilityUnavailable,
 		Trails:            capabilityIdentDerived,
 	}
 }
@@ -46,6 +48,9 @@ func commonAircraftFrame(frame producerAircraftJSON) (identAircraftFrame, []diag
 	aircraft := make([]identAircraft, 0, len(frame.Aircraft))
 	diagnostics := []diagnostic{}
 	for _, ac := range frame.Aircraft {
+		if producerAircraftLost(ac) {
+			continue
+		}
 		normalized, rowDiagnostics, ok := normalizeProducerAircraft(ac)
 		if ok {
 			aircraft = append(aircraft, normalized)
@@ -60,15 +65,22 @@ func commonAircraftFrame(frame producerAircraftJSON) (identAircraftFrame, []diag
 	}, diagnostics, true
 }
 
+func producerAircraftLost(ac producerAircraft) bool {
+	if ac.Seen == nil || math.IsNaN(*ac.Seen) || math.IsInf(*ac.Seen, 0) {
+		return false
+	}
+	return *ac.Seen > identAircraftLostAfterSec
+}
+
 func normalizeProducerAircraft(ac producerAircraft) (identAircraft, []diagnostic, bool) {
 	hex := strings.ToLower(strings.TrimSpace(ac.Hex))
 	if hex == "" {
 		return identAircraft{}, nil, false
 	}
-	altBaroFt, groundFromAltBaro, altBaroDiagnostic := normalizeBaroAltitude(ac.AltBaro)
+	altBaroFt, groundFromAltBaro, altBaroDiagnostic := normalizeBaroAltitude(hex, ac.AltBaro)
 	onGround := normalizeGround(ac.Ground, groundFromAltBaro, ac.Airground)
-	alert, alertDiagnostic := normalizeBoolField(ac.Alert, "alert")
-	spi, spiDiagnostic := normalizeBoolField(ac.SPI, "spi")
+	alert, alertDiagnostic := normalizeBoolField(hex, ac.Alert, "alert")
+	spi, spiDiagnostic := normalizeBoolField(hex, ac.SPI, "spi")
 	diagnostics := []diagnostic{}
 	if altBaroDiagnostic != nil {
 		diagnostics = append(diagnostics, *altBaroDiagnostic)
@@ -188,7 +200,7 @@ func aircraftSource(raw string) identAircraftSource {
 	}
 }
 
-func normalizeBaroAltitude(raw json.RawMessage) (*float64, *bool, *diagnostic) {
+func normalizeBaroAltitude(hex string, raw json.RawMessage) (*float64, *bool, *diagnostic) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil, nil
 	}
@@ -198,11 +210,13 @@ func normalizeBaroAltitude(raw json.RawMessage) (*float64, *bool, *diagnostic) {
 			ground := true
 			return nil, &ground, nil
 		}
+		slog.Warn("aircraft adapter: invalid alt_baro string", "hex", hex, "field", "alt_baro", "value", label, "channel", "aircraft", "code", "aircraft.adapter.invalid_altitude")
 		d := warningDiagnostic("aircraft", "aircraft.adapter.invalid_altitude", "aircraft alt_baro must be a number or \"ground\"")
 		return nil, nil, &d
 	}
 	var alt float64
 	if err := json.Unmarshal(raw, &alt); err != nil || !numberIsFinite(alt) {
+		slog.Warn("aircraft adapter: invalid alt_baro value", "hex", hex, "field", "alt_baro", "raw", string(raw), "channel", "aircraft", "code", "aircraft.adapter.invalid_altitude")
 		d := warningDiagnostic("aircraft", "aircraft.adapter.invalid_altitude", "aircraft alt_baro must be a number or \"ground\"")
 		return nil, nil, &d
 	}
@@ -238,7 +252,7 @@ func normalizeGround(primary *bool, fromAltBaro *bool, airground json.RawMessage
 	return nil
 }
 
-func normalizeBoolField(raw json.RawMessage, field string) (*bool, *diagnostic) {
+func normalizeBoolField(hex string, raw json.RawMessage, field string) (*bool, *diagnostic) {
 	if len(raw) == 0 || string(raw) == "null" {
 		return nil, nil
 	}
@@ -257,6 +271,7 @@ func normalizeBoolField(raw json.RawMessage, field string) (*bool, *diagnostic) 
 			return &b, nil
 		}
 	}
+	slog.Warn("aircraft adapter: invalid bool field", "hex", hex, "field", field, "raw", string(raw), "channel", "aircraft", "code", "aircraft.adapter.invalid_bool")
 	d := warningDiagnostic("aircraft", "aircraft.adapter.invalid_bool", "aircraft "+field+" value must be boolean or 0/1")
 	return nil, &d
 }
@@ -285,6 +300,7 @@ func compactStrings(in []string) []string {
 func commonRangeOutline(outline producerOutlineJSON) (identRangeOutline, []diagnostic, bool) {
 	scope, points, ok := producerOutlinePoints(outline)
 	if !ok {
+		slog.Warn("outline adapter: malformed polygon", "channel", "outline", "code", "outline.adapter.malformed_outline")
 		return identRangeOutline{}, []diagnostic{
 			warningDiagnostic("outline", "outline.adapter.malformed_outline", "outline.json did not contain a valid polygon"),
 		}, false
@@ -297,6 +313,7 @@ func commonRangeOutline(outline producerOutlineJSON) (identRangeOutline, []diagn
 		coordinates = append(coordinates, []float64{point[1], point[0]})
 	}
 	if len(coordinates) < 3 {
+		slog.Warn("outline adapter: too few valid vertices", "scope", scope, "received", len(points), "valid", len(coordinates), "channel", "outline", "code", "outline.adapter.malformed_outline")
 		return identRangeOutline{}, []diagnostic{
 			warningDiagnostic("outline", "outline.adapter.malformed_outline", "outline.json did not contain enough valid vertices"),
 		}, false

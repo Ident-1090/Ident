@@ -66,6 +66,15 @@ describe("matchesFilter", () => {
     ).toBe(true);
   });
 
+  it("groundOnly keeps only ground aircraft", () => {
+    expect(matchesFilter(mkAc({ onGround: true }), { groundOnly: true })).toBe(
+      true,
+    );
+    expect(matchesFilter(mkAc({ onGround: false }), { groundOnly: true })).toBe(
+      false,
+    );
+  });
+
   it("positionOnly drops AC without lat/lon", () => {
     expect(
       matchesFilter(mkAc({ lat: 37, lon: -122 }), { positionOnly: true }),
@@ -186,36 +195,86 @@ describe("matchesFilter", () => {
     expect(matchesFilter(ac, { query: "filter: UAL" })).toBe(false);
   });
 
-  it("matches any expression branch while keeping global query text conjunctive", () => {
-    const branches = [
-      { callsignPrefix: "FDX" },
-      { callsignPrefix: "UPS", altRangeFt: [5000, 45000] as [number, number] },
-    ];
+  it("matches OR filter expressions while keeping global query text conjunctive", () => {
+    const expression = {
+      kind: "or" as const,
+      terms: [
+        { kind: "clause" as const, filter: { callsignPrefix: "FDX" } },
+        {
+          kind: "and" as const,
+          terms: [
+            { kind: "clause" as const, filter: { callsignPrefix: "UPS" } },
+            {
+              kind: "clause" as const,
+              filter: { altRangeFt: [5000, 45000] as [number, number] },
+            },
+          ],
+        },
+      ],
+    };
     expect(
       matchesFilter(mkAc({ flight: "FDX123", reg: "N1FX" }), {
-        expressionBranches: branches,
+        expression,
       }),
     ).toBe(true);
     expect(
       matchesFilter(mkAc({ flight: "UPS123", altBaroFt: 7000, reg: "N2UP" }), {
-        expressionBranches: branches,
+        expression,
       }),
     ).toBe(true);
     expect(
       matchesFilter(mkAc({ flight: "UPS123", altBaroFt: 3000, reg: "N2UP" }), {
-        expressionBranches: branches,
+        expression,
       }),
     ).toBe(false);
     expect(
       matchesFilter(mkAc({ flight: "FDX123", reg: "N1FX" }), {
-        expressionBranches: branches,
+        expression,
         query: "N1",
       }),
     ).toBe(true);
     expect(
       matchesFilter(mkAc({ flight: "FDX123", reg: "N1FX" }), {
-        expressionBranches: branches,
+        expression,
         query: "ZZZ",
+      }),
+    ).toBe(false);
+  });
+
+  it("evaluates unary negation in filter expressions", () => {
+    const expression = {
+      kind: "and" as const,
+      terms: [
+        {
+          kind: "not" as const,
+          term: {
+            kind: "or" as const,
+            terms: [
+              { kind: "clause" as const, filter: { callsignPrefix: "FDX" } },
+              { kind: "clause" as const, filter: { callsignPrefix: "UPS" } },
+            ],
+          },
+        },
+        {
+          kind: "clause" as const,
+          filter: { altRangeFt: [5000, 45000] as [number, number] },
+        },
+      ],
+    };
+
+    expect(
+      matchesFilter(mkAc({ flight: "UAL123", altBaroFt: 7000 }), {
+        expression,
+      }),
+    ).toBe(true);
+    expect(
+      matchesFilter(mkAc({ flight: "FDX123", altBaroFt: 7000 }), {
+        expression,
+      }),
+    ).toBe(false);
+    expect(
+      matchesFilter(mkAc({ flight: "UAL123", altBaroFt: 3000 }), {
+        expression,
       }),
     ).toBe(false);
   });

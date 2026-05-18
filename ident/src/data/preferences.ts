@@ -87,6 +87,7 @@ interface PreferencesState {
   setReplayRangeRecents: (next: ReplayRangeRecent[]) => void;
   setInspectorTab: (tab: InspectorTab) => void;
   suppressNotification: (keyHash: string, mode: "snooze" | "ignore") => void;
+  clearNotificationSuppression: (keyHash: string) => void;
   clearExpiredNotificationSuppressions: (now?: number) => void;
 }
 
@@ -141,8 +142,6 @@ export const DEFAULT_REPLAY_RANGE_RECENTS: ReplayRangeRecent[] = [];
 const VALID_BASEMAP_IDS: BasemapId[] = [
   "ident",
   "osm",
-  "cartoPositron",
-  "cartoDark",
   "esriSat",
   "esriTerrain",
 ];
@@ -161,21 +160,12 @@ export function notificationKeyHash(input: string): string {
   return `n:${hash.toString(36)}`;
 }
 
-// Stable suppression key for a diagnostic. One-step: callers never see
-// the intermediate serialization, only the opaque identity string.
-// Covers every notification-visible field so two diagnostics that
-// render identically to the user share an identity and two that
-// differ in any surfaced detail do not.
+// Stable suppression key for a diagnostic. Identity matches the backend
+// store's (channel, code, scope) tuple so a snoozed diagnostic stays
+// snoozed even when the backend refreshes its message or severity.
 export function diagnosticIdentity(d: IdentDiagnostic): string {
   return notificationKeyHash(
-    JSON.stringify([
-      d.severity,
-      d.channel,
-      d.code,
-      d.message,
-      d.actionLabel ?? "",
-      d.actionUrl ?? "",
-    ]),
+    JSON.stringify([d.channel, d.code, d.scope ?? ""]),
   );
 }
 
@@ -253,13 +243,27 @@ export const usePreferencesStore = create<PreferencesState>()(
             ],
           };
         }),
+      clearNotificationSuppression: (keyHash) =>
+        set((st) => {
+          const trimmedHash = keyHash.trim();
+          if (!trimmedHash) return {};
+          return {
+            notificationSuppressions: st.notificationSuppressions.filter(
+              (suppression) => suppression.keyHash !== trimmedHash,
+            ),
+          };
+        }),
       clearExpiredNotificationSuppressions: (now = Date.now()) =>
-        set((st) => ({
-          notificationSuppressions: normalizeNotificationSuppressions(
+        set((st) => {
+          const next = normalizeNotificationSuppressions(
             st.notificationSuppressions,
             now,
-          ),
-        })),
+          );
+          if (sameNotificationSuppressions(st.notificationSuppressions, next)) {
+            return {};
+          }
+          return { notificationSuppressions: next };
+        }),
     }),
     {
       name: PREFERENCES_STORAGE_KEY,
@@ -453,6 +457,19 @@ function normalizeNotificationSuppressions(
     out.push({ keyHash, ignored, ...(snoozedUntil ? { snoozedUntil } : {}) });
   }
   return out;
+}
+
+function sameNotificationSuppressions(
+  a: NotificationSuppression[],
+  b: NotificationSuppression[],
+): boolean {
+  if (a.length !== b.length) return false;
+  return a.every(
+    (item, index) =>
+      item.keyHash === b[index]?.keyHash &&
+      item.ignored === b[index]?.ignored &&
+      item.snoozedUntil === b[index]?.snoozedUntil,
+  );
 }
 
 function isInspectorTab(v: unknown): v is InspectorTab {

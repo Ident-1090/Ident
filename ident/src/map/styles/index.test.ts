@@ -5,14 +5,7 @@ import { BASEMAPS, type BasemapId, resolveBasemapStyle } from "./index";
 type PaintLayer = LayerSpecification & { paint?: Record<string, unknown> };
 
 describe("BASEMAPS registry", () => {
-  const ids: BasemapId[] = [
-    "ident",
-    "osm",
-    "cartoPositron",
-    "cartoDark",
-    "esriSat",
-    "esriTerrain",
-  ];
+  const ids: BasemapId[] = ["ident", "osm", "esriSat", "esriTerrain"];
 
   it("contains every BasemapId", () => {
     for (const id of ids) {
@@ -74,9 +67,9 @@ describe("BASEMAPS registry", () => {
     expect(primary.sort()).toEqual(["esriSat", "ident", "esriTerrain"].sort());
   });
 
-  it("others group has exactly 3 members: osm, cartoPositron, cartoDark", () => {
+  it("others group has exactly 1 member: osm", () => {
     const others = ids.filter((id) => BASEMAPS[id].group === "others");
-    expect(others.sort()).toEqual(["cartoDark", "cartoPositron", "osm"].sort());
+    expect(others).toEqual(["osm"]);
   });
 
   it("local raster styles provide glyphs for MapLibre overlay labels", () => {

@@ -248,6 +248,24 @@ func Test404ShortCircuits(t *testing.T) {
 	if atomic.LoadInt32(&hits) == 0 {
 		t.Fatalf("no upstream hit observed")
 	}
+	deadline = time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		c.mu.Lock()
+		entry := c.entries["UAL123"]
+		knownNoRoute := entry != nil && entry.result.Known && entry.result.NoRoute
+		c.mu.Unlock()
+		if knownNoRoute {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	c.mu.Lock()
+	entry := c.entries["UAL123"]
+	knownNoRoute := entry != nil && entry.result.Known && entry.result.NoRoute
+	c.mu.Unlock()
+	if !knownNoRoute {
+		t.Fatalf("404 no-route sentinel was not stored")
+	}
 
 	// Further Track of same callsign should not trigger more fetches.
 	for i := 0; i < 5; i++ {

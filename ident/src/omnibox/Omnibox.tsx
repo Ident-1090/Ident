@@ -150,10 +150,9 @@ const KEYWORD_SUGGESTIONS: FilterSuggestion[] = [
   { token: "military", desc: "Military operator or ICAO range", kIcon: "⊝" },
   {
     token: "ground",
-    desc: "On-ground state (use !ground to exclude)",
+    desc: "On-ground aircraft only",
     kIcon: "⊝",
   },
-  { token: "!ground", desc: "Exclude on-ground aircraft", kIcon: "⊝" },
   { token: "nopos", desc: "Positionless aircraft only", kIcon: "⊝" },
   { token: "haspos", desc: "Position-decoded aircraft only", kIcon: "⊝" },
   { token: "inview", desc: "Within current map viewport", kIcon: "⊝" },
@@ -188,6 +187,7 @@ const BASEMAP_COMMANDS: Array<{ id: BasemapId; token: string; desc: string }> =
   );
 
 function matchesAircraft(ac: Aircraft, q: string): boolean {
+  if (ac.hex.startsWith("~")) return false;
   if (!q) return true;
   // When the query is itself a filter token (op:foo, cs:foo, reg:foo, …),
   // match aircraft by the corresponding field instead of the generic
@@ -384,14 +384,18 @@ export function Omnibox({ open, onClose }: Props) {
   }, [fieldFocus, aircraftMap, routeByCallsign]);
 
   const aircraftMatches = useMemo(() => {
-    if (structuredMode) return [];
+    if (structuredMode) return { list: [], total: 0 };
     const list: Aircraft[] = [];
+    let total = 0;
     for (const ac of aircraftMap.values()) {
-      if (matchesAircraft(ac, query)) list.push(ac);
-      if (list.length >= 8) break;
+      if (!matchesAircraft(ac, query)) continue;
+      total++;
+      if (list.length < 8) list.push(ac);
     }
-    return list;
+    return { list, total };
   }, [aircraftMap, structuredMode, query]);
+  const aircraftMatchRows = aircraftMatches ? aircraftMatches.list : [];
+  const aircraftMatchCount = aircraftMatches ? aircraftMatches.total : 0;
 
   const controlSuggestions: ControlSuggestion[] = [
     {
@@ -476,7 +480,7 @@ export function Omnibox({ open, onClose }: Props) {
   const defaultModeEmpty =
     !fieldFocus &&
     !structuredMode &&
-    aircraftMatches.length === 0 &&
+    aircraftMatchCount === 0 &&
     filteredControls.length === 0 &&
     filteredOperators.length === 0 &&
     filteredFields.length === 0 &&
@@ -665,18 +669,18 @@ export function Omnibox({ open, onClose }: Props) {
                   <Command.Group
                     heading={
                       <GroupHeading
-                        label={`Aircraft · ${aircraftMatches.length} matches`}
+                        label={`Aircraft · ${aircraftMatchCount} matches`}
                         hint="enter = jump"
                       />
                     }
                     className="border-b border-(--color-line)"
                   >
-                    {aircraftMatches.length === 0 ? (
+                    {aircraftMatchCount === 0 ? (
                       <div className="px-4 py-1.75 text-[11.5px] text-ink-soft">
                         No aircraft match
                       </div>
                     ) : (
-                      aircraftMatches.map((ac) => (
+                      aircraftMatchRows.map((ac) => (
                         <Command.Item
                           key={ac.hex}
                           value={`ac:${ac.hex}`}

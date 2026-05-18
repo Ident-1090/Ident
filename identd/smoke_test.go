@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	"time"
 )
 
 func TestSmoke(t *testing.T) {
@@ -131,6 +130,40 @@ func TestPublishConfigEnvelopeIncludesStationName(t *testing.T) {
 	}
 }
 
+func TestPublishConfigEnvelopeIncludesIdentBuild(t *testing.T) {
+	prevVersion, prevCommit := version, commit
+	t.Cleanup(func() {
+		version, commit = prevVersion, prevCommit
+	})
+	version = "v1.2.3"
+	commit = "abcdef1234567890"
+
+	hub := NewHub([]string{"config"})
+	publishConfigEnvelope(hub, Config{}, nil)
+
+	snaps := hub.Snapshots()
+	if len(snaps) != 1 {
+		t.Fatalf("expected 1 snapshot, got %d", len(snaps))
+	}
+	var env struct {
+		Data struct {
+			Ident struct {
+				Version     string `json:"version"`
+				ShortCommit string `json:"shortCommit"`
+			} `json:"ident"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(snaps[0], &env); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if env.Data.Ident.Version != "v1.2.3" {
+		t.Fatalf("ident version = %q", env.Data.Ident.Version)
+	}
+	if env.Data.Ident.ShortCommit != "abcdef1" {
+		t.Fatalf("ident shortCommit = %q", env.Data.Ident.ShortCommit)
+	}
+}
+
 func TestPublishConfigEnvelopeOmitsEmptyStation(t *testing.T) {
 	hub := NewHub([]string{"config"})
 	publishConfigEnvelope(hub, Config{StationName: ""}, nil)
@@ -215,26 +248,30 @@ func TestPublishConfigEnvelopeIncludesLineOfSight(t *testing.T) {
 	}
 }
 
-func TestPublishStartupDiagnosticsPublishesStatusSnapshot(t *testing.T) {
-	hub := NewHub([]string{"status"})
-	normalizer := NewProducerStatusNormalizerWithClock(func() time.Time {
-		return time.Unix(1_700_000_120, 0)
+func TestDiagnosticStoreNotePublishesEnvelopeOnHub(t *testing.T) {
+	hub := NewHub([]string{"diagnostics"})
+	store := NewDiagnosticStore(DiagnosticStoreOptions{
+		Debounce: -1,
+		Publish: func(env []byte) {
+			hub.PublishSnapshotEnvelope("diagnostics", env)
+		},
 	})
 
-	publishStartupDiagnostics(hub, normalizer, []diagnostic{
-		warningDiagnostic("replay", "replay.cache.unreadable", "replay block could not be read"),
-	})
+	store.Note("replay", "replay.cache.unreadable", severityWarning, "replay block could not be read", WithTTL(0))
 
 	snaps := hub.Snapshots()
 	if len(snaps) != 1 {
 		t.Fatalf("expected 1 snapshot, got %d", len(snaps))
 	}
-	status := findEnvelope(t, snaps, "status")
-	diagnostics := status["diagnostics"].([]any)
-	if len(diagnostics) != 1 {
-		t.Fatalf("diagnostics = %#v", diagnostics)
+	diagnostics := findEnvelope(t, snaps, "diagnostics")
+	if diagnostics["schema"] != "ident.diagnostics.v1" {
+		t.Fatalf("schema = %#v", diagnostics["schema"])
 	}
-	diag := diagnostics[0].(map[string]any)
+	rows := diagnostics["diagnostics"].([]any)
+	if len(rows) != 1 {
+		t.Fatalf("diagnostics = %#v", rows)
+	}
+	diag := rows[0].(map[string]any)
 	if diag["code"] != "replay.cache.unreadable" || diag["channel"] != "replay" {
 		t.Fatalf("diagnostic = %#v", diag)
 	}

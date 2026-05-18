@@ -179,7 +179,7 @@ describe("grammar", () => {
 
   it("tokenizes keywords", () => {
     expect(tokenize("emergency")).toEqual({ kind: "kw", word: "emergency" });
-    expect(tokenize("!ground")).toEqual({ kind: "kw", word: "!ground" });
+    expect(tokenize("ground")).toEqual({ kind: "kw", word: "ground" });
   });
 
   it("returns null on empty input", () => {
@@ -382,6 +382,16 @@ describe("grammar", () => {
     });
   });
 
+  it("parses unary negation as expression syntax", () => {
+    expect(parseOmniboxQuery("!cs:FDX alt:>5000")).toMatchObject({
+      kind: "filter",
+      clauses: ["cs:FDX", "alt:>5000"],
+      invalidClauses: [],
+      expressionParts: ["!", "cs:FDX", "alt:>5000"],
+      usesLogicalSyntax: true,
+    });
+  });
+
   it("derives a filter slice from a structured query", () => {
     const base = useIdentStore.getState().filter;
     const result = deriveFilterFromQuery(
@@ -391,22 +401,60 @@ describe("grammar", () => {
     expect(result.kind).toBe("filter");
     expect(result.text).toBe("fedex");
     expect(result.invalidClauses).toEqual([]);
-    expect(result.filter.operatorContains).toBe("United");
-    expect(result.filter.altRangeFt).toEqual([30000, 45000]);
-    expect(result.filter.hideGround).toBe(true);
-    expect(result.filter.categories.airline).toBe(true);
+    expect(result.filter.expression).toMatchObject({
+      kind: "and",
+      terms: [
+        { kind: "clause", filter: { operatorContains: "United" } },
+        { kind: "clause", filter: { altRangeFt: [30000, 45000] } },
+        {
+          kind: "not",
+          term: { kind: "clause", filter: { groundOnly: true } },
+        },
+        { kind: "clause", filter: { categories: { airline: true } } },
+      ],
+    });
   });
 
-  it("derives expression branches for OR and grouping", () => {
+  it("derives an expression tree for OR and grouping", () => {
     const base = useIdentStore.getState().filter;
     const result = deriveFilterFromQuery("cs:FDX | (cs:UPS alt:>5000)", base);
     expect(result.kind).toBe("filter");
-    expect(result.expressionBranches).toHaveLength(2);
-    expect(result.filter.expressionBranches).toHaveLength(2);
-    expect(result.expressionBranches?.[0].callsignPrefix).toBe("FDX");
-    expect(result.expressionBranches?.[0].altRangeFt).toEqual([0, 45000]);
-    expect(result.expressionBranches?.[1].callsignPrefix).toBe("UPS");
-    expect(result.expressionBranches?.[1].altRangeFt).toEqual([5000, 45000]);
+    expect(result.filter.expression).toMatchObject({
+      kind: "or",
+      terms: [
+        { kind: "clause", filter: { callsignPrefix: "FDX" } },
+        {
+          kind: "and",
+          terms: [
+            { kind: "clause", filter: { callsignPrefix: "UPS" } },
+            { kind: "clause", filter: { altRangeFt: [5000, 45000] } },
+          ],
+        },
+      ],
+    });
+  });
+
+  it("derives an expression tree for unary negation", () => {
+    const base = useIdentStore.getState().filter;
+    const result = deriveFilterFromQuery("!(cs:FDX | cs:UPS) alt:>5000", base);
+    expect(result.kind).toBe("filter");
+    expect(result.filter.expression).toMatchObject({
+      kind: "and",
+      terms: [
+        {
+          kind: "not",
+          term: {
+            kind: "or",
+            terms: [
+              { kind: "clause", filter: { callsignPrefix: "FDX" } },
+              { kind: "clause", filter: { callsignPrefix: "UPS" } },
+            ],
+          },
+        },
+        { kind: "clause", filter: { altRangeFt: [5000, 45000] } },
+      ],
+    });
+    expect(result.invalidClauses).toEqual([]);
   });
 
   it("derives route filters from the rt clause", () => {
@@ -604,6 +652,32 @@ describe("field-focus grammar", () => {
     const cs = buildLiveFieldSuggestions("cs", map, {});
     expect(cs[0].value).toBe("UAL");
     expect(cs.map((s) => s.value)).toContain("DAL");
+  });
+
+  it("buildLiveFieldSuggestions omits non-ICAO hexes from hex completions", () => {
+    const map = new Map<string, Aircraft>([
+      [
+        "~0e83ae",
+        {
+          hex: "~0e83ae",
+          idKind: "non_icao",
+          seenSec: 0,
+          source: "tisb_trackfile",
+        },
+      ],
+      [
+        "a12ac7",
+        {
+          hex: "a12ac7",
+          idKind: "icao",
+          seenSec: 1,
+          source: "adsb_icao",
+        },
+      ],
+    ]);
+
+    const hexes = buildLiveFieldSuggestions("hex", map, {});
+    expect(hexes.map((s) => s.value)).toEqual(["a12ac7"]);
   });
 
   it("buildLiveFieldSuggestions pulls route origins/destinations from the cache", () => {
@@ -928,6 +1002,78 @@ describe("Omnibox default-mode filtering", () => {
     expect(text).not.toContain("Altitude greater than 20,000 ft");
   });
 
+  it("omits non-ICAO aircraft from aircraft matches", async () => {
+    resetOmniboxStore(
+      new Map<string, Aircraft>([
+        [
+          "~0e83ae",
+          {
+            hex: "~0e83ae",
+            idKind: "non_icao",
+            seenSec: 0,
+            source: "tisb_trackfile",
+          },
+        ],
+        [
+          "a12ac7",
+          {
+            hex: "a12ac7",
+            idKind: "icao",
+            seenSec: 0,
+            source: "adsb_icao",
+          },
+        ],
+      ]),
+    );
+
+    act(() => {
+      root.render(<Omnibox open={true} onClose={() => {}} />);
+    });
+    await act(async () => {
+      await flush();
+    });
+
+    const palette = document.querySelector("[role=dialog]")!;
+    expect(palette.textContent).toContain("a12ac7");
+    expect(palette.textContent).not.toContain("~0e83ae");
+    expect(
+      palette.querySelector('[cmdk-item][data-value="ac:~0e83ae"]'),
+    ).toBeNull();
+  });
+
+  it("shows total aircraft matches even when rendered rows are capped", async () => {
+    resetOmniboxStore(
+      new Map(
+        Array.from({ length: 10 }, (_, i) => {
+          const hex = `a0000${i}`;
+          return [
+            hex,
+            {
+              hex,
+              idKind: "icao",
+              flight: `TST${i}`,
+              seenSec: i,
+              source: "adsb_icao",
+            } satisfies Aircraft,
+          ];
+        }),
+      ),
+    );
+
+    act(() => {
+      root.render(<Omnibox open={true} onClose={() => {}} />);
+    });
+    await act(async () => {
+      await flush();
+    });
+
+    const palette = document.querySelector("[role=dialog]")!;
+    expect(palette.textContent).toContain("Aircraft · 10 matches");
+    expect(
+      palette.querySelectorAll('[cmdk-item][data-value^="ac:"]'),
+    ).toHaveLength(8);
+  });
+
   it("replaces unmatched search text when completing a suggestion", async () => {
     act(() => {
       root.render(<Omnibox open={true} onClose={() => {}} />);
@@ -1037,9 +1183,17 @@ describe("Omnibox default-mode filtering", () => {
 
     const st = useIdentStore.getState();
     expect(st.search.query).toBe("op:United alt:>30000 !ground");
-    expect(st.filter.operatorContains).toBe("United");
-    expect(st.filter.altRangeFt).toEqual([30000, 45000]);
-    expect(st.filter.hideGround).toBe(true);
+    expect(st.filter.expression).toMatchObject({
+      kind: "and",
+      terms: [
+        { kind: "clause", filter: { operatorContains: "United" } },
+        { kind: "clause", filter: { altRangeFt: [30000, 45000] } },
+        {
+          kind: "not",
+          term: { kind: "clause", filter: { groundOnly: true } },
+        },
+      ],
+    });
     expect(onClose).toHaveBeenCalled();
   });
 

@@ -5,10 +5,6 @@
 
 export interface IdentAircraftFrame {
   schema: "ident.aircraft.v1";
-  producer: {
-    kind: "readsb" | "dump1090-fa" | "skyaware978" | "unknown";
-    version?: string;
-  };
   observedAtEpochSec: number;
   frameMessagesTotal?: null | number;
   aircraft:
@@ -117,14 +113,29 @@ export interface IdentConfig {
   lineOfSight?: {
     [k: string]: any;
   };
+  ident: {
+    version?: string;
+    shortCommit?: string;
+  };
+}
+
+export interface IdentDiagnostics {
+  schema: "ident.diagnostics.v1";
+  diagnostics: {
+    severity: "info" | "warning" | "error";
+    channel: string;
+    code: string;
+    scope?: string;
+    message: string;
+    action?: null | {
+      label: string;
+      url: string;
+    };
+  }[];
 }
 
 export interface IdentRangeOutline {
   schema: "ident.rangeOutline.v1";
-  producer: {
-    kind: "readsb" | "dump1090-fa" | "skyaware978" | "unknown";
-    version?: string;
-  };
   observedAtEpochSec: number;
   source: "outline_json";
   scope: "last24h" | "alltime" | "points" | "other";
@@ -156,10 +167,6 @@ export interface IdentRoutes {
 
 export interface IdentStatus {
   schema: "ident.status.v1";
-  producer: {
-    kind: "readsb" | "dump1090-fa" | "skyaware978" | "unknown";
-    version?: string;
-  };
   observedAt:
     | {
         kind: "producer_provided";
@@ -383,14 +390,4 @@ export interface IdentStatus {
           | "stale_sample"
           | "malformed_file";
       };
-  diagnostics:
-    | null
-    | {
-        severity: string;
-        channel: string;
-        code: string;
-        message: string;
-        actionLabel?: string;
-        actionUrl?: string;
-      }[];
 }

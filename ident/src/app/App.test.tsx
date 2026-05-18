@@ -180,6 +180,46 @@ describe("App layout", () => {
     ).toBe("true");
   });
 
+  it("does not reserve the desktop replay row when replay is unavailable", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: false,
+        availableFrom: null,
+        availableTo: null,
+      },
+      connectionStatus: { ...st.connectionStatus, ws: "open" },
+    }));
+
+    act(() => {
+      root.render(<App />);
+    });
+
+    expect(container.firstElementChild?.className).toContain(
+      "md:grid-rows-[48px_0px_1fr_30px]",
+    );
+  });
+
+  it("reserves the desktop replay row while replay availability is loading", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: false,
+        availableFrom: null,
+        availableTo: null,
+      },
+      connectionStatus: { ...st.connectionStatus, ws: "connecting" },
+    }));
+
+    act(() => {
+      root.render(<App />);
+    });
+
+    expect(container.firstElementChild?.className).toContain(
+      "md:grid-rows-[48px_32px_1fr_30px]",
+    );
+  });
+
   it("dismisses the floating inspector on Escape", () => {
     useIdentStore.setState({
       aircraft: new Map([

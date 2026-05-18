@@ -32,6 +32,9 @@ const SORT_TOOLTIP: Record<SortField, string> = {
   kt: "Sort by ground speed",
   dist: "Sort by receiver distance",
 };
+const TRAFFIC_GRID_WITH_DISTANCE =
+  "grid-cols-[4px_18px_54px_1fr_52px_36px_40px]";
+const TRAFFIC_GRID_WITHOUT_DISTANCE = "grid-cols-[4px_18px_54px_1fr_52px_36px]";
 
 interface Row {
   ac: Aircraft;
@@ -71,6 +74,9 @@ interface TrafficListProps {
 export function TrafficList({ onAircraftSelect }: TrafficListProps = {}) {
   const aircraft = useIdentStore(selectDisplayAircraftMap);
   const receiver = useIdentStore((s) => s.receiver);
+  const receiverPositionCapability = useIdentStore(
+    (s) => s.capabilities?.capabilities.receiverPosition,
+  );
   const filter = useIdentStore((s) => s.filter);
   const searchQuery = useIdentStore((s) => s.search.query);
   const routeByCallsign = useIdentStore((s) => s.routeByCallsign);
@@ -94,6 +100,17 @@ export function TrafficList({ onAircraftSelect }: TrafficListProps = {}) {
 
   const [sortField, setSortField] = useState<SortField>("dist");
   const [sortDir, setSortDir] = useState<SortDir>("asc");
+  const hasReceiverDistance =
+    receiver != null && receiverPositionCapability !== "unavailable";
+  const effectiveSortField =
+    sortField === "dist" && !hasReceiverDistance ? "cs" : sortField;
+
+  useEffect(() => {
+    if (sortField === "dist" && !hasReceiverDistance) {
+      setSortField("cs");
+      setSortDir(DEFAULT_DIR.cs);
+    }
+  }, [hasReceiverDistance, sortField]);
 
   function pickSort(next: SortField) {
     if (next === sortField) {
@@ -153,7 +170,7 @@ export function TrafficList({ onAircraftSelect }: TrafficListProps = {}) {
       // Emergency always pinned to top, direction-independent.
       if (a.isEmerg !== b.isEmerg) return a.isEmerg ? -1 : 1;
       const sign = sortDir === "asc" ? 1 : -1;
-      switch (sortField) {
+      switch (effectiveSortField) {
         case "dist":
           return sign * (a.dist - b.dist);
         case "alt": {
@@ -184,7 +201,7 @@ export function TrafficList({ onAircraftSelect }: TrafficListProps = {}) {
     routeByCallsign,
     viewportHexes,
     altTrendsByHex,
-    sortField,
+    effectiveSortField,
     sortDir,
     units.altitude,
     units.distance,
@@ -196,7 +213,9 @@ export function TrafficList({ onAircraftSelect }: TrafficListProps = {}) {
 
   return (
     <div className="flex-1 min-h-0 overflow-hidden flex flex-col bg-paper">
-      <div className="grid grid-cols-[4px_18px_54px_1fr_52px_36px_40px] gap-1.75 px-3 py-1 font-mono text-[9px] uppercase tracking-[0.08em] border-b border-(--color-line-soft) bg-paper tabular-nums flex-none">
+      <div
+        className={`grid ${hasReceiverDistance ? TRAFFIC_GRID_WITH_DISTANCE : TRAFFIC_GRID_WITHOUT_DISTANCE} gap-1.75 px-3 py-1 font-mono text-[9px] uppercase tracking-[0.08em] border-b border-(--color-line-soft) bg-paper tabular-nums flex-none`}
+      >
         <div />
         <div aria-hidden="true" />
         <SortCol
@@ -228,15 +247,17 @@ export function TrafficList({ onAircraftSelect }: TrafficListProps = {}) {
         >
           Kt
         </SortCol>
-        <SortCol
-          field="dist"
-          sortField={sortField}
-          sortDir={sortDir}
-          onPick={pickSort}
-          align="right"
-        >
-          Dist
-        </SortCol>
+        {hasReceiverDistance && (
+          <SortCol
+            field="dist"
+            sortField={sortField}
+            sortDir={sortDir}
+            onPick={pickSort}
+            align="right"
+          >
+            Dist
+          </SortCol>
+        )}
       </div>
 
       <div className="traffic-list-scroll flex-1 min-h-0 overflow-y-auto">
@@ -247,6 +268,7 @@ export function TrafficList({ onAircraftSelect }: TrafficListProps = {}) {
               key={row.ac.hex}
               row={row}
               selected={selected}
+              showDistance={hasReceiverDistance}
               onClick={() => {
                 const nextHex = selected ? null : row.ac.hex;
                 select(nextHex);
@@ -255,7 +277,9 @@ export function TrafficList({ onAircraftSelect }: TrafficListProps = {}) {
             />
           );
         })}
-        {rows.length === 0 && !hasFeedData && <TrafficSkeleton />}
+        {rows.length === 0 && !hasFeedData && (
+          <TrafficSkeleton showDistance={hasReceiverDistance} />
+        )}
         {rows.length === 0 && hasFeedData && (
           <div className="px-3 py-6 font-mono text-[11px] text-ink-faint">
             no traffic
@@ -266,7 +290,7 @@ export function TrafficList({ onAircraftSelect }: TrafficListProps = {}) {
   );
 }
 
-function TrafficSkeleton() {
+function TrafficSkeleton({ showDistance }: { showDistance: boolean }) {
   return (
     <div
       role="status"
@@ -277,7 +301,7 @@ function TrafficSkeleton() {
         <div
           // biome-ignore lint/suspicious/noArrayIndexKey: static skeleton placeholders — no item identity, fixed length
           key={i}
-          className="grid grid-cols-[4px_18px_54px_1fr_52px_36px_40px] gap-1.75 items-center"
+          className={`grid ${showDistance ? TRAFFIC_GRID_WITH_DISTANCE : TRAFFIC_GRID_WITHOUT_DISTANCE} gap-1.75 items-center`}
         >
           <div className="h-4.5 rounded-[1px] bg-(--color-line-soft)" />
           <div className="h-3 w-4.5 rounded-[1px] bg-(--color-line-soft)" />
@@ -285,7 +309,7 @@ function TrafficSkeleton() {
           <SkeletonBar width={i % 3 === 0 ? 92 : 70} />
           <SkeletonBar width={36} align="right" />
           <SkeletonBar width={24} align="right" />
-          <SkeletonBar width={30} align="right" />
+          {showDistance && <SkeletonBar width={30} align="right" />}
         </div>
       ))}
     </div>
@@ -343,10 +367,12 @@ function SortCol({
 function TrafficRow({
   row,
   selected,
+  showDistance,
   onClick,
 }: {
   row: Row;
   selected: boolean;
+  showDistance: boolean;
   onClick: () => void;
 }) {
   const { ac, country, route, trend, altLabel, distLabel, isEmerg, isGround } =
@@ -405,7 +431,7 @@ function TrafficRow({
       type="button"
       onClick={onClick}
       className={
-        "grid w-full grid-cols-[4px_18px_54px_1fr_52px_36px_40px] gap-1.75 px-3 py-1.25 " +
+        `grid w-full ${showDistance ? TRAFFIC_GRID_WITH_DISTANCE : TRAFFIC_GRID_WITHOUT_DISTANCE} gap-1.75 px-3 py-1.25 ` +
         "font-mono text-[11px] border-0 border-b border-(--color-line-soft) items-center cursor-pointer tabular-nums text-left " +
         hoverCls
       }
@@ -437,9 +463,14 @@ function TrafficRow({
       <div className="text-right whitespace-nowrap" style={{ color: spdColor }}>
         {gs}
       </div>
-      <div className="text-right whitespace-nowrap" style={{ color: dstColor }}>
-        {distLabel}
-      </div>
+      {showDistance && (
+        <div
+          className="text-right whitespace-nowrap"
+          style={{ color: dstColor }}
+        >
+          {distLabel}
+        </div>
+      )}
     </button>
   );
 }

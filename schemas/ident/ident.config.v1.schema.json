@@ -9,13 +9,26 @@
     },
     "lineOfSight": {
       "type": "object"
+    },
+    "ident": {
+      "type": "object",
+      "properties": {
+        "version": {
+          "type": "string"
+        },
+        "shortCommit": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
     }
   },
   "$id": "https://github.com/Ident-1090/Ident/schemas/ident/ident.config.v1.schema.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Ident config",
   "required": [
-    "schema"
+    "schema",
+    "ident"
   ],
   "additionalProperties": false
 }

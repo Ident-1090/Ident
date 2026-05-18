@@ -52,6 +52,23 @@ describe("TrafficList", () => {
         [UAL.hex, UAL],
         [SWA.hex, SWA],
       ]),
+      capabilities: {
+        schema: "ident.capabilities.v1",
+        producer: { kind: "readsb", version: "readsb" },
+        capabilities: {
+          aircraft: "producer_provided",
+          receiverPosition: "producer_provided",
+          messageRate: "producer_provided",
+          gain: "producer_provided",
+          uptime: "producer_provided",
+          maxRange: "producer_provided",
+          rangeOutline: "producer_provided",
+          signalDiagnostics: "producer_provided",
+          meteorology: "unavailable",
+          replay: "ident_derived",
+          trails: "ident_derived",
+        },
+      },
       receiver: { lat: 37.4, lon: -122.1, version: "readsb" },
       selectedHex: null,
       filter: {
@@ -66,6 +83,7 @@ describe("TrafficList", () => {
         altRangeFt: [0, 45000],
         emergOnly: false,
         hideGround: false,
+        groundOnly: false,
         hasPosOnly: false,
         operatorContains: "",
         callsignPrefix: "",
@@ -83,7 +101,7 @@ describe("TrafficList", () => {
         hdgTolerance: null,
         militaryOnly: false,
         inViewOnly: false,
-        expressionBranches: null,
+        expression: null,
       },
       search: { query: "" },
       routeByCallsign: {
@@ -172,6 +190,29 @@ describe("TrafficList", () => {
     expect(document.querySelector('[role="tooltip"]')?.textContent).toBe(
       "Sort by ground speed",
     );
+  });
+
+  it("hides receiver-distance column when receiver position capability is unavailable", () => {
+    const capabilities = useIdentStore.getState().capabilities;
+    if (capabilities == null) throw new Error("expected capabilities fixture");
+
+    useIdentStore.setState({
+      capabilities: {
+        ...capabilities,
+        capabilities: {
+          ...capabilities.capabilities,
+          receiverPosition: "unavailable",
+        },
+      },
+    });
+
+    act(() => {
+      root.render(<TrafficList />);
+    });
+
+    expect(container.textContent).not.toContain("Dist");
+    expect(container.textContent).not.toContain("nm");
+    expect(container.textContent).toContain("UAL123");
   });
 
   it("renders skeleton rows before any feed data has arrived", () => {

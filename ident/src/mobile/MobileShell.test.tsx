@@ -38,6 +38,7 @@ describe("MobileShell", () => {
     useIdentStore.setState({
       aircraft: new Map(),
       selectedHex: null,
+      diagnostics: [],
     });
   });
 
@@ -89,7 +90,40 @@ describe("MobileShell", () => {
       Array.from(row!.querySelectorAll("button")).map((button) =>
         button.getAttribute("aria-label"),
       ),
-    ).toEqual(["Open menu", "Open search"]);
+    ).toEqual(["Open menu", "Open search", "Open diagnostics"]);
+  });
+
+  it("opens diagnostics from a separate right-edge mobile button", () => {
+    useIdentStore.setState({
+      diagnostics: [
+        {
+          severity: "warning",
+          channel: "stats",
+          code: "stats.dump1090fa.missing_window_duration",
+          message: "stats window is missing start/end",
+        },
+      ],
+    });
+
+    act(() => {
+      renderMobileShell();
+    });
+
+    const diagnostics = container.querySelector<HTMLButtonElement>(
+      'button[aria-label="Open diagnostics"]',
+    );
+    expect(diagnostics).toBeTruthy();
+    expect(diagnostics!.className).toContain("liquid-glass");
+
+    act(() => diagnostics!.click());
+
+    const panel = document.querySelector<HTMLElement>(
+      '[role="dialog"][aria-label="Diagnostics"]',
+    );
+    expect(panel).toBeTruthy();
+    expect(panel!.textContent).toContain(
+      "stats.dump1090fa.missing_window_duration",
+    );
   });
 
   it("renders mobile theme controls as icon-only buttons", () => {

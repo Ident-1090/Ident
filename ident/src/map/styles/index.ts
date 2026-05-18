@@ -1,19 +1,11 @@
 import type { StyleSpecification } from "../maplibre";
-import { cartoDarkStyle } from "./cartoDark";
-import { cartoPositronStyle } from "./cartoPositron";
 import { esriSatDayStyle, esriSatNightStyle } from "./esriSat";
 import { esriTerrainDayStyle, esriTerrainNightStyle } from "./esriTerrain";
 import { identDayStyle } from "./identDay";
 import { identNightStyle } from "./identNight";
 import { osmStyle } from "./osm";
 
-export type BasemapId =
-  | "ident"
-  | "osm"
-  | "cartoPositron"
-  | "cartoDark"
-  | "esriSat"
-  | "esriTerrain";
+export type BasemapId = "ident" | "osm" | "esriSat" | "esriTerrain";
 
 export interface BasemapDef {
   id: BasemapId;
@@ -60,22 +52,6 @@ export const BASEMAPS: Record<BasemapId, BasemapDef> = {
     group: "others",
     style: osmStyle,
   },
-  cartoPositron: {
-    id: "cartoPositron",
-    label: "POSITRON",
-    tooltip: "Positron map",
-    isDark: false,
-    group: "others",
-    style: cartoPositronStyle,
-  },
-  cartoDark: {
-    id: "cartoDark",
-    label: "DARK",
-    tooltip: "Dark map",
-    isDark: true,
-    group: "others",
-    style: cartoDarkStyle,
-  },
 };
 
 export function resolveBasemapStyle(
@@ -91,8 +67,6 @@ export function resolveBasemapStyle(
 }
 
 export {
-  cartoDarkStyle,
-  cartoPositronStyle,
   esriSatDayStyle,
   esriSatNightStyle,
   esriTerrainDayStyle,

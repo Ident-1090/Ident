@@ -23,3 +23,6 @@ fixtures/receiver-sample/
 # Local working instructions for this release-prep checkout.
 CLAUDE.local.md
 AGENTS.override.md
+
+# Claude Code isolation worktrees (transient, agent-owned scratch).
+.claude/worktrees/

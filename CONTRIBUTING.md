@@ -85,6 +85,16 @@ go test . -run TestIdentSchemasAreCurrent -count=1
 The normal Go test fails when a committed schema is stale, so CI and the local
 pre-commit hook both enforce freshness.
 
+### Pre-commit hook
+
+The hook lives at `ident/.husky/pre-commit` and runs three checks: `gofmt`
+against `identd/`, `pnpm check-ident-schemas` (the schema-freshness check
+above), and `pnpm exec lint-staged` (biome formatting of staged JS/TS/JSON).
+Husky installs the hook from `ident/package.json`'s `prepare` script, so you
+need to have run `pnpm install` inside `ident/` at least once for the hook to
+fire. If your commit fails with "gofmt would rewrite", run `gofmt -w identd/`
+and re-stage.
+
 ## Development Notes
 
 The release architecture is:
@@ -92,10 +102,73 @@ The release architecture is:
 - `ident/`: React web UI
 - `identd/`: Go service and embedded release binary
 - `packaging/`: Docker, systemd, and package assets
-- `docs/`: install and compatibility notes
 
 Development can run the frontend and service separately. Release builds embed
 the web UI into `identd`.
+
+### Internal configuration
+
+These environment variables exist for development, testing, and operator
+overrides. They are intentionally kept out of the user-facing README so the
+common installation flow stays short.
+
+- `IDENT_RELAY_ROUTE_UPSTREAM` — base URL of the airline route lookup
+  service (default: `https://adsb.im/api/0/routeset`)
+- `IDENT_RELAY_ROUTE_TTL_SEC` — how long Ident caches a successful route
+  lookup before re-querying (default: 5 minutes)
+- `IDENT_RELAY_ROUTE_BATCH_MS` — debounce window for coalescing per-callsign
+  lookups into one upstream request (default: 250 ms)
+- `IDENT_UPDATE_API_URL` — GitHub-style releases endpoint Ident polls for
+  update checks (default: `https://api.github.com`)
+- `IDENT_UPDATE_TIMEOUT_SEC` — HTTP timeout for a single update check
+  (default: 10 s)
+
+### Diagnostics
+
+`identd` keeps diagnostics in a TTL-backed store in `identd/diagnostics.go`.
+Identity is `(channel, code, scope)` — re-emitting with the same identity
+refreshes the entry's TTL and updates mutable fields (severity, message,
+action) without producing a duplicate. The store publishes the full snapshot
+on the `ident.diagnostics.v1` channel; the frontend replaces its local set
+each time.
+
+Operationally relevant behaviors:
+
+- Capacity is bounded (200 entries by default). When the cap is reached, the
+  oldest entry is evicted, the eviction is logged with `slog.Warn`
+  (`diagnostics: cap reached, dropping oldest`, attributes `channel`, `code`,
+  `scope`, `severity`, `ageSec`), and the store publishes a self-describing
+  `diagnostics.store.capacity_exceeded` warning so the UI also shows the
+  saturation.
+- TTLs are picked at the emission site. Sustained conditions re-emit on a
+  poll cadence and refresh their TTL; transient events use a 5-minute
+  visibility window; persistent notices use `WithTTL(0)` and stay until
+  process restart.
+- Receiver-derived conditions (producer not classifiable, upstream-type
+  override mismatch) re-emit every 5 minutes from
+  `ReemitReceiverConditions` in `identd/producer_status.go` so a static but
+  misconfigured `receiver.json` doesn't let the diagnostic age out of the
+  15-minute window.
+
+### Capability gating
+
+`ident.capabilities.v1` reports which fields the current producer can supply
+(`producer_provided`, `ident_derived`, or `unavailable`). The status bar omits
+rows whose capability is `unavailable` rather than rendering them blank.
+Observed capabilities are sticky across receiver reingest with the same
+producer kind, and reset on a producer-kind transition — the merge rule is in
+`producer_status.go:mergeStrongerCapabilities`. The intent is to avoid row
+flicker when a single sample is missing a field; downgrade only happens when
+the producer itself changes.
+
+### Wire schemas
+
+The eight Ident-owned wire envelopes are generated under `schemas/ident/`:
+`ident.aircraft.v1`, `ident.status.v1`, `ident.capabilities.v1`,
+`ident.diagnostics.v1`, `ident.rangeOutline.v1`, `ident.config.v1`,
+`ident.routes.v1`, `ident.replay.availability.v1`. The `Refresh schemas after
+changing a wire struct` section above is the source of truth for regenerating
+them.
 
 ## Documentation Style
 

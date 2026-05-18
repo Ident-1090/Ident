@@ -75,7 +75,7 @@ describe("Inspector", () => {
       receiver: {
         lat: 37.4,
         lon: -122.1,
-        version: "wiedehopf readsb v3.14.1676",
+        version: "readsb v3.14.1676",
       },
       inspector: { tab: "telemetry" },
       altTrendsByHex: { [FAKE.hex]: [33000, 33500, 34000] },

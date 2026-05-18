@@ -294,8 +294,24 @@ IDENT_UPSTREAM_TYPE=dump1090-fa
 
 Supported values are `readsb`, `dump1090-fa`, and `skyaware978`. The aliases
 `piaware`, `dump978-fa`, and `dump978` are also accepted. An invalid value is
-ignored and reported in the status diagnostics while Ident falls back to
+ignored and surfaced as a diagnostic notification while Ident falls back to
 automatic detection.
+
+### Station identity and overlays
+
+Optional. These show up in the UI and as part of the Line-of-Sight overlay
+when present.
+
+```sh
+IDENT_STATION_NAME="My Station"
+IDENT_HEYWHATSTHAT_PANORAMA_ID=YOUR_PANORAMA_ID
+IDENT_HEYWHATSTHAT_ALTS=1000,3000,10000
+```
+
+`IDENT_HEYWHATSTHAT_PANORAMA_ID` points at a panorama you generated on
+[heywhatsthat.com](https://heywhatsthat.com). `IDENT_HEYWHATSTHAT_ALTS` is a
+comma-separated list of altitudes for the rings; leave it unset for a single
+40,000 ft (12,192 m) ring.
 
 ### Trails
 
@@ -381,6 +397,26 @@ The browser talks to Ident endpoints under the current mount path. `identd`
 handles receiver-specific paths and file names, so the web app does not need to
 know where the decoder stores files on disk.
 
+## Status bar and notifications
+
+The status bar at the bottom of the window shows the live feed health, the
+producer ("readsb", "dump1090-fa", etc.), and a few quality cells (Gain,
+Uptime, Max Range) when the producer actually publishes those values. Rows that
+the producer does not support are omitted rather than shown blank, so a missing
+cell is informational, not a bug.
+
+A bell at the right of the status bar opens the diagnostic notification center.
+Diagnostics surface conditions like "stats source is stale" or "update
+available"; notifications can be snoozed for seven days or hidden on the
+current device.
+
+On startup, `identd` waits for `receiver.json` to appear before it begins
+ingesting aircraft, stats, or outline files. The service log shows
+`awaiting producer classification` once at startup and then
+`still awaiting producer classification` every thirty seconds until the file
+becomes available. The web UI loads either way, so you can connect to it
+while waiting.
+
 ## Updates
 
 Ident checks GitHub Releases through `identd` and reports available releases
@@ -424,7 +460,6 @@ Repository layout:
 ident/      React web UI
 identd/     Go service and embedded release binary
 packaging/  systemd, Docker, and package assets
-docs/       install and compatibility notes
 ```
 
 Development runs the frontend and service separately.

@@ -4,27 +4,6 @@
     "schema": {
       "const": "ident.status.v1"
     },
-    "producer": {
-      "type": "object",
-      "properties": {
-        "kind": {
-          "type": "string",
-          "enum": [
-            "readsb",
-            "dump1090-fa",
-            "skyaware978",
-            "unknown"
-          ]
-        },
-        "version": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "kind"
-      ],
-      "additionalProperties": false
-    },
     "observedAt": {
       "oneOf": [
         {
@@ -717,42 +696,6 @@
           "additionalProperties": false
         }
       ]
-    },
-    "diagnostics": {
-      "type": [
-        "null",
-        "array"
-      ],
-      "items": {
-        "type": "object",
-        "properties": {
-          "severity": {
-            "type": "string"
-          },
-          "channel": {
-            "type": "string"
-          },
-          "code": {
-            "type": "string"
-          },
-          "message": {
-            "type": "string"
-          },
-          "actionLabel": {
-            "type": "string"
-          },
-          "actionUrl": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "severity",
-          "channel",
-          "code",
-          "message"
-        ],
-        "additionalProperties": false
-      }
     }
   },
   "$id": "https://github.com/Ident-1090/Ident/schemas/ident/ident.status.v1.schema.json",
@@ -760,10 +703,8 @@
   "title": "Ident status",
   "required": [
     "schema",
-    "producer",
     "observedAt",
-    "freshness",
-    "diagnostics"
+    "freshness"
   ],
   "additionalProperties": false
 }

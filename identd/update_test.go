@@ -12,7 +12,7 @@ import (
 	"time"
 )
 
-func TestNextUpdateDiagnosticEnvelopeDedupsWhenStatusUnchanged(t *testing.T) {
+func TestApplyUpdateDiagnosticDedupsWhenStatusUnchanged(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/repos/Ident-1090/Ident/releases/latest":
@@ -35,19 +35,53 @@ func TestNextUpdateDiagnosticEnvelopeDedupsWhenStatusUnchanged(t *testing.T) {
 		TTL:     time.Hour,
 		Current: VersionInfo{Version: "abc123def456", Commit: "abc123def456"},
 	})
-	normalizer := NewProducerStatusNormalizer()
+	var published int
+	store := NewDiagnosticStore(DiagnosticStoreOptions{
+		Debounce: -1,
+		Publish: func([]byte) {
+			published++
+		},
+	})
 
-	env, current := nextUpdateDiagnosticEnvelope(context.Background(), normalizer, checker, nil)
-	if env == nil || current == nil {
-		t.Fatalf("first iteration should publish: env=%q diag=%#v", env, current)
+	applyUpdateDiagnostic(context.Background(), store, checker, time.Hour, 15*time.Minute)
+	if published != 1 {
+		t.Fatalf("first call should publish exactly once: published=%d", published)
 	}
 
-	// Same status on the next tick must not re-broadcast: the goroutine
-	// runs forever on a fixed interval and naive republish floods clients
-	// with identical envelopes for the lifetime of the release window.
-	env2, _ := nextUpdateDiagnosticEnvelope(context.Background(), normalizer, checker, current)
-	if env2 != nil {
-		t.Fatalf("identical status republished: env=%q", env2)
+	// Identical re-emit refreshes TTL but does not republish: the goroutine
+	// fires on a fixed interval and naive republish floods clients with
+	// duplicate envelopes for the lifetime of the release window.
+	applyUpdateDiagnostic(context.Background(), store, checker, time.Hour, 15*time.Minute)
+	if published != 1 {
+		t.Fatalf("identical re-emit republished: published=%d", published)
+	}
+}
+
+func TestApplyUpdateDiagnosticEmitsOnCheckFailure(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	checker := NewUpdateChecker(UpdateCheckerOptions{
+		Enabled: true,
+		Repo:    "Ident-1090/Ident",
+		APIBase: ts.URL,
+		TTL:     time.Hour,
+		Current: VersionInfo{Version: "abc123def456", Commit: "abc123def456"},
+	})
+	store := NewDiagnosticStore(DiagnosticStoreOptions{Debounce: -1})
+
+	applyUpdateDiagnostic(context.Background(), store, checker, time.Hour, 15*time.Minute)
+	snap := store.Snapshot()
+	if len(snap) != 1 || snap[0].Code != "update.check.failed" {
+		t.Fatalf("failed update check did not surface diagnostic: %#v", snap)
+	}
+	if snap[0].Severity != severityWarning {
+		t.Fatalf("severity = %q, want warning", snap[0].Severity)
+	}
+	if !strings.Contains(snap[0].Message, "Update check failed") {
+		t.Fatalf("message missing context: %q", snap[0].Message)
 	}
 }
 
@@ -95,10 +129,10 @@ func TestUpdateCheckerReportsAvailableRelease(t *testing.T) {
 	if !ok {
 		t.Fatal("available update did not produce diagnostic")
 	}
-	if diagnostic.Code != "update.release.available" || diagnostic.Severity != "info" {
+	if diagnostic.Code != "update.release.available" || diagnostic.Severity != severityInfo {
 		t.Fatalf("diagnostic = %#v", diagnostic)
 	}
-	if diagnostic.ActionURL == "" || diagnostic.ActionLabel != "Release notes" {
+	if diagnostic.Action == nil || diagnostic.Action.URL == "" || diagnostic.Action.Label != "Release notes" {
 		t.Fatalf("diagnostic action = %#v", diagnostic)
 	}
 }

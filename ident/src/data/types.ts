@@ -84,7 +84,6 @@ export interface Aircraft {
 
 export interface AircraftFrame {
   schema?: string;
-  producer?: IdentProducer;
   observedAtEpochSec: number;
   frameMessagesTotal?: number;
   aircraft: Aircraft[];
@@ -175,7 +174,6 @@ export interface OutlineJson {
 
 export interface IdentRangeOutline {
   schema: "ident.rangeOutline.v1";
-  producer: IdentProducer;
   observedAtEpochSec: number;
   source: "outline_json";
   scope: "last24h" | "alltime" | "points" | "other";
@@ -311,7 +309,13 @@ export interface IdentCapabilitiesEnvelope {
 export interface IdentConfig {
   schema: "ident.config.v1";
   station?: string;
+  ident: IdentBuildInfo;
   lineOfSight?: HeyWhatsThatJson;
+}
+
+export interface IdentBuildInfo {
+  version?: string;
+  shortCommit?: string;
 }
 
 export type IdentRouteEntry =
@@ -375,9 +379,19 @@ export interface IdentDiagnostic {
   severity: "info" | "warning" | "error";
   channel: string;
   code: string;
+  // Per-instance scope so per-thing diagnostics (e.g. one replay block)
+  // can coexist with other entries sharing channel+code. Default "".
+  scope?: string;
   message: string;
-  actionLabel?: string;
-  actionUrl?: string;
+  // action carries the label+URL pair atomically. The two fields only make
+  // sense together; nesting them rules out the half-populated state where
+  // a URL renders without a label or vice versa.
+  action?: { label: string; url: string };
+}
+
+export interface IdentDiagnosticsEnvelope {
+  schema: "ident.diagnostics.v1";
+  diagnostics: IdentDiagnostic[];
 }
 
 export type IdentObservedAtStatus = IdentStatusValue<
@@ -393,7 +407,6 @@ export interface IdentFreshness {
 
 export interface IdentStatus {
   schema: "ident.status.v1";
-  producer: IdentProducer;
   observedAt: IdentObservedAtStatus;
   freshness: IdentFreshness;
   receiverPosition?: IdentStatusValue<
@@ -435,7 +448,6 @@ export interface IdentStatus {
     | "outline_other_vertices"
     | "stats_max_distance_meters"
   >;
-  diagnostics: IdentDiagnostic[];
 }
 
 export interface ReplayBlockFile {

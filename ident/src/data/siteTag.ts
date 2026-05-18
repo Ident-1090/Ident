@@ -1,9 +1,8 @@
 import type { ReceiverJson } from "./types";
 
 // Site tag = relay-configured station name (pushed via the `config` WS
-// channel) or the second whitespace-delimited token in readsb's version
-// string as a fallback (e.g. "3.16.10 wiedehopf git: 7d341c6 ..." →
-// "wiedehopf"). Ident carries no receiver-hex slot yet.
+// channel) or the second whitespace-delimited field in readsb's version
+// string as a fallback. Ident carries no receiver-hex slot yet.
 export function formatSiteTag(
   receiver: ReceiverJson | null,
   stationOverride: string | null,

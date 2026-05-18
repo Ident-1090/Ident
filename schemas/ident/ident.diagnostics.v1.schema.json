@@ -1,0 +1,72 @@
+{
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "ident.diagnostics.v1"
+    },
+    "diagnostics": {
+      "type": [
+        "array"
+      ],
+      "items": {
+        "type": "object",
+        "properties": {
+          "severity": {
+            "type": "string",
+            "enum": [
+              "info",
+              "warning",
+              "error"
+            ]
+          },
+          "channel": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "action": {
+            "type": [
+              "null",
+              "object"
+            ],
+            "properties": {
+              "label": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "label",
+              "url"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "severity",
+          "channel",
+          "code",
+          "message"
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "$id": "https://github.com/Ident-1090/Ident/schemas/ident/ident.diagnostics.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ident diagnostics",
+  "required": [
+    "schema",
+    "diagnostics"
+  ],
+  "additionalProperties": false
+}

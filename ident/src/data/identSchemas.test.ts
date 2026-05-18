@@ -40,7 +40,6 @@ describe("Ident JSON schemas", () => {
     const ajv = ajvForIdentSchemas();
     const aircraft: IdentAircraftFrame = {
       schema: "ident.aircraft.v1",
-      producer: { kind: "readsb", version: "3.16" },
       observedAtEpochSec: 1770000000,
       frameMessagesTotal: 1200,
       aircraft: [
@@ -79,10 +78,10 @@ describe("Ident JSON schemas", () => {
     const config: IdentConfig = {
       schema: "ident.config.v1",
       station: "Receiver",
+      ident: { version: "dev", shortCommit: "abc1234" },
     };
     const rangeOutline: IdentRangeOutline = {
       schema: "ident.rangeOutline.v1",
-      producer: { kind: "readsb", version: "3.16" },
       observedAtEpochSec: 1770000000,
       source: "outline_json",
       scope: "last24h",
@@ -107,7 +106,6 @@ describe("Ident JSON schemas", () => {
     };
     const status: IdentStatus = {
       schema: "ident.status.v1",
-      producer: { kind: "readsb", version: "3.16" },
       observedAt: {
         kind: "producer_provided",
         source: "aircraft_now",
@@ -123,7 +121,6 @@ describe("Ident JSON schemas", () => {
         source: "stats_last1min_messages_valid",
         value: { hz: 10, basisSec: 60 },
       },
-      diagnostics: [],
     };
 
     for (const payload of [
@@ -145,7 +142,6 @@ describe("Ident JSON schemas", () => {
     const ajv = ajvForIdentSchemas();
     const payload = {
       schema: "ident.aircraft.v1",
-      producer: { kind: "readsb" },
       observedAtEpochSec: 1770000000,
       aircraft: [{ hex: "abc123" }],
     };

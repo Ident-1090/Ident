@@ -139,6 +139,18 @@
   }
 }
 
+@keyframes diagnostic-highlight-fade {
+  0% {
+    background-color: color-mix(in oklab, var(--color-accent) 18%, transparent);
+  }
+  35% {
+    background-color: color-mix(in oklab, var(--color-accent) 14%, transparent);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
 /* Selected-aircraft halo: outer ring that grows and fades. Authored as an
    SVG attribute animation so consumers can apply via className. */
 .sel-pulse {

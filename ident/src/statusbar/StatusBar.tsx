@@ -1,4 +1,4 @@
-import { Bell, ExternalLink } from "lucide-react";
+import { Bell, BellOff, Check, Copy, ExternalLink, X } from "lucide-react";
 import {
   type CSSProperties,
   type KeyboardEvent,
@@ -9,11 +9,12 @@ import {
 import { match, P } from "ts-pattern";
 import {
   diagnosticIdentity,
-  isNotificationSuppressed,
+  type NotificationSuppression,
   usePreferencesStore,
 } from "../data/preferences";
 import { useIdentStore } from "../data/store";
 import type {
+  IdentBuildInfo,
   IdentDiagnostic,
   IdentStatusValue,
   IdentUnavailableReason,
@@ -34,6 +35,8 @@ interface LiveStatus {
   detail?: string;
   showRate: boolean;
 }
+type SuppressionState = "ignored" | "snoozed" | null;
+
 const STALENESS_TICK_MS = 500;
 const STALE_AFTER_MS = 2000;
 const DISCONNECTED_AFTER_MS = 30_000;
@@ -120,6 +123,7 @@ export interface ReceiverDiagnostics {
 export function useReceiverDiagnostics(): ReceiverDiagnostics {
   const identStatus = useIdentStore((s) => s.identStatus);
   const capabilities = useIdentStore((s) => s.capabilities?.capabilities);
+  const diagnostics = useIdentStore((s) => s.diagnostics);
 
   const normalizedGain = presentStatusValue(identStatus?.gain)?.db ?? null;
   const gainLabel =
@@ -145,11 +149,14 @@ export function useReceiverDiagnostics(): ReceiverDiagnostics {
     unavailableStatusReason(identStatus?.maxRange),
   );
 
-  const producerKind = identStatus?.producer.kind ?? "unknown";
-  const producerVer = identStatus?.producer.version?.trim().split(/\s+/)[0];
+  const capabilitiesEnvelope = useIdentStore((s) => s.capabilities);
+  const producerKind = capabilitiesEnvelope?.producer?.kind ?? "unknown";
+  const producerVer = capabilitiesEnvelope?.producer?.version
+    ?.trim()
+    .split(/\s+/)[0];
   const producerLabel = producerVer
-    ? `${producerKind} ${producerVer} · 10 MHz ES`
-    : `${producerKind} · 10 MHz ES`;
+    ? `${producerKind} ${producerVer}`
+    : producerKind;
 
   const cells: DiagnosticCell[] = [];
   if (capabilities?.gain !== "unavailable") {
@@ -161,7 +168,7 @@ export function useReceiverDiagnostics(): ReceiverDiagnostics {
   if (capabilities?.maxRange !== "unavailable") {
     cells.push({ k: rangeLabel, v: rangeValue, title: rangeTitle });
   }
-  return { cells, producerLabel, diagnostics: identStatus?.diagnostics ?? [] };
+  return { cells, producerLabel, diagnostics };
 }
 
 export function StatusBar() {
@@ -334,34 +341,79 @@ function Cell({
   );
 }
 
-function DiagnosticsCenter({
+export function DiagnosticsCenter({
   producerLabel,
   diagnostics,
+  variant = "status",
 }: {
   producerLabel: string;
   diagnostics: IdentDiagnostic[];
+  variant?: "status" | "mobile";
 }) {
   const [open, setOpen] = useState(false);
+  const [closedPopupKey, setClosedPopupKey] = useState<string | null>(null);
+  const [selectedDiagnosticKey, setSelectedDiagnosticKey] = useState<
+    string | null
+  >(null);
+  const [showSuppressed, setShowSuppressed] = useState(false);
+  const [copied, setCopied] = useState(false);
   const buttonRef = useRef<HTMLButtonElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
+  const highlightTimerRef = useRef<number | null>(null);
   const notificationSuppressions = usePreferencesStore(
     (s) => s.notificationSuppressions,
   );
   const suppressNotification = usePreferencesStore(
     (s) => s.suppressNotification,
   );
-  const notifications = diagnostics.filter(
-    (diagnostic) =>
-      !isNotificationSuppressed(
-        diagnosticIdentity(diagnostic),
-        notificationSuppressions,
-      ),
+  const clearNotificationSuppression = usePreferencesStore(
+    (s) => s.clearNotificationSuppression,
   );
-  const counts = diagnosticCounts(notifications);
+  const clearExpiredNotificationSuppressions = usePreferencesStore(
+    (s) => s.clearExpiredNotificationSuppressions,
+  );
+  const capabilitiesEnvelope = useIdentStore((s) => s.capabilities);
+  const identStatus = useIdentStore((s) => s.identStatus);
+  const receiver = useIdentStore((s) => s.receiver);
+  const config = useIdentStore((s) => s.config);
+  const connectionStatus = useIdentStore((s) => s.connectionStatus);
+  const replay = useIdentStore((s) => s.replay);
+  const rows = diagnostics.map((diagnostic) => {
+    const keyHash = diagnosticIdentity(diagnostic);
+    const suppression = notificationSuppressionState(
+      keyHash,
+      notificationSuppressions,
+    );
+    return { diagnostic, keyHash, suppression };
+  });
+  const notifications = rows.filter((row) => row.suppression == null);
+  const panelRows = showSuppressed ? rows : notifications;
+  const counts = diagnosticCounts(
+    notifications.map((notification) => notification.diagnostic),
+  );
   const hasDiagnostics = notifications.length > 0;
-  const label = hasDiagnostics ? diagnosticSummary(counts) : producerLabel;
+  const label = hasDiagnostics ? diagnosticSummary(counts) : "DIAGNOSTICS";
   const tone = diagnosticToneClass(counts);
-  const popupNotification = open ? null : notifications[0];
+  const chromeClass =
+    variant === "mobile"
+      ? "relative"
+      : "ml-auto h-full border-l border-chrome-line";
+  const buttonClass =
+    variant === "mobile"
+      ? `liquid-glass grid h-11 w-11 place-items-center rounded-[6px] font-mono text-[10.5px] ${tone} cursor-pointer`
+      : `flex h-full items-center gap-2 px-3.5 font-mono text-[10.5px] ${tone} hover:bg-paper-2 focus-visible:outline focus-visible:outline-1 focus-visible:outline-(--color-accent)`;
+  const panelClass =
+    variant === "mobile"
+      ? "fixed right-14 top-3 z-[65] max-h-[calc(100dvh-24px)] w-[min(420px,calc(100vw-72px))] overflow-hidden border border-(--color-line-strong) bg-paper shadow-2 font-mono text-[11px] text-(--color-ink)"
+      : "fixed right-2 bottom-10 z-[65] w-[min(420px,calc(100vw-16px))] border border-(--color-line-strong) bg-paper shadow-2 font-mono text-[11px] text-(--color-ink)";
+  const popupClass =
+    variant === "mobile"
+      ? "fixed right-14 top-3 z-[64] w-[min(360px,calc(100vw-72px))] border border-(--color-line-strong) bg-paper shadow-2 font-mono text-[11px] text-(--color-ink)"
+      : "fixed right-2 bottom-12 z-[64] w-[min(360px,calc(100vw-16px))] border border-(--color-line-strong) bg-paper shadow-2 font-mono text-[11px] text-(--color-ink)";
+  const popupNotification =
+    open || notifications.length === 0
+      ? null
+      : notifications.find((row) => row.keyHash !== closedPopupKey);
 
   function suppressDiagnostic(
     diagnostic: IdentDiagnostic,
@@ -369,6 +421,78 @@ function DiagnosticsCenter({
   ) {
     suppressNotification(diagnosticIdentity(diagnostic), mode);
   }
+
+  function openDiagnostic(keyHash: string) {
+    setSelectedDiagnosticKey(keyHash);
+    setClosedPopupKey(keyHash);
+    setOpen(true);
+    if (highlightTimerRef.current != null) {
+      window.clearTimeout(highlightTimerRef.current);
+    }
+    highlightTimerRef.current = window.setTimeout(() => {
+      setSelectedDiagnosticKey(null);
+      highlightTimerRef.current = null;
+    }, 3000);
+  }
+
+  async function copyDiagnosticReport() {
+    const report = {
+      schema: "ident.diagnosticReport.v1",
+      copiedAtEpochMs: Date.now(),
+      ident: config.ident,
+      producer: capabilitiesEnvelope?.producer ?? null,
+      capabilities: capabilitiesEnvelope?.capabilities ?? null,
+      status: identStatus,
+      diagnostics,
+      receiver,
+      connectionStatus,
+      replay: {
+        enabled: replay.enabled,
+        mode: replay.mode,
+        availableFrom: replay.availableFrom,
+        availableTo: replay.availableTo,
+        blockSec: replay.blockSec,
+        blockCount: replay.blocks.length,
+      },
+    };
+    await navigator.clipboard?.writeText(JSON.stringify(report, null, 2));
+    setCopied(true);
+  }
+
+  useEffect(() => {
+    if (!copied) return;
+    const id = window.setTimeout(() => setCopied(false), 1600);
+    return () => window.clearTimeout(id);
+  }, [copied]);
+
+  useEffect(() => {
+    clearExpiredNotificationSuppressions();
+    const now = Date.now();
+    const nextExpiry = notificationSuppressions.reduce<number | null>(
+      (next, suppression) => {
+        if (suppression.ignored) return next;
+        const snoozedUntil = suppression.snoozedUntil;
+        if (typeof snoozedUntil !== "number" || snoozedUntil <= now) {
+          return next;
+        }
+        return next == null ? snoozedUntil : Math.min(next, snoozedUntil);
+      },
+      null,
+    );
+    if (nextExpiry == null) return;
+    const delay = Math.min(Math.max(nextExpiry - now + 1000, 0), 2_147_483_647);
+    const id = window.setTimeout(clearExpiredNotificationSuppressions, delay);
+    return () => window.clearTimeout(id);
+  }, [clearExpiredNotificationSuppressions, notificationSuppressions]);
+
+  useEffect(
+    () => () => {
+      if (highlightTimerRef.current != null) {
+        window.clearTimeout(highlightTimerRef.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -398,44 +522,96 @@ function DiagnosticsCenter({
   }
 
   return (
-    <div className="ml-auto h-full border-l border-chrome-line">
+    <div className={chromeClass}>
       <button
         ref={buttonRef}
         type="button"
         data-testid="diagnostics-center-button"
         aria-haspopup="dialog"
         aria-expanded={open}
+        aria-label="Open diagnostics"
         onClick={() => setOpen((value) => !value)}
         onKeyDown={onButtonKeyDown}
-        className={`flex h-full items-center gap-2 px-3.5 font-mono text-[10.5px] ${tone} hover:bg-paper-2 focus-visible:outline focus-visible:outline-1 focus-visible:outline-(--color-accent)`}
+        className={buttonClass}
       >
         <Bell className="h-3.5 w-3.5" aria-hidden="true" />
-        <span>{label}</span>
+        {variant === "status" && <span>{label}</span>}
+        {variant === "mobile" && hasDiagnostics && (
+          <span className="absolute -right-1 -top-1 grid h-4 min-w-4 place-items-center rounded-full border border-(--color-paper) bg-(--color-warn) px-1 text-[9px] font-semibold leading-none text-[#1b1e22]">
+            {notifications.length}
+          </span>
+        )}
       </button>
       {open && (
         <div
           ref={panelRef}
           role="dialog"
           aria-label="Diagnostics"
-          className="fixed right-2 bottom-8 z-[65] w-[min(420px,calc(100vw-16px))] border border-chrome-line bg-(--color-chrome-bg) shadow-lg font-mono text-[11px] text-chrome-ink"
+          className={panelClass}
         >
-          <div className="flex items-center justify-between border-b border-chrome-line px-3 py-2">
-            <span className="uppercase tracking-[0.08em] text-chrome-ink">
-              Diagnostics
-            </span>
-            <span className="text-chrome-ink-faint">{producerLabel}</span>
-          </div>
-          {notifications.length === 0 ? (
-            <div className="px-3 py-3 text-chrome-ink-soft">
-              No active diagnostics
+          <div className="flex items-center justify-between gap-3 border-b border-(--color-line) px-3 py-2">
+            <div className="min-w-0">
+              <div className="uppercase tracking-[0.08em] text-(--color-ink)">
+                Diagnostics
+              </div>
+              <div className="truncate text-ink-faint">
+                {producerLabel} · {identBuildLabel(config.ident)}
+              </div>
             </div>
+            <div className="flex shrink-0 items-center gap-1">
+              <Tooltip
+                label={showSuppressed ? "Hide ignored" : "Show ignored"}
+                side="top"
+              >
+                <button
+                  type="button"
+                  aria-label={showSuppressed ? "Hide ignored" : "Show ignored"}
+                  onClick={() => setShowSuppressed((value) => !value)}
+                  className="grid h-7 w-7 place-items-center text-ink-faint hover:bg-paper-2 hover:text-(--color-ink) focus-visible:outline focus-visible:outline-1 focus-visible:outline-(--color-accent)"
+                >
+                  {showSuppressed ? (
+                    <Bell className="h-3.5 w-3.5" aria-hidden="true" />
+                  ) : (
+                    <BellOff className="h-3.5 w-3.5" aria-hidden="true" />
+                  )}
+                </button>
+              </Tooltip>
+              <Tooltip
+                label={copied ? "Copied" : "Copy diagnostics"}
+                side="top"
+              >
+                <button
+                  type="button"
+                  aria-label="Copy diagnostics"
+                  onClick={copyDiagnosticReport}
+                  className={`grid h-7 w-7 place-items-center hover:bg-paper-2 focus-visible:outline focus-visible:outline-1 focus-visible:outline-(--color-accent) ${
+                    copied
+                      ? "text-(--color-live)"
+                      : "text-ink-faint hover:text-(--color-ink)"
+                  }`}
+                >
+                  {copied ? (
+                    <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                  ) : (
+                    <Copy className="h-3.5 w-3.5" aria-hidden="true" />
+                  )}
+                </button>
+              </Tooltip>
+            </div>
+          </div>
+          {panelRows.length === 0 ? (
+            <div className="px-3 py-3 text-ink-soft">No active diagnostics</div>
           ) : (
             <div className="max-h-72 overflow-auto py-1">
-              {notifications.map((diagnostic) => (
+              {panelRows.map(({ diagnostic, keyHash, suppression }) => (
                 <DiagnosticRow
-                  key={diagnosticIdentity(diagnostic)}
+                  key={keyHash}
+                  keyHash={keyHash}
                   diagnostic={diagnostic}
+                  highlighted={keyHash === selectedDiagnosticKey}
+                  suppression={suppression}
                   onSuppress={suppressDiagnostic}
+                  onRestore={clearNotificationSuppression}
                 />
               ))}
             </div>
@@ -444,8 +620,10 @@ function DiagnosticsCenter({
       )}
       {popupNotification && (
         <DiagnosticPopup
-          diagnostic={popupNotification}
-          onSuppress={suppressDiagnostic}
+          diagnostic={popupNotification.diagnostic}
+          onOpen={() => openDiagnostic(popupNotification.keyHash)}
+          onClose={() => setClosedPopupKey(popupNotification.keyHash)}
+          className={popupClass}
         />
       )}
     </div>
@@ -453,26 +631,57 @@ function DiagnosticsCenter({
 }
 
 function DiagnosticRow({
+  keyHash,
   diagnostic,
+  highlighted,
+  suppression,
   onSuppress,
+  onRestore,
 }: {
+  keyHash: string;
   diagnostic: IdentDiagnostic;
+  highlighted: boolean;
+  suppression: SuppressionState;
   onSuppress: (diagnostic: IdentDiagnostic, mode: "snooze" | "ignore") => void;
+  onRestore: (keyHash: string) => void;
 }) {
   return (
-    <div className="grid grid-cols-[72px_1fr] gap-x-3 border-b border-chrome-line/60 px-3 py-2 last:border-b-0">
+    <div
+      data-diagnostic-key={keyHash}
+      data-highlighted={highlighted ? "true" : "false"}
+      className={`grid grid-cols-[72px_1fr] gap-x-3 border-b border-(--color-line-soft) px-3 py-2 last:border-b-0 transition-colors ${
+        highlighted
+          ? "animate-[diagnostic-highlight-fade_3s_ease-out_forwards]"
+          : ""
+      }`}
+    >
       <span className={diagnosticSeverityClass(diagnostic.severity)}>
         {diagnostic.severity.toUpperCase()}
       </span>
       <div className="min-w-0">
-        <div className="truncate text-chrome-ink">{diagnostic.code}</div>
-        <div className="truncate text-chrome-ink-faint">
-          {diagnostic.channel}
-        </div>
-        <div className="mt-1 whitespace-normal text-chrome-ink-soft">
+        <div className="truncate text-(--color-ink)">{diagnostic.code}</div>
+        <div className="truncate text-ink-faint">{diagnostic.channel}</div>
+        <div className="mt-1 whitespace-normal text-ink-soft">
           {diagnostic.message}
         </div>
-        <DiagnosticActions diagnostic={diagnostic} onSuppress={onSuppress} />
+        {suppression && (
+          <div className="mt-1 text-ink-faint">
+            {suppression === "ignored"
+              ? "Ignored on this device"
+              : "Snoozed on this device"}
+          </div>
+        )}
+        {suppression ? (
+          <button
+            type="button"
+            className="mt-2 h-7 border border-(--color-line-strong) bg-paper px-2 text-ink-soft hover:bg-paper-2 hover:text-(--color-ink)"
+            onClick={() => onRestore(keyHash)}
+          >
+            Restore notifications
+          </button>
+        ) : (
+          <DiagnosticActions diagnostic={diagnostic} onSuppress={onSuppress} />
+        )}
       </div>
     </div>
   );
@@ -480,29 +689,61 @@ function DiagnosticRow({
 
 function DiagnosticPopup({
   diagnostic,
-  onSuppress,
+  onOpen,
+  onClose,
+  className,
 }: {
   diagnostic: IdentDiagnostic;
-  onSuppress: (diagnostic: IdentDiagnostic, mode: "snooze" | "ignore") => void;
+  onOpen: () => void;
+  onClose: () => void;
+  className: string;
 }) {
   return (
     <div
-      role="status"
       aria-live="polite"
       data-testid="notification-popup"
-      className="fixed right-2 bottom-10 z-[64] w-[min(360px,calc(100vw-16px))] border border-chrome-line bg-(--color-chrome-bg) shadow-lg font-mono text-[11px] text-chrome-ink"
+      className={className}
     >
-      <div className="border-b border-chrome-line px-3 py-2">
-        <div className={diagnosticSeverityClass(diagnostic.severity)}>
-          {diagnostic.severity.toUpperCase()}
+      <div className="px-3 py-2">
+        <div className="flex items-start justify-between gap-3">
+          <button
+            type="button"
+            aria-label="Open diagnostic details"
+            onClick={onOpen}
+            className="min-w-0 flex-1 text-left focus-visible:outline focus-visible:outline-1 focus-visible:outline-(--color-accent)"
+          >
+            <div className={diagnosticSeverityClass(diagnostic.severity)}>
+              {diagnostic.severity.toUpperCase()}
+            </div>
+            <div className="mt-1 text-(--color-ink)">{diagnostic.message}</div>
+            <div className="mt-1 truncate text-ink-faint">
+              {diagnostic.code}
+            </div>
+          </button>
+          <button
+            type="button"
+            aria-label="Close notification"
+            onClick={(event) => {
+              event.stopPropagation();
+              onClose();
+            }}
+            className="grid h-6 w-6 shrink-0 place-items-center text-ink-faint hover:bg-paper-2 hover:text-(--color-ink)"
+          >
+            <X className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
         </div>
-        <div className="mt-1 text-chrome-ink">{diagnostic.message}</div>
-        <div className="mt-1 truncate text-chrome-ink-faint">
-          {diagnostic.code}
-        </div>
-      </div>
-      <div className="px-3 pb-3">
-        <DiagnosticActions diagnostic={diagnostic} onSuppress={onSuppress} />
+        {diagnostic.action && (
+          <a
+            href={diagnostic.action.url}
+            target="_blank"
+            rel="noreferrer"
+            onClick={(event) => event.stopPropagation()}
+            className="mt-2 inline-flex h-7 items-center gap-1.5 border border-(--color-line-strong) px-2 text-(--color-ink) hover:bg-paper-2"
+          >
+            <ExternalLink className="h-3 w-3" aria-hidden="true" />
+            {diagnostic.action.label.trim() || "Open"}
+          </a>
+        )}
       </div>
     </div>
   );
@@ -517,27 +758,27 @@ function DiagnosticActions({
 }) {
   return (
     <div className="mt-2 flex flex-wrap items-center gap-2">
-      {diagnostic.actionUrl && (
+      {diagnostic.action && (
         <a
-          href={diagnostic.actionUrl}
+          href={diagnostic.action.url}
           target="_blank"
           rel="noreferrer"
-          className="inline-flex h-7 items-center gap-1.5 border border-chrome-line px-2 text-chrome-ink hover:bg-paper-2"
+          className="inline-flex h-7 items-center gap-1.5 border border-(--color-line-strong) bg-paper px-2 text-(--color-ink) hover:bg-paper-2"
         >
           <ExternalLink className="h-3 w-3" aria-hidden="true" />
-          {diagnostic.actionLabel?.trim() || "Open"}
+          {diagnostic.action.label.trim() || "Open"}
         </a>
       )}
       <button
         type="button"
-        className="h-7 border border-chrome-line px-2 text-chrome-ink-soft hover:bg-paper-2 hover:text-chrome-ink"
+        className="h-7 border border-(--color-line-strong) bg-paper px-2 text-ink-soft hover:bg-paper-2 hover:text-(--color-ink)"
         onClick={() => onSuppress(diagnostic, "snooze")}
       >
         Snooze 7 days
       </button>
       <button
         type="button"
-        className="h-7 border border-chrome-line px-2 text-chrome-ink-soft hover:bg-paper-2 hover:text-chrome-ink"
+        className="h-7 border border-(--color-line-strong) bg-paper px-2 text-ink-soft hover:bg-paper-2 hover:text-(--color-ink)"
         onClick={() => onSuppress(diagnostic, "ignore")}
       >
         Ignore on this device
@@ -559,6 +800,29 @@ function diagnosticCounts(diagnostics: IdentDiagnostic[]): {
     else info++;
   }
   return { error, warning, info };
+}
+
+function notificationSuppressionState(
+  keyHash: string,
+  suppressions: NotificationSuppression[],
+  now = Date.now(),
+): SuppressionState {
+  const trimmed = keyHash.trim();
+  if (!trimmed) return null;
+  const suppression = suppressions.find((item) => item.keyHash === trimmed);
+  if (!suppression) return null;
+  if (suppression.ignored) return "ignored";
+  return typeof suppression.snoozedUntil === "number" &&
+    suppression.snoozedUntil > now
+    ? "snoozed"
+    : null;
+}
+
+function identBuildLabel(ident: IdentBuildInfo | null): string {
+  const shortCommit = ident?.shortCommit?.trim();
+  if (shortCommit) return `Ident ${shortCommit}`;
+  const version = ident?.version?.trim();
+  return version ? `Ident ${version}` : "Ident unknown";
 }
 
 function diagnosticSummary(counts: {

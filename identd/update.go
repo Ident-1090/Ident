@@ -235,10 +235,14 @@ func (s UpdateStatus) Diagnostic() (diagnostic, bool) {
 	if version == "" {
 		return diagnostic{}, false
 	}
-	d := infoDiagnostic("update", "update.release.available", "Ident "+version+" is available")
+	d := diagnostic{
+		Severity: severityInfo,
+		Channel:  "update",
+		Code:     "update.release.available",
+		Message:  "Ident " + version + " is available",
+	}
 	if url := strings.TrimSpace(s.Latest.URL); url != "" {
-		d.ActionLabel = "Release notes"
-		d.ActionURL = url
+		d.Action = &diagnosticAction{Label: "Release notes", URL: url}
 	}
 	return d, true
 }

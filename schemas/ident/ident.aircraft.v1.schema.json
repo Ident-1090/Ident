@@ -4,27 +4,6 @@
     "schema": {
       "const": "ident.aircraft.v1"
     },
-    "producer": {
-      "type": "object",
-      "properties": {
-        "kind": {
-          "type": "string",
-          "enum": [
-            "readsb",
-            "dump1090-fa",
-            "skyaware978",
-            "unknown"
-          ]
-        },
-        "version": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "kind"
-      ],
-      "additionalProperties": false
-    },
     "observedAtEpochSec": {
       "type": "number"
     },
@@ -411,7 +390,6 @@
   "title": "Ident aircraft frame",
   "required": [
     "schema",
-    "producer",
     "observedAtEpochSec",
     "aircraft"
   ],

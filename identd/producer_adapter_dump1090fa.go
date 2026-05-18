@@ -20,22 +20,18 @@ func (dump1090FAAdapter) Detect(receiver producerReceiverJSON) (identProducer, b
 }
 
 func (dump1090FAAdapter) Capabilities(receiver producerReceiverJSON) identCapabilities {
-	caps := commonProducerCapabilities(receiver)
-	caps.MessageRate = capabilityProducerProvided
-	caps.Gain = capabilityProducerProvided
-	caps.Uptime = capabilityProducerProvided
-	caps.MaxRange = capabilityIdentDerived
-	return caps
+	return commonProducerCapabilities(receiver)
 }
 
-func (dump1090FAAdapter) StatusFromStats(producer identProducer, stats producerStatsJSON) (identStatus, bool) {
-	status := newIdentStatus(producer)
+func (dump1090FAAdapter) StatusFromStats(_ identProducer, stats producerStatsJSON) (identStatus, []diagnostic, bool) {
+	status := newIdentStatus()
+	var diagnostics []diagnostic
 	if stats.Last1Min.Messages != nil {
 		if rate, basisSec, ok := statsWindowRate(stats.Last1Min, *stats.Last1Min.Messages); ok {
 			status.MessageRate = messageRateProvided("stats_last1min_messages", messageRateStatusValue{Hz: rate, BasisSec: basisSec})
 		} else {
 			status.MessageRate = messageRateUnavailable(reasonMalformedFile)
-			status.Diagnostics = append(status.Diagnostics, warningDiagnostic("stats", "stats.dump1090fa.missing_window_duration", "stats window is missing start/end"))
+			diagnostics = append(diagnostics, warningDiagnostic("stats", "stats.dump1090fa.missing_window_duration", "stats window is missing start/end"))
 		}
 	}
 	if stats.Last1Min.Local.GainDB != nil {
@@ -44,7 +40,7 @@ func (dump1090FAAdapter) StatusFromStats(producer identProducer, stats producerS
 	if stats.Last1Min.End != nil && stats.Total.Start != nil {
 		status.Uptime = uptimeProvided("window_end_minus_total_start", uptimeStatusValue{Sec: *stats.Last1Min.End - *stats.Total.Start, Subject: "receiver"})
 	}
-	return status, status.MessageRate != nil || status.Gain != nil || status.Uptime != nil
+	return status, diagnostics, status.MessageRate != nil || status.Gain != nil || status.Uptime != nil
 }
 
 func (dump1090FAAdapter) AircraftFrame(frame producerAircraftJSON) (identAircraftFrame, []diagnostic, bool) {

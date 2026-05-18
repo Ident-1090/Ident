@@ -5,6 +5,7 @@ import type {
   AircraftFrame,
   IdentCapabilitiesEnvelope,
   IdentConfig,
+  IdentDiagnosticsEnvelope,
   IdentRangeOutline,
   IdentReplayAvailability,
   IdentRoutes,
@@ -22,6 +23,7 @@ type Envelope =
   | { type: "aircraft"; data: AircraftFrame }
   | { type: "capabilities"; data: IdentCapabilitiesEnvelope }
   | { type: "status"; data: IdentStatus }
+  | { type: "diagnostics"; data: IdentDiagnosticsEnvelope }
   | { type: "rangeOutline"; data: IdentRangeOutline }
   | { type: "config"; data: IdentConfig }
   | { type: "routes"; data: IdentRoutes }
@@ -62,6 +64,9 @@ function dispatch(env: Envelope): void {
     case "status":
       store.ingestStatus(env.data);
       break;
+    case "diagnostics":
+      store.ingestDiagnostics(env.data.diagnostics ?? []);
+      break;
     case "rangeOutline":
       store.ingestRangeOutline(env.data);
       break;
@@ -94,7 +99,10 @@ function dispatch(env: Envelope): void {
     }
     case "config":
       if (env.data) {
-        store.ingestConfig({ station: env.data.station ?? null });
+        store.ingestConfig({
+          station: env.data.station ?? null,
+          ident: env.data.ident ?? null,
+        });
         store.setLosData(env.data.lineOfSight ?? null);
       }
       break;

@@ -1,4 +1,5 @@
 import { findIcaoCountry } from "../data/icaoCountry";
+import type { FilterExpressionState } from "../data/predicates";
 import type { FilterSlice } from "../data/store";
 import type { Aircraft, CategoryKey, RouteInfo } from "../data/types";
 
@@ -7,7 +8,6 @@ export const KEYWORDS = [
   "emergency",
   "military",
   "ground",
-  "!ground",
   "nopos",
   "haspos",
   "inview",
@@ -267,7 +267,6 @@ export interface DerivedFilterQuery {
   clauses: string[];
   text: string;
   invalidClauses: string[];
-  expressionBranches: FilterSlice[] | null;
 }
 
 export interface QueryFieldFocus {
@@ -307,17 +306,23 @@ interface FilterExpressionOr {
   terms: FilterExpression[];
 }
 
+interface FilterExpressionNot {
+  kind: "not";
+  term: FilterExpression;
+}
+
 type FilterExpression =
   | FilterExpressionClause
   | FilterExpressionAnd
-  | FilterExpressionOr;
+  | FilterExpressionOr
+  | FilterExpressionNot;
 
 export function isStructuredQuery(input: string): boolean {
   return parseOmniboxQuery(input).kind === "filter";
 }
 
 function lexQueryParts(input: string): QueryPart[] {
-  return [...input.matchAll(/[()|&]|[^()\s|&]+/g)].map((match) => {
+  return [...input.matchAll(/[()|&!]|[^()\s|&!]+/g)].map((match) => {
     const start = match.index ?? 0;
     return {
       text: match[0],
@@ -328,7 +333,9 @@ function lexQueryParts(input: string): QueryPart[] {
 }
 
 function isLogicalSyntaxPart(part: string): boolean {
-  return part === "(" || part === ")" || part === "|" || part === "&";
+  return (
+    part === "(" || part === ")" || part === "|" || part === "&" || part === "!"
+  );
 }
 
 export function parseOmniboxQuery(input: string): ParsedOmniboxQuery {
@@ -413,7 +420,6 @@ export function deriveFilterFromQuery(
       clauses: [],
       text: parsed.body,
       invalidClauses: [],
-      expressionBranches: null,
     };
   }
 
@@ -430,24 +436,28 @@ export function deriveFilterFromQuery(
     }
   }
 
-  let expressionBranches: FilterSlice[] | null = null;
+  let expressionNode: FilterExpressionState | null = null;
   if (parsed.usesLogicalSyntax) {
     const expression = parseFilterExpression(parsed.expressionParts);
     if (expression.node) {
-      const result = buildExpressionBranches(expression.node, baseFilter);
-      expressionBranches = result.branches.length > 0 ? result.branches : null;
-      invalidClauses.push(...result.invalidClauses);
+      const builtExpression = buildFilterExpression(
+        expression.node,
+        baseFilter,
+      );
+      expressionNode = builtExpression.node;
+      invalidClauses.push(...builtExpression.invalidClauses);
     }
     invalidClauses.push(...expression.invalidParts);
   }
 
   return {
     kind: "filter",
-    filter: expressionBranches ? { ...baseFilter, expressionBranches } : filter,
+    filter: expressionNode
+      ? { ...baseFilter, expression: expressionNode }
+      : filter,
     clauses: parsed.clauses,
     text: parsed.text,
     invalidClauses,
-    expressionBranches,
   };
 }
 
@@ -467,7 +477,9 @@ function parseFilterExpression(parts: string[]): {
   }
 
   function startsPrimary(part: string | undefined): boolean {
-    return part === "(" || (part != null && isRecognizedClause(part));
+    return (
+      part === "(" || part === "!" || (part != null && isRecognizedClause(part))
+    );
   }
 
   function parsePrimary(): FilterExpression | null {
@@ -494,7 +506,7 @@ function parseFilterExpression(parts: string[]): {
 
   function parseAnd(): FilterExpression | null {
     const terms: FilterExpression[] = [];
-    const first = parsePrimary();
+    const first = parseUnary();
     if (first) terms.push(first);
 
     while (index < parts.length) {
@@ -502,12 +514,12 @@ function parseFilterExpression(parts: string[]): {
       if (part === ")" || part === "|") break;
       if (part === "&") {
         consume();
-        const next = parsePrimary();
+        const next = parseUnary();
         if (next) terms.push(next);
         continue;
       }
       if (startsPrimary(part)) {
-        const next = parsePrimary();
+        const next = parseUnary();
         if (next) terms.push(next);
         continue;
       }
@@ -519,6 +531,17 @@ function parseFilterExpression(parts: string[]): {
 
     if (terms.length === 0) return null;
     return terms.length === 1 ? terms[0] : { kind: "and", terms };
+  }
+
+  function parseUnary(): FilterExpression | null {
+    if (peek() !== "!") return parsePrimary();
+    consume();
+    const term = parseUnary();
+    if (!term) {
+      invalidParts.push("!");
+      return null;
+    }
+    return { kind: "not", term };
   }
 
   function parseOr(): FilterExpression | null {
@@ -545,59 +568,50 @@ function parseFilterExpression(parts: string[]): {
   return { node, invalidParts };
 }
 
-function clauseBranchesForExpression(node: FilterExpression): string[][] {
-  if (node.kind === "clause") return [[node.raw]];
-  if (node.kind === "or") {
-    return node.terms.flatMap((term) => clauseBranchesForExpression(term));
-  }
-
-  let branches: string[][] = [[]];
-  for (const term of node.terms) {
-    const termBranches = clauseBranchesForExpression(term);
-    const nextBranches: string[][] = [];
-    for (const branch of branches) {
-      for (const termBranch of termBranches) {
-        nextBranches.push([...branch, ...termBranch]);
-      }
-    }
-    branches = nextBranches;
-  }
-  return branches;
-}
-
 function cloneFilter(baseFilter: FilterSlice): FilterSlice {
   return {
     ...baseFilter,
     categories: { ...baseFilter.categories },
-    expressionBranches: null,
+    expression: null,
   };
 }
 
-function buildExpressionBranches(
+function buildFilterExpression(
   node: FilterExpression,
   baseFilter: FilterSlice,
-): { branches: FilterSlice[]; invalidClauses: string[] } {
-  const branches: FilterSlice[] = [];
-  const invalidClauses: string[] = [];
-
-  for (const clauses of clauseBranchesForExpression(node)) {
-    let filter = cloneFilter(baseFilter);
-    let validBranch = true;
-    for (const clause of clauses) {
-      const token = tokenize(clause);
-      if (!token) continue;
-      const next = applyToken(filter, token);
-      if (!next.applied) {
-        invalidClauses.push(clause);
-        validBranch = false;
-        break;
-      }
-      filter = next.filter;
-    }
-    if (validBranch) branches.push(filter);
+): { node: FilterExpressionState | null; invalidClauses: string[] } {
+  if (node.kind === "clause") {
+    const token = tokenize(node.raw);
+    if (!token) return { node: null, invalidClauses: [node.raw] };
+    const next = applyToken(cloneFilter(baseFilter), token);
+    if (!next.applied) return { node: null, invalidClauses: [node.raw] };
+    return {
+      node: { kind: "clause", filter: next.filter },
+      invalidClauses: [],
+    };
   }
 
-  return { branches, invalidClauses };
+  if (node.kind === "not") {
+    const built = buildFilterExpression(node.term, baseFilter);
+    return {
+      node: built.node ? { kind: "not", term: built.node } : null,
+      invalidClauses: built.invalidClauses,
+    };
+  }
+
+  const terms: FilterExpressionState[] = [];
+  const invalidClauses: string[] = [];
+  for (const term of node.terms) {
+    const built = buildFilterExpression(term, baseFilter);
+    if (built.node) terms.push(built.node);
+    invalidClauses.push(...built.invalidClauses);
+  }
+
+  if (terms.length === 0) return { node: null, invalidClauses };
+  return {
+    node: terms.length === 1 ? terms[0] : { kind: node.kind, terms },
+    invalidClauses,
+  };
 }
 
 export function parseFieldFocusInQuery(input: string): QueryFieldFocus | null {
@@ -619,6 +633,7 @@ export function completeFilterClause(input: string, clause: string): string {
   if (current.text === "(" || current.text === "|" || current.text === "&") {
     return `${trimmedEnd}${normalizedClause}`;
   }
+  if (current.text === "!") return `${trimmedEnd}${normalizedClause}`;
   if (current.text === ")") {
     return `${trimmedEnd} ${normalizedClause}`;
   }
@@ -839,6 +854,7 @@ export function buildLiveFieldSuggestions(
     // Most-recently-seenSec: lowest `seen` value wins. We can't dedupe-by-freq
     // since hexes are unique; sort by seen ascending instead.
     const sorted = [...aircraftMap.values()]
+      .filter((ac) => !ac.hex.startsWith("~"))
       .slice()
       .sort((a, b) => (a.seenSec ?? Infinity) - (b.seenSec ?? Infinity))
       .slice(0, 10);
@@ -974,9 +990,7 @@ export function applyToken(filter: FilterSlice, token: Token): ApplyResult {
       case "emergency":
         return { filter: { ...filter, emergOnly: true }, applied: true };
       case "ground":
-        return { filter: { ...filter, hideGround: false }, applied: true };
-      case "!ground":
-        return { filter: { ...filter, hideGround: true }, applied: true };
+        return { filter: { ...filter, groundOnly: true }, applied: true };
       case "haspos":
         return { filter: { ...filter, hasPosOnly: true }, applied: true };
       case "nopos":
@@ -1082,8 +1096,7 @@ export function applyToken(filter: FilterSlice, token: Token): ApplyResult {
       }
       return { filter, applied: false };
     }
-    // TODO(compose): compose operators `&`, `|`, `!` require an expression
-    // tree and are intentionally unhandled here.
+    // Logical operators are parsed before individual clauses are applied.
     return { filter, applied: false };
   }
   return { filter, applied: false };
