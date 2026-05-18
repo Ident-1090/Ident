@@ -27,30 +27,30 @@
   },
   "dependencies": {
     "cmdk": "^1.1.1",
-    "country-flag-icons": "^1.6.16",
-    "lucide-react": "^1.11.0",
-    "react": "^19.2.5",
-    "react-dom": "^19.2.5",
+    "country-flag-icons": "^1.6.17",
+    "lucide-react": "^1.16.0",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
     "ts-pattern": "^5.9.0",
-    "zustand": "^5.0.12"
+    "zustand": "^5.0.13"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.4.13",
-    "@tailwindcss/vite": "^4.2.4",
-    "@types/node": "^25.6.0",
+    "@biomejs/biome": "2.4.15",
+    "@tailwindcss/vite": "^4.3.0",
+    "@types/node": "^25.8.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vite-pwa/assets-generator": "^1.0.2",
     "@vitejs/plugin-react": "^5.2.0",
     "ajv": "^8.20.0",
     "husky": "9.1.7",
-    "jsdom": "^29.1.0",
+    "jsdom": "^29.1.1",
     "json-schema-to-typescript": "^15.0.4",
     "lint-staged": "16.4.0",
     "maplibre-gl": "^5.24.0",
-    "tailwindcss": "^4.2.4",
+    "tailwindcss": "^4.3.0",
     "typescript": "^6.0.3",
-    "vite": "^6.4.2",
-    "vitest": "^4.1.5"
+    "vite": "^8.0.13",
+    "vitest": "^4.1.6"
   }
 }

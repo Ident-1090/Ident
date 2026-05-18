@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM --platform=$BUILDPLATFORM node:25-bookworm AS web
+FROM --platform=$BUILDPLATFORM node:26-bookworm AS web
 WORKDIR /src/ident
 COPY ident/package.json ident/pnpm-lock.yaml ./
 RUN PNPM_VERSION="$(node -p 'require("./package.json").packageManager.split("@").pop()')" \
