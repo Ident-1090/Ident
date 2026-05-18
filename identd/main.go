@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -40,6 +40,7 @@ type Config struct {
 	ReceiverFile               string
 	StatsFile                  string
 	OutlineFile                string
+	UpstreamType               string
 	DebounceMs                 int
 	RouteUpstreamURL           string
 	RouteTTL                   time.Duration
@@ -68,15 +69,17 @@ type Config struct {
 func main() {
 	cfg, err := loadConfigFrom(os.Args[1:], os.Getenv)
 	if err != nil {
-		log.Fatalf("config: %v", err)
+		slog.Error("config", "err", err)
+		os.Exit(1)
 	}
-	log.Printf("identd addr=%s data=%s", cfg.Addr, cfg.DataDir)
+	slog.Info("identd", "addr", cfg.Addr, "data", cfg.DataDir)
 
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
 
 	if err := run(context.Background(), cfg, sigs); err != nil {
-		log.Fatalf("run: %v", err)
+		slog.Error("run", "err", err)
+		os.Exit(1)
 	}
 }
 
@@ -84,22 +87,19 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 
-	channels := []channelSpec{
+	producerFiles := []channelSpec{
 		{"aircraft", cfg.AircraftFile},
 		{"receiver", cfg.ReceiverFile},
 		{"stats", cfg.StatsFile},
 		{"outline", cfg.OutlineFile},
 	}
 
-	// `config` is a hub channel too — one snapshot envelope published once at
-	// startup and cached for snapshot-on-connect. Not file-watched.
-	hubNames := make([]string, 0, len(channels)+2)
-	hubNames = append(hubNames, "config")
-	hubNames = append(hubNames, "replay.availability")
-	for _, c := range channels {
-		hubNames = append(hubNames, c.name)
-	}
+	// Hub channels cache snapshot envelopes for new clients. Some are backed by
+	// watched producer files; config and replay availability are published by
+	// identd itself.
+	hubNames := []string{"config", "capabilities", "status", "aircraft", "rangeOutline", "replay.availability"}
 	hub := NewHub(hubNames)
+	statusNormalizer := NewProducerStatusNormalizerWithUpstreamType(cfg.UpstreamType)
 
 	lineOfSightCache := NewLOSCache(LOSOptions{
 		PanoramaID: cfg.LineOfSightPanoramaID,
@@ -107,7 +107,7 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 	})
 	lineOfSight, err := lineOfSightCache.Load(ctx)
 	if err != nil {
-		log.Printf("line_of_sight: %v", err)
+		slog.Warn("lineOfSight", "err", err)
 	}
 
 	publishConfigEnvelope(hub, cfg, lineOfSight)
@@ -120,25 +120,28 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 	hub.SetRouteProvider(routes.RouteSnapshots)
 	routes.Run(ctx)
 
+	startupDiagnostics := NewDiagnosticCollector()
 	trails := NewTrailStore(TrailOptions{
-		MemoryWindow:    cfg.TrailsMemoryWindow,
-		SampleInterval:  cfg.TrailsSampleInterval,
-		RestartCacheDir: cfg.TrailsRestartCacheDir,
+		MemoryWindow:       cfg.TrailsMemoryWindow,
+		SampleInterval:     cfg.TrailsSampleInterval,
+		RestartCacheDir:    cfg.TrailsRestartCacheDir,
+		StartupDiagnostics: startupDiagnostics,
 	})
 	if cfg.TrailsRestartCache {
 		if err := trails.LoadRestartCache(); err != nil {
-			log.Printf("trails restart cache: %v", err)
+			slog.Warn("trails restart cache", "err", err, "path", cfg.TrailsRestartCacheDir)
 		}
 		go trails.RunRestartCacheWriter(ctx, cfg.TrailsRestartCacheInterval)
 	}
 
 	replay, err := NewReplayStore(ReplayOptions{
-		Enabled:        cfg.ReplayEnable,
-		Dir:            cfg.ReplayDir,
-		Retention:      cfg.ReplayRetention,
-		MaxBytes:       cfg.ReplayMaxBytes,
-		BlockDuration:  cfg.ReplayBlockDuration,
-		SampleInterval: cfg.ReplaySampleInterval,
+		Enabled:            cfg.ReplayEnable,
+		Dir:                cfg.ReplayDir,
+		Retention:          cfg.ReplayRetention,
+		MaxBytes:           cfg.ReplayMaxBytes,
+		BlockDuration:      cfg.ReplayBlockDuration,
+		SampleInterval:     cfg.ReplaySampleInterval,
+		StartupDiagnostics: startupDiagnostics,
 		OnAvailability: func(manifest ReplayManifest) {
 			publishReplayAvailabilityEnvelope(hub, manifest)
 		},
@@ -149,13 +152,13 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 	if err := replay.Load(); err != nil {
 		return err
 	}
+	publishStartupDiagnostics(hub, statusNormalizer, startupDiagnostics.Drain())
 
 	srv := NewServerWithOptions(ctx, hub, ServerOptions{
-		BasePath:      cfg.BasePath,
-		Web:           bundledWeb(),
-		UpdateChecker: NewUpdateChecker(updateCheckerOptions(cfg)),
-		Replay:        replay,
-		Trails:        trails,
+		BasePath: cfg.BasePath,
+		Web:      bundledWeb(),
+		Replay:   replay,
+		Trails:   trails,
 	})
 	httpSrv := &http.Server{
 		Addr:         cfg.Addr,
@@ -167,17 +170,19 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 	var wg sync.WaitGroup
 	debounce := time.Duration(cfg.DebounceMs) * time.Millisecond
 
-	readiness := make(chan string, len(channels))
-	for _, c := range channels {
+	readiness := make(chan string, len(producerFiles))
+	for _, c := range producerFiles {
 		c := c
 		path := filepath.Join(cfg.DataDir, c.file)
 		w := NewWatcher(path, debounce, func(b []byte) {
-			hub.Publish(c.name, b)
+			aircraftFrame := publishProducerUpdate(hub, statusNormalizer, c.name, b)
 			if c.name == "aircraft" {
-				hub.PublishEnvelope(trails.IngestAircraftJSON(b), "trails")
-				replay.IngestAircraftJSON(b)
-				if cs := extractAircraftCallsigns(b); len(cs) > 0 {
-					routes.Track(cs)
+				if aircraftFrame != nil {
+					hub.PublishEnvelope(trails.IngestAircraftFrame(*aircraftFrame), "trails")
+					replay.IngestAircraftFrame(*aircraftFrame)
+					if cs := extractAircraftCallsignsFromFrame(*aircraftFrame); len(cs) > 0 {
+						routes.Track(cs)
+					}
 				}
 			}
 			select {
@@ -189,7 +194,7 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 		go func() {
 			defer wg.Done()
 			if err := w.Run(ctx); err != nil {
-				log.Printf("watcher %s: %v", c.name, err)
+				slog.Warn("watcher", "name", c.name, "path", path, "err", err)
 			}
 		}()
 	}
@@ -203,15 +208,19 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 	}()
 
 	go func() {
-		log.Printf("listening on %s", cfg.Addr)
+		slog.Info("listening", "addr", cfg.Addr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("http: %v", err)
+			slog.Error("http", "err", err, "addr", cfg.Addr)
 		}
 	}()
 
+	if cfg.UpdateCheck {
+		go runUpdateDiagnostics(ctx, hub, statusNormalizer, NewUpdateChecker(updateCheckerOptions(cfg)), cfg.UpdateInterval)
+	}
+
 	select {
 	case <-sigs:
-		log.Printf("shutdown signal")
+		slog.Info("shutdown signal")
 	case <-ctx.Done():
 	}
 
@@ -224,6 +233,13 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 
 	wg.Wait()
 	return nil
+}
+
+func publishStartupDiagnostics(hub *Hub, normalizer *ProducerStatusNormalizer, diagnostics []diagnostic) {
+	if len(diagnostics) == 0 {
+		return
+	}
+	hub.PublishSnapshotEnvelope("status", normalizer.DiagnosticStatusEnvelope(diagnostics...))
 }
 
 func loadConfig() Config {
@@ -243,6 +259,7 @@ func loadConfigFrom(args []string, getenv func(string) string) (Config, error) {
 		ReceiverFile:               envOr(getenv, "IDENT_RECEIVER_FILE", "receiver.json"),
 		StatsFile:                  envOr(getenv, "IDENT_STATS_FILE", "stats.json"),
 		OutlineFile:                envOr(getenv, "IDENT_OUTLINE_FILE", "outline.json"),
+		UpstreamType:               strings.TrimSpace(getenv("IDENT_UPSTREAM_TYPE")),
 		DebounceMs:                 75,
 		RouteUpstreamURL:           envOr(getenv, "IDENT_RELAY_ROUTE_UPSTREAM", defaultRouteUpstreamURL),
 		RouteTTL:                   time.Duration(envInt(getenv, "IDENT_RELAY_ROUTE_TTL_SEC", 300)) * time.Second,
@@ -276,6 +293,7 @@ func loadConfigFrom(args []string, getenv func(string) string) (Config, error) {
 	flags.StringVar(&cfg.ReceiverFile, "receiver-file", cfg.ReceiverFile, "receiver JSON file name")
 	flags.StringVar(&cfg.StatsFile, "stats-file", cfg.StatsFile, "stats JSON file name")
 	flags.StringVar(&cfg.OutlineFile, "outline-file", cfg.OutlineFile, "outline JSON file name")
+	flags.StringVar(&cfg.UpstreamType, "upstream-type", cfg.UpstreamType, "receiver data upstream type")
 	flags.StringVar(&cfg.StationName, "station-name", cfg.StationName, "display name for the receiver")
 	flags.StringVar(&cfg.RouteUpstreamURL, "route-upstream", cfg.RouteUpstreamURL, "route lookup endpoint")
 	flags.StringVar(&cfg.LineOfSightPanoramaID, "line-of-sight-panorama-id", cfg.LineOfSightPanoramaID, "HeyWhatsThat panorama ID for line-of-sight rings")
@@ -305,23 +323,27 @@ func loadConfigFrom(args []string, getenv func(string) string) (Config, error) {
 	return cfg, nil
 }
 
+type identReplayAvailability struct {
+	Schema      string `json:"schema"`
+	Enabled     bool   `json:"enabled"`
+	FromEpochMs *int64 `json:"fromEpochMs,omitempty"`
+	ToEpochMs   *int64 `json:"toEpochMs,omitempty"`
+	BlockSec    int64  `json:"blockSec"`
+	BlockCount  int    `json:"blockCount"`
+}
+
 func publishReplayAvailabilityEnvelope(hub *Hub, manifest ReplayManifest) {
-	payload := struct {
-		Enabled  bool   `json:"enabled"`
-		From     *int64 `json:"from"`
-		To       *int64 `json:"to"`
-		BlockSec int64  `json:"block_sec"`
-		Blocks   int    `json:"blocks"`
-	}{
-		Enabled:  manifest.Enabled,
-		From:     manifest.From,
-		To:       manifest.To,
-		BlockSec: manifest.BlockSec,
-		Blocks:   len(manifest.Blocks),
+	payload := identReplayAvailability{
+		Schema:      "ident.replay.availability.v1",
+		Enabled:     manifest.Enabled,
+		FromEpochMs: manifest.From,
+		ToEpochMs:   manifest.To,
+		BlockSec:    manifest.BlockSec,
+		BlockCount:  len(manifest.Blocks),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		log.Printf("replay availability: marshal: %v", err)
+		slog.Error("replay availability: marshal", "err", err)
 		return
 	}
 	hub.Publish("replay.availability", body)
@@ -338,20 +360,81 @@ func updateCheckerOptions(cfg Config) UpdateCheckerOptions {
 	}
 }
 
+func runUpdateDiagnostics(ctx context.Context, hub *Hub, normalizer *ProducerStatusNormalizer, checker *UpdateChecker, interval time.Duration) {
+	if checker == nil {
+		return
+	}
+	if interval <= 0 {
+		interval = defaultUpdateInterval
+	}
+	var lastDiag *diagnostic
+	for {
+		env, current := nextUpdateDiagnosticEnvelope(ctx, normalizer, checker, lastDiag)
+		if env != nil {
+			hub.PublishSnapshotEnvelope("status", env)
+		}
+		lastDiag = current
+		timer := time.NewTimer(interval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
+		}
+	}
+}
+
+// nextUpdateDiagnosticEnvelope returns the envelope to publish (nil when the
+// update status has not changed since lastDiag) and the diagnostic the caller
+// should treat as the new baseline. The status envelope itself carries an
+// observedAt timestamp that changes every tick, so dedup happens on the
+// underlying diagnostic content rather than the envelope bytes.
+func nextUpdateDiagnosticEnvelope(ctx context.Context, normalizer *ProducerStatusNormalizer, checker *UpdateChecker, lastDiag *diagnostic) ([]byte, *diagnostic) {
+	status := checker.Status(ctx)
+	var current *diagnostic
+	if d, ok := status.Diagnostic(); ok {
+		current = &d
+	}
+	if diagnosticPtrEqual(current, lastDiag) {
+		return nil, lastDiag
+	}
+	var diagnostics []diagnostic
+	if current != nil {
+		diagnostics = []diagnostic{*current}
+	}
+	env := normalizer.SetExternalDiagnostics("update", diagnostics)
+	return env, current
+}
+
+// diagnosticPtrEqual relies on `diagnostic` being a value-equality-safe
+// struct (only comparable fields — strings, ints, bools). Adding a slice
+// or map field would make `*a == *b` either fail to compile (good) or
+// drift to identity semantics (bad). Audit this if `diagnostic` grows.
+func diagnosticPtrEqual(a, b *diagnostic) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
 // publishConfigEnvelope caches the one-shot runtime config snapshot on the
 // hub so every connecting client receives it. Fields left blank are omitted
 // so the client falls back to its own derivation logic.
+type identConfig struct {
+	Schema      string          `json:"schema"`
+	Station     string          `json:"station,omitempty"`
+	LineOfSight json.RawMessage `json:"lineOfSight,omitempty"`
+}
+
 func publishConfigEnvelope(hub *Hub, cfg Config, lineOfSight []byte) {
-	payload := struct {
-		Station     string          `json:"station,omitempty"`
-		LineOfSight json.RawMessage `json:"line_of_sight,omitempty"`
-	}{
+	payload := identConfig{
+		Schema:      "ident.config.v1",
 		Station:     cfg.StationName,
 		LineOfSight: json.RawMessage(lineOfSight),
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		log.Printf("config: marshal: %v", err)
+		slog.Error("config: marshal", "err", err)
 		return
 	}
 	hub.Publish("config", body)
@@ -409,19 +492,7 @@ func detectReceiverDataDir(candidates []string) string {
 	return "/run/readsb"
 }
 
-// extractAircraftCallsigns parses just the `.aircraft[].flight` field out
-// of a readsb aircraft.json payload. Parse errors / missing fields return
-// an empty slice — the route cache tolerates noise. Blank flight values
-// and whitespace-only entries are skipped.
-func extractAircraftCallsigns(b []byte) []string {
-	var frame struct {
-		Aircraft []struct {
-			Flight string `json:"flight"`
-		} `json:"aircraft"`
-	}
-	if err := json.Unmarshal(b, &frame); err != nil {
-		return nil
-	}
+func extractAircraftCallsignsFromFrame(frame identAircraftFrame) []string {
 	out := make([]string, 0, len(frame.Aircraft))
 	for _, a := range frame.Aircraft {
 		if cs := normalizeCallsign(a.Flight); cs != "" {

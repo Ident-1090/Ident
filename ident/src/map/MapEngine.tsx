@@ -16,7 +16,7 @@ import { useIdentStore } from "../data/store";
 import type {
   HeyWhatsThatJson,
   HeyWhatsThatRing,
-  OutlineJson,
+  IdentRangeOutline,
 } from "../data/types";
 import { altLosColor } from "./alt";
 import { circleRing } from "./geodesic";
@@ -97,36 +97,12 @@ function rangeRingsGeoJson(center: {
   };
 }
 
-// Readsb outline points are [lat, lng, maxAltFt]. Cascade fallback: prefer
-// `alltime`, then `last24h`, then the first bucket available, then top-level
-// `points` (which are [lat, lng]).
-function outlineRing(
-  outline: OutlineJson | null,
-): Array<[number, number]> | null {
-  if (!outline) return null;
-  const buckets = outline.actualRange ?? {};
-  const candidates: Array<Array<[number, number, number]> | undefined> = [
-    buckets.alltime?.points,
-    buckets.last24h?.points,
-  ];
-  for (const key of Object.keys(buckets)) {
-    if (key === "alltime" || key === "last24h") continue;
-    candidates.push(buckets[key]?.points);
-  }
-  for (const pts of candidates) {
-    if (pts && pts.length >= 3) return pts.map(([lat, lng]) => [lng, lat]);
-  }
-  if (outline.points && outline.points.length >= 3) {
-    return outline.points.map(([lat, lng]) => [lng, lat]);
-  }
-  return null;
-}
-
 function rxRangeGeoJson(
-  outline: OutlineJson | null,
+  rangeOutline: IdentRangeOutline | null,
 ): GeoJSON.FeatureCollection {
-  const ring = outlineRing(outline);
-  if (!ring) return { type: "FeatureCollection", features: [] };
+  if (!rangeOutline || rangeOutline.coordinates.length < 3)
+    return { type: "FeatureCollection", features: [] };
+  const ring = rangeOutline.coordinates;
   // Close the polygon if the source ring isn't already closed.
   const first = ring[0];
   const last = ring[ring.length - 1];
@@ -185,7 +161,7 @@ export function MapEngine({ children }: MapEngineProps): ReactElement {
   const theme = useIdentStore((s) => s.settings.theme);
   const layers = useIdentStore((s) => s.map.layers);
   const receiver = useIdentStore((s) => s.receiver);
-  const outline = useIdentStore((s) => s.outline);
+  const rangeOutline = useIdentStore((s) => s.rangeOutline);
   const losData = useIdentStore((s) => s.losData);
 
   // Store center/zoom used only for initial placement; moveend writes back.
@@ -297,7 +273,7 @@ export function MapEngine({ children }: MapEngineProps): ReactElement {
     const siteCenter = receiverCenter(receiver);
     const rangeRingsData =
       layers.rangeRings && siteCenter ? rangeRingsGeoJson(siteCenter) : null;
-    const rxRangeData = layers.rxRange ? rxRangeGeoJson(outline) : null;
+    const rxRangeData = layers.rxRange ? rxRangeGeoJson(rangeOutline) : null;
     const losRingsData = layers.losRings ? losGeoJson(losData) : null;
 
     const apply = (): void => {
@@ -336,7 +312,7 @@ export function MapEngine({ children }: MapEngineProps): ReactElement {
     layers.rxRange,
     layers.losRings,
     receiver,
-    outline,
+    rangeOutline,
     losData,
   ]);
 

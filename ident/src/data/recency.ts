@@ -10,7 +10,7 @@ export function aircraftRecency(
   replaying: boolean,
 ): RecencyTier {
   if (replaying) return "replay";
-  const seen = aircraft.seen;
+  const seen = aircraft.seenSec;
   if (seen != null && seen <= RECENCY_LIVE_MAX_SEC) return "live";
   if (seen != null && seen <= RECENCY_STALE_MAX_SEC) return "stale";
   return "lost";

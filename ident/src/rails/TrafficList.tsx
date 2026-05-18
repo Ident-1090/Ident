@@ -83,8 +83,7 @@ export function TrafficList({ onAircraftSelect }: TrafficListProps = {}) {
     (s) =>
       s.liveState.lastMsgTs > 0 ||
       s.receiver != null ||
-      s.stats != null ||
-      s.outline != null ||
+      s.rangeOutline != null ||
       selectDisplayAircraftMap(s).size > 0,
   );
   const units = resolveUnitOverrides(settings.unitMode, settings.unitOverrides);
@@ -124,8 +123,8 @@ export function TrafficList({ onAircraftSelect }: TrafficListProps = {}) {
       if (receiver && ac.lat != null && ac.lon != null) {
         dist = haversineNm(receiver.lat, receiver.lon, ac.lat, ac.lon);
       }
-      const isGround = ac.alt_baro === "ground" || ac.airground === 1;
-      const altNum = typeof ac.alt_baro === "number" ? ac.alt_baro : null;
+      const isGround = ac.onGround === true;
+      const altNum = typeof ac.altBaroFt === "number" ? ac.altBaroFt : null;
       const altLabel = isGround
         ? "GND"
         : altNum != null
@@ -163,8 +162,8 @@ export function TrafficList({ onAircraftSelect }: TrafficListProps = {}) {
           return sign * (av - bv);
         }
         case "kt": {
-          const av = typeof a.ac.gs === "number" ? a.ac.gs : -Infinity;
-          const bv = typeof b.ac.gs === "number" ? b.ac.gs : -Infinity;
+          const av = typeof a.ac.gsKt === "number" ? a.ac.gsKt : -Infinity;
+          const bv = typeof b.ac.gsKt === "number" ? b.ac.gsKt : -Infinity;
           return sign * (av - bv);
         }
         case "cs": {
@@ -353,7 +352,7 @@ function TrafficRow({
   const { ac, country, route, trend, altLabel, distLabel, isEmerg, isGround } =
     row;
   const cs = ac.flight?.trim() || ac.hex;
-  const gs = typeof ac.gs === "number" ? Math.round(ac.gs).toString() : "—";
+  const gs = typeof ac.gsKt === "number" ? Math.round(ac.gsKt).toString() : "—";
 
   // Strip color: emergency > selected > transparent.
   const stripBg = isEmerg
@@ -485,10 +484,10 @@ function renderRoute(ac: Aircraft, route: RouteInfo | null): React.ReactNode {
   ) {
     return <span className="text-ink-faint">SQK {ac.squawk}</span>;
   }
-  if (ac.alt_baro === "ground" || ac.airground === 1) {
+  if (ac.onGround === true) {
     return <span className="text-ink-faint">on ground</span>;
   }
-  const info = ac.t || ac.desc || ac.type || "";
+  const info = ac.typeDesignator || ac.desc || ac.source || "";
   if (info) return <span className="text-ink-faint">{info}</span>;
   return <span className="text-ink-faint">—</span>;
 }

@@ -2,7 +2,6 @@ import { useEffect, useLayoutEffect, useState } from "react";
 import { startFeed } from "../data/feed";
 import { usePreferencesStore } from "../data/preferences";
 import { selectDisplayAircraftMap, useIdentStore } from "../data/store";
-import { startUpdateStatusPolling } from "../data/update";
 import { logMapTiming } from "../debug/mapTiming";
 import { Inspector } from "../inspector/Inspector";
 import { MapEngine } from "../map/MapEngine";
@@ -17,7 +16,6 @@ import { StatusBar } from "../statusbar/StatusBar";
 import { useAppliedTheme } from "../theme/useTheme";
 import { Topbar } from "../topbar/Topbar";
 import { ErrorBoundary } from "./ErrorBoundary";
-import { UpdatePrompt } from "./UpdatePrompt";
 
 export function App() {
   return (
@@ -43,11 +41,6 @@ function AppContent() {
 
   useEffect(() => {
     const stop = startFeed();
-    return stop;
-  }, []);
-
-  useEffect(() => {
-    const stop = startUpdateStatusPolling();
     return stop;
   }, []);
 
@@ -132,7 +125,6 @@ function AppContent() {
       )}
       {settingsOpen && <SettingsModal onClose={() => setSettingsOpen(false)} />}
       <Omnibox open={omniboxOpen} onClose={() => setOmniboxOpen(false)} />
-      <UpdatePrompt />
       <ReplayRuntime />
     </div>
   );

@@ -817,8 +817,8 @@ const AIRCRAFT_ICON_DEFS: Array<{
 }));
 
 export function aircraftIconId(ac: Aircraft): AircraftIconId {
-  const type = cleanType(ac.t);
-  const category = cleanType(ac.category);
+  const type = cleanType(ac.typeDesignator);
+  const category = cleanType(ac.cat);
   const desc = ac.desc?.toLowerCase() ?? "";
 
   const typeMatch = TYPE_DESIGNATOR_ICONS.get(type);

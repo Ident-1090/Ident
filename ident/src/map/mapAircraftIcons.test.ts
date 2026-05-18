@@ -6,21 +6,32 @@ describe("aircraftIconId", () => {
   it("uses the aircraft type before ground altitude state", () => {
     const aircraft: Aircraft = {
       hex: "a00001",
-      t: "C172",
-      alt_baro: "ground",
-      airground: "ground",
-      category: "A1",
+      idKind: "icao",
+      source: "adsb_icao",
+      typeDesignator: "C172",
+      onGround: true,
+      cat: "A1",
     };
 
     expect(aircraftIconId(aircraft)).toBe("ident-ac-prop-se-piston");
   });
 
   it("uses surface categories for ground vehicles", () => {
-    expect(aircraftIconId({ hex: "a00002", category: "C2" })).toBe(
-      "ident-ac-ground-service",
-    );
-    expect(aircraftIconId({ hex: "a00003", t: "TWR" })).toBe(
-      "ident-ac-ground-tower",
-    );
+    expect(
+      aircraftIconId({
+        hex: "a00002",
+        idKind: "icao",
+        source: "adsb_icao",
+        cat: "C2",
+      }),
+    ).toBe("ident-ac-ground-service");
+    expect(
+      aircraftIconId({
+        hex: "a00003",
+        idKind: "icao",
+        source: "adsb_icao",
+        typeDesignator: "TWR",
+      }),
+    ).toBe("ident-ac-ground-tower");
   });
 });

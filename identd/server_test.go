@@ -53,19 +53,11 @@ func TestServerSnapshotOnConnect(t *testing.T) {
 	}
 }
 
-func TestServerVersionAndUpdateEndpoints(t *testing.T) {
+func TestServerDoesNotExposeBuildMetadataEndpoints(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	checker := NewUpdateChecker(UpdateCheckerOptions{
-		Enabled: false,
-		Current: VersionInfo{
-			Version: "v1.0.0",
-			Commit:  "abc123",
-			Date:    "2026-04-23T00:00:00Z",
-		},
-	})
-	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{UpdateChecker: checker})
+	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -73,32 +65,18 @@ func TestServerVersionAndUpdateEndpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var versionBody VersionInfo
-	if err := json.NewDecoder(versionResp.Body).Decode(&versionBody); err != nil {
-		t.Fatal(err)
-	}
 	versionResp.Body.Close()
-	if versionResp.StatusCode != 200 {
-		t.Fatalf("version status = %d, want 200", versionResp.StatusCode)
-	}
-	if versionBody.Version == "" {
-		t.Fatalf("empty version body: %#v", versionBody)
+	if versionResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("version status = %d, want 404", versionResp.StatusCode)
 	}
 
 	updateResp, err := ts.Client().Get(ts.URL + "/api/update.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	var updateBody UpdateStatus
-	if err := json.NewDecoder(updateResp.Body).Decode(&updateBody); err != nil {
-		t.Fatal(err)
-	}
 	updateResp.Body.Close()
-	if updateResp.StatusCode != 200 {
-		t.Fatalf("update status = %d, want 200", updateResp.StatusCode)
-	}
-	if updateBody.Status != UpdateDisabled {
-		t.Fatalf("update status = %s, want %s", updateBody.Status, UpdateDisabled)
+	if updateResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("update status = %d, want 404", updateResp.StatusCode)
 	}
 }
 
@@ -106,16 +84,14 @@ func TestServerMountsEndpointsUnderBasePath(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	checker := NewUpdateChecker(UpdateCheckerOptions{Enabled: false})
 	indexHTML := `<html><head><link rel="manifest" href="manifest.webmanifest"></head><body><script type="module" src="./assets/app.js"></script></body></html>`
 	web := fstest.MapFS{
 		"index.html":    &fstest.MapFile{Data: []byte(indexHTML)},
 		"assets/app.js": &fstest.MapFile{Data: []byte("console.log('ident')")},
 	}
 	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{
-		BasePath:      "/ident",
-		Web:           fs.FS(web),
-		UpdateChecker: checker,
+		BasePath: "/ident",
+		Web:      fs.FS(web),
 	})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
@@ -136,26 +112,7 @@ func TestServerMountsEndpointsUnderBasePath(t *testing.T) {
 		t.Fatalf("base path redirect location = %q, want /ident/", loc)
 	}
 
-	rootResp, err := ts.Client().Get(ts.URL + "/data/aircraft.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	rootResp.Body.Close()
-	if rootResp.StatusCode != 404 {
-		t.Fatalf("root data status = %d, want 404", rootResp.StatusCode)
-	}
-
-	dataResp, err := ts.Client().Get(ts.URL + "/ident/api/data/aircraft.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	dataResp.Body.Close()
-	if dataResp.StatusCode != 404 {
-		t.Fatalf("base data status = %d, want 404", dataResp.StatusCode)
-	}
-
 	for _, path := range []string{
-		"/ident/api/update.json",
 		"/ident/assets/app.js",
 	} {
 		resp, err := ts.Client().Get(ts.URL + path)
@@ -267,7 +224,7 @@ func TestServerSnapshotExceedsDefaultQueueDepth(t *testing.T) {
 	hub.SetRouteProvider(func() [][]byte {
 		out := make([][]byte, routeCount)
 		for i := range out {
-			out[i] = []byte(`{"type":"route","callsign":"UAL1"}`)
+			out[i] = []byte(`{"type":"routes","data":{"schema":"ident.routes.v1","routes":[{"callsign":"UAL1","route":"AAA-BBB"}]}}`)
 		}
 		return out
 	})
@@ -330,7 +287,7 @@ func TestServerServesRecentTrailsOverHTTP(t *testing.T) {
 		MemoryWindow:   2 * time.Hour,
 		SampleInterval: time.Second,
 	})
-	trails.IngestAircraftJSON([]byte(`{"now":100,"aircraft":[{"hex":"abc123","lat":34.1,"lon":-118.2,"alt_baro":3000}]}`))
+	trails.IngestAircraftFrame(trailFrameForTest(100, "abc123", 34.1, -118.2, trailBaroAltForTest(3000)))
 
 	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{Trails: trails})
 	ts := httptest.NewServer(srv.Handler())
@@ -366,9 +323,9 @@ func TestServerServesRecentTrailsWithActiveReplaySegment(t *testing.T) {
 		MemoryWindow:   2 * time.Hour,
 		SampleInterval: time.Second,
 	})
-	trails.IngestAircraftJSON([]byte(`{"now":100,"aircraft":[{"hex":"abc123","lat":34.1,"lon":-118.2,"alt_baro":3000}]}`))
+	trails.IngestAircraftFrame(trailFrameForTest(100, "abc123", 34.1, -118.2, trailBaroAltForTest(3000)))
 	replay := newTestReplayStore(t, 10_000_000)
-	replay.IngestAircraftJSON(replayFrameJSON(100, "abc123", 34.1, -118.2))
+	replay.IngestAircraftFrame(replayFrameForTest(100, "abc123", 34.1, -118.2))
 
 	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{
 		Trails: trails,
@@ -461,8 +418,8 @@ func TestServerServesReplayManifestAndIndexedBlock(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	store := newTestReplayStore(t, 10_000_000)
-	store.IngestAircraftJSON(replayFrameJSON(120, "abc123", 34.1, -118.1))
-	store.IngestAircraftJSON(replayFrameJSON(181, "abc123", 34.2, -118.2))
+	store.IngestAircraftFrame(replayFrameForTest(120, "abc123", 34.1, -118.1))
+	store.IngestAircraftFrame(replayFrameForTest(181, "abc123", 34.2, -118.2))
 	block := store.Manifest().Blocks[0]
 
 	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{Replay: store})
@@ -496,7 +453,7 @@ func TestServerReplayBlockRejectsTraversalUnknownAndActive(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	store := newTestReplayStore(t, 10_000_000)
-	store.IngestAircraftJSON(replayFrameJSON(120, "abc123", 34.1, -118.1))
+	store.IngestAircraftFrame(replayFrameForTest(120, "abc123", 34.1, -118.1))
 
 	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{Replay: store})
 	ts := httptest.NewServer(srv.Handler())

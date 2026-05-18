@@ -49,11 +49,12 @@ import { Omnibox } from "./Omnibox";
 
 const UAL: Aircraft = {
   hex: "abc123",
+  idKind: "icao",
   flight: "UAL123",
-  t: "B738",
-  alt_baro: 34000,
-  seen: 0,
-  type: "adsb_icao",
+  typeDesignator: "B738",
+  altBaroFt: 34000,
+  seenSec: 0,
+  source: "adsb_icao",
 };
 
 function flush(): Promise<void> {
@@ -530,30 +531,33 @@ describe("field-focus grammar", () => {
         "a",
         {
           hex: "a",
-          seen: 0,
-          type: "adsb_icao",
+          idKind: "icao",
+          seenSec: 0,
+          source: "adsb_icao",
           flight: "UAL1",
-          ownOp: "United Airlines",
+          op: "United Airlines",
         },
       ],
       [
         "b",
         {
           hex: "b",
-          seen: 0,
-          type: "adsb_icao",
+          idKind: "icao",
+          seenSec: 0,
+          source: "adsb_icao",
           flight: "UAL2",
-          ownOp: "United Airlines",
+          op: "United Airlines",
         },
       ],
       [
         "c",
         {
           hex: "c",
-          seen: 0,
-          type: "adsb_icao",
+          idKind: "icao",
+          seenSec: 0,
+          source: "adsb_icao",
           flight: "DAL9",
-          ownOp: "Delta",
+          op: "Delta",
         },
       ],
     ]);
@@ -566,9 +570,36 @@ describe("field-focus grammar", () => {
 
   it("buildLiveFieldSuggestions extracts 3-letter callsign prefixes by frequency", () => {
     const map = new Map<string, Aircraft>([
-      ["a", { hex: "a", seen: 0, type: "adsb_icao", flight: "UAL123" }],
-      ["b", { hex: "b", seen: 0, type: "adsb_icao", flight: "UAL456" }],
-      ["c", { hex: "c", seen: 0, type: "adsb_icao", flight: "DAL789" }],
+      [
+        "a",
+        {
+          hex: "a",
+          idKind: "icao",
+          seenSec: 0,
+          source: "adsb_icao",
+          flight: "UAL123",
+        },
+      ],
+      [
+        "b",
+        {
+          hex: "b",
+          idKind: "icao",
+          seenSec: 0,
+          source: "adsb_icao",
+          flight: "UAL456",
+        },
+      ],
+      [
+        "c",
+        {
+          hex: "c",
+          idKind: "icao",
+          seenSec: 0,
+          source: "adsb_icao",
+          flight: "DAL789",
+        },
+      ],
     ]);
     const cs = buildLiveFieldSuggestions("cs", map, {});
     expect(cs[0].value).toBe("UAL");
@@ -577,8 +608,26 @@ describe("field-focus grammar", () => {
 
   it("buildLiveFieldSuggestions pulls route origins/destinations from the cache", () => {
     const map = new Map<string, Aircraft>([
-      ["a", { hex: "a", seen: 0, type: "adsb_icao", flight: "UAL1" }],
-      ["b", { hex: "b", seen: 0, type: "adsb_icao", flight: "DAL9" }],
+      [
+        "a",
+        {
+          hex: "a",
+          idKind: "icao",
+          seenSec: 0,
+          source: "adsb_icao",
+          flight: "UAL1",
+        },
+      ],
+      [
+        "b",
+        {
+          hex: "b",
+          idKind: "icao",
+          seenSec: 0,
+          source: "adsb_icao",
+          flight: "DAL9",
+        },
+      ],
     ]);
     const routes = {
       UAL1: { origin: "KSFO", destination: "KJFK" },
@@ -598,7 +647,16 @@ describe("field-focus grammar", () => {
 
   it("buildLiveFieldSuggestions tokenizes route strings for route completions", () => {
     const map = new Map<string, Aircraft>([
-      ["a", { hex: "a", seen: 0, type: "adsb_icao", flight: "ASA953" }],
+      [
+        "a",
+        {
+          hex: "a",
+          idKind: "icao",
+          seenSec: 0,
+          source: "adsb_icao",
+          flight: "ASA953",
+        },
+      ],
     ]);
     const routes = {
       ASA953: { origin: "SJC", destination: "—", route: "SJC-OGG" },
@@ -614,8 +672,8 @@ describe("field-focus grammar", () => {
 
   it("buildLiveFieldSuggestions pulls ICAO countries from aircraft hexes", () => {
     const map = new Map<string, Aircraft>([
-      ["a", { hex: "a8469e", seen: 0, type: "adsb_icao" }],
-      ["b", { hex: "401abc", seen: 0, type: "adsb_icao" }],
+      ["a", { hex: "a8469e", idKind: "icao", seenSec: 0, source: "adsb_icao" }],
+      ["b", { hex: "401abc", idKind: "icao", seenSec: 0, source: "adsb_icao" }],
     ]);
     const countries = buildLiveFieldSuggestions("country", map, {});
     const vals = countries.map((s) => s.value);
@@ -633,9 +691,36 @@ describe("field-focus grammar", () => {
 
   it("buildLiveSquawkSuggestions prepends well-known squawks and appends live ones", () => {
     const map = new Map<string, Aircraft>([
-      ["a", { hex: "a", seen: 0, type: "adsb_icao", squawk: "4321" }],
-      ["b", { hex: "b", seen: 0, type: "adsb_icao", squawk: "4321" }],
-      ["c", { hex: "c", seen: 0, type: "adsb_icao", squawk: "7700" }],
+      [
+        "a",
+        {
+          hex: "a",
+          idKind: "icao",
+          seenSec: 0,
+          source: "adsb_icao",
+          squawk: "4321",
+        },
+      ],
+      [
+        "b",
+        {
+          hex: "b",
+          idKind: "icao",
+          seenSec: 0,
+          source: "adsb_icao",
+          squawk: "4321",
+        },
+      ],
+      [
+        "c",
+        {
+          hex: "c",
+          idKind: "icao",
+          seenSec: 0,
+          source: "adsb_icao",
+          squawk: "7700",
+        },
+      ],
     ]);
     const sqks = buildLiveSquawkSuggestions(map);
     // Static block always present in order.
@@ -754,10 +839,11 @@ describe("Omnibox field-focus mode", () => {
           "a",
           {
             hex: "a",
-            seen: 0,
-            type: "adsb_icao",
+            idKind: "icao",
+            seenSec: 0,
+            source: "adsb_icao",
             flight: "UAL1",
-            ownOp: "United Airlines",
+            op: "United Airlines",
           },
         ],
       ]),
@@ -775,7 +861,10 @@ describe("Omnibox field-focus mode", () => {
   it("pulls live country suggestions for country: from aircraft ICAO ranges", async () => {
     useIdentStore.setState({
       aircraft: new Map<string, Aircraft>([
-        ["a8469e", { hex: "a8469e", seen: 0, type: "adsb_icao" }],
+        [
+          "a8469e",
+          { hex: "a8469e", idKind: "icao", seenSec: 0, source: "adsb_icao" },
+        ],
       ]),
     });
     act(() => {

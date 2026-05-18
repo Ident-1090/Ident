@@ -5,6 +5,8 @@ import { loadRouteForAircraft, resetRouteCacheForTests } from "./route";
 
 const AIRCRAFT: Aircraft = {
   hex: "abc123",
+  idKind: "icao",
+  source: "adsb_icao",
   flight: "UAL123",
   lat: 37.5,
   lon: -122.2,

@@ -38,7 +38,6 @@ describe("Topbar basemap picker", () => {
       receiver: { lat: 0, lon: 0, version: "readsb" },
       connectionStatus: { ...st.connectionStatus, ws: "open" },
       map: { ...st.map, basemapId: "ident" },
-      update: { ...st.update, status: "current" },
     }));
     act(() => {
       root.render(<Topbar onOpenSettings={() => {}} />);
@@ -261,17 +260,6 @@ describe("Topbar basemap picker", () => {
     expect(link!.href).toBe("https://github.com/Ident-1090/Ident");
     expect(link!.target).toBe("_blank");
     expect(link!.rel).toContain("noopener");
-  });
-
-  it("marks settings when a release update is available", () => {
-    act(() => {
-      useIdentStore.setState((st) => ({
-        update: { ...st.update, status: "available" },
-      }));
-    });
-
-    const settings = findButton(container, "Settings")!;
-    expect(settings.querySelector("span[aria-hidden='true']")).toBeTruthy();
   });
 
   it("renders a structured skeleton while the receiver is loading", () => {

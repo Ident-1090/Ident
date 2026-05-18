@@ -200,7 +200,7 @@ function matchesAircraft(ac: Aircraft, q: string): boolean {
     const stripStar = (s: string) => s.replace(/\*+$/, "").toLowerCase();
     switch (field) {
       case "op": {
-        const hay = [ac.ownOp, ac.desc]
+        const hay = [ac.op, ac.desc]
           .filter(Boolean)
           .map((s) => (s as string).toLowerCase());
         return hay.some((s) => s.includes(value));
@@ -210,7 +210,7 @@ function matchesAircraft(ac: Aircraft, q: string): boolean {
         return cs.startsWith(stripStar(value));
       }
       case "reg": {
-        const reg = (ac.r ?? "").toLowerCase();
+        const reg = (ac.reg ?? "").toLowerCase();
         return reg.startsWith(stripStar(value));
       }
       case "hex":
@@ -218,7 +218,9 @@ function matchesAircraft(ac: Aircraft, q: string): boolean {
       case "sqk":
         return (ac.squawk ?? "").toLowerCase().includes(value);
       case "type":
-        return (ac.t ?? "").toLowerCase().startsWith(stripStar(value));
+        return (ac.typeDesignator ?? "")
+          .toLowerCase()
+          .startsWith(stripStar(value));
       case "rt": {
         // Live preview via the global route cache: Omnibox doesn't subscribe
         // to it so we read from the store directly.
@@ -241,7 +243,7 @@ function matchesAircraft(ac: Aircraft, q: string): boolean {
     }
   }
   const needle = q.toLowerCase();
-  const hay = [ac.hex, ac.flight, ac.r, ac.squawk, ac.ownOp]
+  const hay = [ac.hex, ac.flight, ac.reg, ac.squawk, ac.op]
     .filter(Boolean)
     .map((s) => (s as string).toLowerCase());
   return hay.some((s) => s.includes(needle));
@@ -689,7 +691,7 @@ export function Omnibox({ open, onClose }: Props) {
                               {ac.flight?.trim() || ac.hex}
                             </code>
                             <span className="text-[11.5px] text-ink-soft">
-                              {[ac.r, ac.t, ac.squawk]
+                              {[ac.reg, ac.typeDesignator, ac.squawk]
                                 .filter(Boolean)
                                 .join(" · ")}
                             </span>

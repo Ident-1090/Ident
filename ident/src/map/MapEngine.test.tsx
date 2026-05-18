@@ -187,7 +187,7 @@ describe("MapEngine", () => {
         },
       } as typeof st.map,
       receiver: null,
-      outline: null,
+      rangeOutline: null,
       losData: null,
     }));
   });
@@ -489,6 +489,55 @@ describe("MapEngine", () => {
     fireMapEvent(lastMap!, "idle");
 
     expect(source!.setData).not.toHaveBeenCalled();
+  });
+
+  it("renders receiver range from normalized range outline coordinates", () => {
+    useIdentStore.setState((st) => ({
+      ...st,
+      rangeOutline: {
+        schema: "ident.rangeOutline.v1",
+        producer: { kind: "readsb", version: "3.14" },
+        observedAtEpochSec: 100,
+        source: "outline_json",
+        scope: "last24h",
+        coordinates: [
+          [-122.1, 37.4],
+          [-122.0, 37.5],
+          [-122.2, 37.5],
+        ],
+      },
+      map: {
+        ...st.map,
+        layers: {
+          ...st.map.layers,
+          rangeRings: false,
+          rxRange: true,
+          losRings: false,
+        },
+      } as typeof st.map,
+    }));
+
+    act(() => {
+      root.render(<MapEngine />);
+    });
+
+    expect(lastMap!.sources.get("ident-rx-range")?.data.features).toEqual([
+      {
+        type: "Feature",
+        properties: {},
+        geometry: {
+          type: "Polygon",
+          coordinates: [
+            [
+              [-122.1, 37.4],
+              [-122.0, 37.5],
+              [-122.2, 37.5],
+              [-122.1, 37.4],
+            ],
+          ],
+        },
+      },
+    ]);
   });
 
   it("renders LOS rings as muted context lines below traffic", () => {

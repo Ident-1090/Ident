@@ -1,6 +1,7 @@
 // biome-ignore-all lint/style/noNonNullAssertion: test fixture — missing elements/mocks fail the test loudly via the test runner.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  diagnosticIdentity,
   resetPreferencesStoreForTests,
   usePreferencesStore,
 } from "./preferences";
@@ -50,16 +51,9 @@ function resetStore() {
       clock: "utc",
       theme: "system",
     },
-    stats: null,
-    update: {
-      enabled: true,
-      status: "idle",
-      current: null,
-      latest: null,
-      checkedAt: null,
-      lastSuccessAt: null,
-      error: null,
-    },
+    rangeOutline: null,
+    identStatus: null,
+    capabilities: null,
     replay: useIdentStore.getInitialState().replay,
   });
 }
@@ -70,8 +64,16 @@ function frame(
   rssi?: number,
 ): AircraftFrame {
   return {
-    now: 0,
-    aircraft: [{ hex, alt_baro: alt, ...(rssi != null ? { rssi } : {}) }],
+    observedAtEpochSec: 0,
+    aircraft: [
+      {
+        hex,
+        idKind: "icao",
+        source: "adsb_icao",
+        ...(typeof alt === "number" ? { altBaroFt: alt } : { onGround: true }),
+        ...(rssi != null ? { rssiDbfs: rssi } : {}),
+      },
+    ],
   };
 }
 
@@ -114,7 +116,7 @@ describe("replay display selectors", () => {
         playheadMs: 110_100,
         cache: {
           "/api/replay/blocks/100000-120000.json.zst": {
-            version: 1,
+            version: 2,
             start: 100_000,
             end: 120_000,
             step_ms: 5_000,
@@ -122,13 +124,27 @@ describe("replay display selectors", () => {
               {
                 ts: 100_000,
                 aircraft: [
-                  { hex: "abc123", lat: 34.1, lon: -118.1, alt_baro: 3000 },
+                  {
+                    hex: "abc123",
+                    idKind: "icao",
+                    source: "adsb_icao",
+                    lat: 34.1,
+                    lon: -118.1,
+                    altBaroFt: 3000,
+                  },
                 ],
               },
               {
                 ts: 110_000,
                 aircraft: [
-                  { hex: "abc123", lat: 34.2, lon: -118.2, alt_baro: 4000 },
+                  {
+                    hex: "abc123",
+                    idKind: "icao",
+                    source: "adsb_icao",
+                    lat: 34.2,
+                    lon: -118.2,
+                    altBaroFt: 4000,
+                  },
                 ],
               },
             ],
@@ -156,13 +172,23 @@ describe("replay display selectors", () => {
         playheadMs: 110_100,
         cache: {
           "/api/replay/blocks/100000-120000.json.zst": {
-            version: 1,
+            version: 2,
             start: 100_000,
             end: 120_000,
             step_ms: 5_000,
             frames: [
-              { ts: 100_000, aircraft: [{ hex: "abc123" }] },
-              { ts: 110_000, aircraft: [{ hex: "abc123" }] },
+              {
+                ts: 100_000,
+                aircraft: [
+                  { hex: "abc123", idKind: "icao", source: "adsb_icao" },
+                ],
+              },
+              {
+                ts: 110_000,
+                aircraft: [
+                  { hex: "abc123", idKind: "icao", source: "adsb_icao" },
+                ],
+              },
             ],
           },
         },
@@ -186,12 +212,22 @@ describe("replay display selectors", () => {
         mode: "replay",
         playheadMs: 195_000,
         recent: {
-          version: 1,
+          version: 2,
           start: 180_000,
           end: 200_000,
           step_ms: 5_000,
           frames: [
-            { ts: 190_000, aircraft: [{ hex: "recent", flight: "RECENT1" }] },
+            {
+              ts: 190_000,
+              aircraft: [
+                {
+                  hex: "recent",
+                  idKind: "icao",
+                  source: "adsb_icao",
+                  flight: "RECENT1",
+                },
+              ],
+            },
           ],
         },
       },
@@ -215,14 +251,39 @@ describe("replay display selectors", () => {
     }));
 
     useIdentStore.getState().setReplayBlock("/api/replay/blocks/a.json.zst", {
-      version: 1,
+      version: 2,
       start: 120_000,
       end: 180_000,
       step_ms: 5_000,
       frames: [
-        { ts: 170_000, aircraft: [{ hex: "future", flight: "FUTURE" }] },
-        { ts: 130_000, aircraft: [{ hex: "past", flight: "PAST" }] },
-        { ts: 160_000, aircraft: [{ hex: "now", flight: "NOW" }] },
+        {
+          ts: 170_000,
+          aircraft: [
+            {
+              hex: "future",
+              idKind: "icao",
+              source: "adsb_icao",
+              flight: "FUTURE",
+            },
+          ],
+        },
+        {
+          ts: 130_000,
+          aircraft: [
+            {
+              hex: "past",
+              idKind: "icao",
+              source: "adsb_icao",
+              flight: "PAST",
+            },
+          ],
+        },
+        {
+          ts: 160_000,
+          aircraft: [
+            { hex: "now", idKind: "icao", source: "adsb_icao", flight: "NOW" },
+          ],
+        },
       ],
     });
 
@@ -242,7 +303,7 @@ describe("replay display selectors", () => {
         playheadMs: 190_000,
         cache: {
           "/api/replay/blocks/100000-190000.json.zst": {
-            version: 1,
+            version: 2,
             start: 100_000,
             end: 190_000,
             step_ms: 5_000,
@@ -250,7 +311,14 @@ describe("replay display selectors", () => {
               {
                 ts: 100_000,
                 aircraft: [
-                  { hex: "abc123", lat: 34.1, lon: -118.2, alt_baro: 3000 },
+                  {
+                    hex: "abc123",
+                    idKind: "icao",
+                    source: "adsb_icao",
+                    lat: 34.1,
+                    lon: -118.2,
+                    altBaroFt: 3000,
+                  },
                 ],
               },
               {
@@ -258,16 +326,25 @@ describe("replay display selectors", () => {
                 aircraft: [
                   {
                     hex: "abc123",
+                    idKind: "icao",
+                    source: "adsb_icao",
                     lat: 34.2,
                     lon: -118.3,
-                    alt_baro: "ground",
+                    onGround: true,
                   },
                 ],
               },
               {
                 ts: 190_000,
                 aircraft: [
-                  { hex: "abc123", lat: 34.3, lon: -118.4, alt_baro: 1500 },
+                  {
+                    hex: "abc123",
+                    idKind: "icao",
+                    source: "adsb_icao",
+                    lat: 34.3,
+                    lon: -118.4,
+                    altBaroFt: 1500,
+                  },
                 ],
               },
             ],
@@ -285,11 +362,12 @@ describe("replay display selectors", () => {
         ground: false,
         segment: 1,
         alt_source: "baro",
+        source: "adsb_icao",
       },
     ]);
   });
 
-  it("uses airground state when deriving replay trail segments", () => {
+  it("uses onGround state when deriving replay trail segments", () => {
     useIdentStore.setState((st) => ({
       replay: {
         ...st.replay,
@@ -300,7 +378,7 @@ describe("replay display selectors", () => {
         playheadMs: 190_000,
         cache: {
           "/api/replay/blocks/100000-190000.json.zst": {
-            version: 1,
+            version: 2,
             start: 100_000,
             end: 190_000,
             step_ms: 5_000,
@@ -308,7 +386,14 @@ describe("replay display selectors", () => {
               {
                 ts: 100_000,
                 aircraft: [
-                  { hex: "abc123", lat: 34.1, lon: -118.2, alt_baro: 3000 },
+                  {
+                    hex: "abc123",
+                    idKind: "icao",
+                    source: "adsb_icao",
+                    lat: 34.1,
+                    lon: -118.2,
+                    altBaroFt: 3000,
+                  },
                 ],
               },
               {
@@ -316,17 +401,26 @@ describe("replay display selectors", () => {
                 aircraft: [
                   {
                     hex: "abc123",
+                    idKind: "icao",
+                    source: "adsb_icao",
                     lat: 34.2,
                     lon: -118.3,
-                    airground: "ground",
-                    alt_geom: 25,
+                    onGround: true,
+                    altGeomFt: 25,
                   },
                 ],
               },
               {
                 ts: 190_000,
                 aircraft: [
-                  { hex: "abc123", lat: 34.3, lon: -118.4, alt_baro: 1500 },
+                  {
+                    hex: "abc123",
+                    idKind: "icao",
+                    source: "adsb_icao",
+                    lat: 34.3,
+                    lon: -118.4,
+                    altBaroFt: 1500,
+                  },
                 ],
               },
             ],
@@ -344,6 +438,7 @@ describe("replay display selectors", () => {
         ground: false,
         segment: 1,
         alt_source: "baro",
+        source: "adsb_icao",
       },
     ]);
   });
@@ -361,7 +456,7 @@ describe("replay display selectors", () => {
         trailStartMs: 400_000,
         cache: {
           "/api/replay/blocks/0-1000000.json.zst": {
-            version: 1,
+            version: 2,
             start: 0,
             end: 1_000_000,
             step_ms: 5_000,
@@ -369,21 +464,56 @@ describe("replay display selectors", () => {
               {
                 ts: 100_000,
                 aircraft: [
-                  { hex: "abc123", lat: 34.1, lon: -118.1, alt_baro: 3000 },
-                  { hex: "other", lat: 35.1, lon: -119.1, alt_baro: 3000 },
+                  {
+                    hex: "abc123",
+                    idKind: "icao",
+                    source: "adsb_icao",
+                    lat: 34.1,
+                    lon: -118.1,
+                    altBaroFt: 3000,
+                  },
+                  {
+                    hex: "other",
+                    idKind: "icao",
+                    source: "adsb_icao",
+                    lat: 35.1,
+                    lon: -119.1,
+                    altBaroFt: 3000,
+                  },
                 ],
               },
               {
                 ts: 500_000,
                 aircraft: [
-                  { hex: "abc123", lat: 34.2, lon: -118.2, alt_baro: 4000 },
+                  {
+                    hex: "abc123",
+                    idKind: "icao",
+                    source: "adsb_icao",
+                    lat: 34.2,
+                    lon: -118.2,
+                    altBaroFt: 4000,
+                  },
                 ],
               },
               {
                 ts: 950_000,
                 aircraft: [
-                  { hex: "abc123", lat: 34.3, lon: -118.3, alt_baro: 5000 },
-                  { hex: "other", lat: 35.2, lon: -119.2, alt_baro: 5000 },
+                  {
+                    hex: "abc123",
+                    idKind: "icao",
+                    source: "adsb_icao",
+                    lat: 34.3,
+                    lon: -118.3,
+                    altBaroFt: 5000,
+                  },
+                  {
+                    hex: "other",
+                    idKind: "icao",
+                    source: "adsb_icao",
+                    lat: 35.2,
+                    lon: -119.2,
+                    altBaroFt: 5000,
+                  },
                 ],
               },
             ],
@@ -412,7 +542,7 @@ describe("replay display selectors", () => {
         trailStartMs: 0,
         cache: {
           "/api/replay/blocks/500000-1000000.json.zst": {
-            version: 1,
+            version: 2,
             start: 500_000,
             end: 1_000_000,
             step_ms: 5_000,
@@ -420,19 +550,33 @@ describe("replay display selectors", () => {
               {
                 ts: 600_000,
                 aircraft: [
-                  { hex: "abc123", lat: 34.3, lon: -118.3, alt_baro: 5000 },
+                  {
+                    hex: "abc123",
+                    idKind: "icao",
+                    source: "adsb_icao",
+                    lat: 34.3,
+                    lon: -118.3,
+                    altBaroFt: 5000,
+                  },
                 ],
               },
               {
                 ts: 950_000,
                 aircraft: [
-                  { hex: "abc123", lat: 34.4, lon: -118.4, alt_baro: 6000 },
+                  {
+                    hex: "abc123",
+                    idKind: "icao",
+                    source: "adsb_icao",
+                    lat: 34.4,
+                    lon: -118.4,
+                    altBaroFt: 6000,
+                  },
                 ],
               },
             ],
           },
           "/api/replay/blocks/0-500000.json.zst": {
-            version: 1,
+            version: 2,
             start: 0,
             end: 500_000,
             step_ms: 5_000,
@@ -440,13 +584,27 @@ describe("replay display selectors", () => {
               {
                 ts: 100_000,
                 aircraft: [
-                  { hex: "abc123", lat: 34.1, lon: -118.1, alt_baro: 3000 },
+                  {
+                    hex: "abc123",
+                    idKind: "icao",
+                    source: "adsb_icao",
+                    lat: 34.1,
+                    lon: -118.1,
+                    altBaroFt: 3000,
+                  },
                 ],
               },
               {
                 ts: 400_000,
                 aircraft: [
-                  { hex: "abc123", lat: 34.2, lon: -118.2, alt_baro: 4000 },
+                  {
+                    hex: "abc123",
+                    idKind: "icao",
+                    source: "adsb_icao",
+                    lat: 34.2,
+                    lon: -118.2,
+                    altBaroFt: 4000,
+                  },
                 ],
               },
             ],
@@ -472,22 +630,42 @@ describe("replay display selectors", () => {
         playheadMs: 180_000,
         cache: {
           "/api/replay/blocks/120000-170000.json.zst": {
-            version: 1,
+            version: 2,
             start: 120_000,
             end: 170_000,
             step_ms: 5_000,
             frames: [
-              { ts: 170_000, aircraft: [{ hex: "old", flight: "OLD1" }] },
+              {
+                ts: 170_000,
+                aircraft: [
+                  {
+                    hex: "old",
+                    idKind: "icao",
+                    source: "adsb_icao",
+                    flight: "OLD1",
+                  },
+                ],
+              },
             ],
           },
         },
         recent: {
-          version: 1,
+          version: 2,
           start: 190_000,
           end: 200_000,
           step_ms: 5_000,
           frames: [
-            { ts: 195_000, aircraft: [{ hex: "recent", flight: "RECENT1" }] },
+            {
+              ts: 195_000,
+              aircraft: [
+                {
+                  hex: "recent",
+                  idKind: "icao",
+                  source: "adsb_icao",
+                  flight: "RECENT1",
+                },
+              ],
+            },
           ],
         },
       },
@@ -509,21 +687,41 @@ describe("replay display selectors", () => {
         playheadMs: 172_000,
         cache: {
           "/api/replay/blocks/120000-170000.json.zst": {
-            version: 1,
+            version: 2,
             start: 120_000,
             end: 170_000,
             step_ms: 5_000,
             frames: [
-              { ts: 170_000, aircraft: [{ hex: "old", flight: "OLD1" }] },
+              {
+                ts: 170_000,
+                aircraft: [
+                  {
+                    hex: "old",
+                    idKind: "icao",
+                    source: "adsb_icao",
+                    flight: "OLD1",
+                  },
+                ],
+              },
             ],
           },
           "/api/replay/blocks/170000-220000.json.zst": {
-            version: 1,
+            version: 2,
             start: 170_000,
             end: 220_000,
             step_ms: 5_000,
             frames: [
-              { ts: 175_000, aircraft: [{ hex: "next", flight: "NEXT1" }] },
+              {
+                ts: 175_000,
+                aircraft: [
+                  {
+                    hex: "next",
+                    idKind: "icao",
+                    source: "adsb_icao",
+                    flight: "NEXT1",
+                  },
+                ],
+              },
             ],
           },
         },
@@ -549,12 +747,22 @@ describe("replay display selectors", () => {
         playheadMs: null,
         cache: {
           "/api/replay/blocks/170000-220000.json.zst": {
-            version: 1,
+            version: 2,
             start: 170_000,
             end: 220_000,
             step_ms: 5_000,
             frames: [
-              { ts: 175_000, aircraft: [{ hex: "next", flight: "NEXT1" }] },
+              {
+                ts: 175_000,
+                aircraft: [
+                  {
+                    hex: "next",
+                    idKind: "icao",
+                    source: "adsb_icao",
+                    flight: "NEXT1",
+                  },
+                ],
+              },
             ],
           },
         },
@@ -578,19 +786,29 @@ describe("replay display selectors", () => {
         playheadMs: 205_000,
         cache: {
           "/api/replay/blocks/200000-220000.json.zst": {
-            version: 1,
+            version: 2,
             start: 200_000,
             end: 220_000,
             step_ms: 5_000,
             frames: [],
           },
           "/api/replay/blocks/220000-260000.json.zst": {
-            version: 1,
+            version: 2,
             start: 220_000,
             end: 260_000,
             step_ms: 5_000,
             frames: [
-              { ts: 225_000, aircraft: [{ hex: "next", flight: "NEXT1" }] },
+              {
+                ts: 225_000,
+                aircraft: [
+                  {
+                    hex: "next",
+                    idKind: "icao",
+                    source: "adsb_icao",
+                    flight: "NEXT1",
+                  },
+                ],
+              },
             ],
           },
         },
@@ -617,8 +835,10 @@ describe("replay display selectors", () => {
     }));
 
     useIdentStore.getState().ingestAircraft({
-      now: 190,
-      aircraft: [{ hex: "live", flight: "LIVE1" }],
+      observedAtEpochSec: 190,
+      aircraft: [
+        { hex: "live", idKind: "icao", source: "adsb_icao", flight: "LIVE1" },
+      ],
     });
     useIdentStore.getState().enterReplay(190_000);
 
@@ -643,8 +863,10 @@ describe("replay display selectors", () => {
     }));
 
     useIdentStore.getState().ingestAircraft({
-      now: 181,
-      aircraft: [{ hex: "live", flight: "LIVE1" }],
+      observedAtEpochSec: 181,
+      aircraft: [
+        { hex: "live", idKind: "icao", source: "adsb_icao", flight: "LIVE1" },
+      ],
     });
 
     const st = useIdentStore.getState();
@@ -670,18 +892,32 @@ describe("replay display selectors", () => {
           },
         ],
         recent: {
-          version: 1,
+          version: 2,
           start: 1_000,
           end: 1_000,
           step_ms: 1_000,
-          frames: [{ ts: 1_000, aircraft: [{ hex: "kept", flight: "KEEP1" }] }],
+          frames: [
+            {
+              ts: 1_000,
+              aircraft: [
+                {
+                  hex: "kept",
+                  idKind: "icao",
+                  source: "adsb_icao",
+                  flight: "KEEP1",
+                },
+              ],
+            },
+          ],
         },
       },
     }));
 
     useIdentStore.getState().ingestAircraft({
-      now: 7_300,
-      aircraft: [{ hex: "head", flight: "HEAD1" }],
+      observedAtEpochSec: 7_300,
+      aircraft: [
+        { hex: "head", idKind: "icao", source: "adsb_icao", flight: "HEAD1" },
+      ],
     });
 
     expect(
@@ -1006,7 +1242,7 @@ describe("replay display selectors", () => {
     }));
 
     useIdentStore.getState().setReplayBlock("/api/replay/blocks/a.json.zst", {
-      version: 1,
+      version: 2,
       start: 120_000,
       end: 180_000,
       step_ms: 5_000,
@@ -1030,7 +1266,7 @@ describe("replay display selectors", () => {
     }));
 
     useIdentStore.getState().setReplayBlock(loadedUrl, {
-      version: 1,
+      version: 2,
       start: 120_000,
       end: 180_000,
       step_ms: 5_000,
@@ -1054,7 +1290,7 @@ describe("replay display selectors", () => {
     }));
 
     useIdentStore.getState().setReplayBlock(url, {
-      version: 1,
+      version: 2,
       start: 120_000,
       end: 180_000,
       step_ms: 5_000,
@@ -1076,7 +1312,7 @@ describe("replay display selectors", () => {
     }));
 
     useIdentStore.getState().setReplayBlock(url, {
-      version: 1,
+      version: 2,
       start: 120_000,
       end: 180_000,
       step_ms: 5_000,
@@ -1099,7 +1335,7 @@ describe("replay display selectors", () => {
     }));
 
     useIdentStore.getState().setReplayRecent({
-      version: 1,
+      version: 2,
       start: 180_000,
       end: 180_000,
       step_ms: 1_000,
@@ -1270,7 +1506,7 @@ describe("replay display selectors", () => {
 describe("ingestAircraft rolling buffers", () => {
   beforeEach(resetStore);
 
-  it("appends alt_baro samples to altTrendsByHex and trims to 60", () => {
+  it("appends altBaroFt samples to altTrendsByHex and trims to 60", () => {
     const store = useIdentStore.getState();
     for (let i = 0; i < 70; i++)
       store.ingestAircraft(frame("abc123", 10000 + i));
@@ -1281,7 +1517,7 @@ describe("ingestAircraft rolling buffers", () => {
     expect(buf[59]).toBe(10069);
   });
 
-  it("skips alt_baro === 'ground' samples", () => {
+  it("skips altBaroFt === 'ground' samples", () => {
     const store = useIdentStore.getState();
     store.ingestAircraft(frame("abc123", "ground"));
     expect(useIdentStore.getState().altTrendsByHex.abc123).toBeUndefined();
@@ -1299,7 +1535,18 @@ describe("ingestAircraft rolling buffers", () => {
   it("preserves selected aircraft when it disappears from the latest frame", () => {
     useIdentStore.setState({
       aircraft: new Map([
-        ["abc123", { hex: "abc123", alt_baro: 12000, lat: 1, lon: 2, seen: 1 }],
+        [
+          "abc123",
+          {
+            hex: "abc123",
+            idKind: "icao",
+            source: "adsb_icao",
+            altBaroFt: 12000,
+            lat: 1,
+            lon: 2,
+            seenSec: 1,
+          },
+        ],
       ]),
       now: 10,
       selectedHex: "abc123",
@@ -1309,8 +1556,15 @@ describe("ingestAircraft rolling buffers", () => {
       },
     });
     useIdentStore.getState().ingestAircraft({
-      now: 16,
-      aircraft: [{ hex: "def456", alt_baro: 10000 }],
+      observedAtEpochSec: 16,
+      aircraft: [
+        {
+          hex: "def456",
+          idKind: "icao",
+          source: "adsb_icao",
+          altBaroFt: 10000,
+        },
+      ],
     });
 
     const state = useIdentStore.getState();
@@ -1318,11 +1572,13 @@ describe("ingestAircraft rolling buffers", () => {
     expect(state.camera.trackSelected).toBe(true);
     expect(state.aircraft.get("abc123")).toMatchObject({
       hex: "abc123",
+      idKind: "icao",
+      source: "adsb_icao",
       lat: 1,
       lon: 2,
-      seen: 7,
+      seenSec: 7,
     });
-    expect(state.aircraft.get("abc123")?.seen_pos).toBeUndefined();
+    expect(state.aircraft.get("abc123")?.seenPosSec).toBeUndefined();
   });
 
   it("retains stale aircraft and trail points across missing frames", () => {
@@ -1341,20 +1597,42 @@ describe("ingestAircraft rolling buffers", () => {
     });
     useIdentStore.setState({
       aircraft: new Map([
-        ["abc123", { hex: "abc123", alt_baro: 3000, seen: 1 }],
-        ["def456", { hex: "def456", alt_baro: 4000, seen: 0 }],
+        [
+          "abc123",
+          {
+            hex: "abc123",
+            idKind: "icao",
+            source: "adsb_icao",
+            altBaroFt: 3000,
+            seenSec: 1,
+          },
+        ],
+        [
+          "def456",
+          {
+            hex: "def456",
+            idKind: "icao",
+            source: "adsb_icao",
+            altBaroFt: 4000,
+            seenSec: 0,
+          },
+        ],
       ]),
       now: 100,
     });
 
     store.ingestAircraft({
-      now: 105,
-      aircraft: [{ hex: "def456", alt_baro: 4000 }],
+      observedAtEpochSec: 105,
+      aircraft: [
+        { hex: "def456", idKind: "icao", source: "adsb_icao", altBaroFt: 4000 },
+      ],
     });
 
     expect(useIdentStore.getState().aircraft.get("abc123")).toMatchObject({
       hex: "abc123",
-      seen: 6,
+      idKind: "icao",
+      source: "adsb_icao",
+      seenSec: 6,
     });
     expect(useIdentStore.getState().trailsByHex.abc123).toEqual([
       {
@@ -1392,15 +1670,35 @@ describe("ingestAircraft rolling buffers", () => {
     });
     useIdentStore.setState({
       aircraft: new Map([
-        ["abc123", { hex: "abc123", alt_baro: 3000, seen: 1 }],
-        ["def456", { hex: "def456", alt_baro: 4000, seen: 0 }],
+        [
+          "abc123",
+          {
+            hex: "abc123",
+            idKind: "icao",
+            source: "adsb_icao",
+            altBaroFt: 3000,
+            seenSec: 1,
+          },
+        ],
+        [
+          "def456",
+          {
+            hex: "def456",
+            idKind: "icao",
+            source: "adsb_icao",
+            altBaroFt: 4000,
+            seenSec: 0,
+          },
+        ],
       ]),
       now: 100,
     });
 
     store.ingestAircraft({
-      now: 131,
-      aircraft: [{ hex: "def456", alt_baro: 4000 }],
+      observedAtEpochSec: 131,
+      aircraft: [
+        { hex: "def456", idKind: "icao", source: "adsb_icao", altBaroFt: 4000 },
+      ],
     });
 
     expect(useIdentStore.getState().aircraft.has("abc123")).toBe(false);
@@ -1429,7 +1727,15 @@ describe("ingestAircraft rolling buffers", () => {
       aircraft: new Map([
         [
           "abc123",
-          { hex: "abc123", alt_baro: 3000, lat: 34.1, lon: -118.2, seen: 1 },
+          {
+            hex: "abc123",
+            idKind: "icao",
+            source: "adsb_icao",
+            altBaroFt: 3000,
+            lat: 34.1,
+            lon: -118.2,
+            seenSec: 1,
+          },
         ],
       ]),
       selectedHex: "abc123",
@@ -1437,13 +1743,15 @@ describe("ingestAircraft rolling buffers", () => {
     });
 
     store.ingestAircraft({
-      now: 131,
+      observedAtEpochSec: 131,
       aircraft: [],
     });
 
     expect(useIdentStore.getState().aircraft.get("abc123")).toMatchObject({
       hex: "abc123",
-      seen: 32,
+      idKind: "icao",
+      source: "adsb_icao",
+      seenSec: 32,
     });
     expect(useIdentStore.getState().trailsByHex.abc123).toEqual([
       {
@@ -1469,8 +1777,10 @@ describe("recordAircraftSample", () => {
   it("appends to both buffers when values are numeric", () => {
     useIdentStore.getState().recordAircraftSample("abc123", {
       hex: "abc123",
-      alt_baro: 12000,
-      rssi: -9,
+      idKind: "icao",
+      source: "adsb_icao",
+      altBaroFt: 12000,
+      rssiDbfs: -9,
     });
     const st = useIdentStore.getState();
     expect(st.altTrendsByHex.abc123).toEqual([12000]);
@@ -1910,43 +2220,61 @@ describe("settings slice", () => {
   });
 });
 
-describe("update dismissal persistence", () => {
+describe("notification suppression persistence", () => {
   afterEach(() => {
     vi.useRealTimers();
     resetPreferencesStoreForTests();
   });
 
-  it("stores release dismissal and restores it on fresh preferences init", async () => {
+  it("stores notification snooze hashes and restores them on fresh preferences init", async () => {
     resetPreferencesStoreForTests();
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
 
-    usePreferencesStore.getState().dismissReleaseUpdate(" v1.1.0 ");
-
-    expect(usePreferencesStore.getState().updateDismissal).toEqual({
-      version: "v1.1.0",
-      dismissedUntil: Date.parse("2026-01-08T00:00:00Z"),
+    const hash = diagnosticIdentity({
+      severity: "info",
+      channel: "update",
+      code: "update.release.available",
+      message: "Ident v1.1.0 is available.",
+      actionLabel: "Release notes",
+      actionUrl: "https://example.invalid/v1.1.0",
     });
+    usePreferencesStore.getState().suppressNotification(hash, "snooze");
+
+    expect(usePreferencesStore.getState().notificationSuppressions).toEqual([
+      {
+        keyHash: hash,
+        ignored: false,
+        snoozedUntil: Date.parse("2026-01-08T00:00:00Z"),
+      },
+    ]);
 
     vi.resetModules();
     const fresh = await import("./preferences");
-    expect(fresh.usePreferencesStore.getState().updateDismissal).toEqual({
-      version: "v1.1.0",
-      dismissedUntil: Date.parse("2026-01-08T00:00:00Z"),
-    });
+    expect(
+      fresh.usePreferencesStore.getState().notificationSuppressions,
+    ).toEqual([
+      {
+        keyHash: hash,
+        ignored: false,
+        snoozedUntil: Date.parse("2026-01-08T00:00:00Z"),
+      },
+    ]);
   });
 
-  it("drops expired release dismissal on fresh preferences init", async () => {
+  it("drops expired notification snoozes on fresh preferences init", async () => {
     resetPreferencesStoreForTests();
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
-    usePreferencesStore.getState().dismissReleaseUpdate("v1.1.0");
+    usePreferencesStore.getState().suppressNotification("n:update", "snooze");
     vi.setSystemTime(new Date("2026-01-08T00:00:01Z"));
 
     vi.resetModules();
     const fresh = await import("./preferences");
 
-    expect(fresh.usePreferencesStore.getState().updateDismissal).toBeNull();
+    expect(
+      fresh.usePreferencesStore.getState().notificationSuppressions,
+    ).toEqual([]);
   });
 });
 
@@ -1954,7 +2282,14 @@ describe("trailPointFromAircraft", () => {
   it("stores upstream ground altitude as null plus ground state", () => {
     expect(
       trailPointFromAircraft(
-        { hex: "abc123", lat: 34.1, lon: -118.2, alt_baro: "ground" },
+        {
+          hex: "abc123",
+          idKind: "icao",
+          source: "adsb_icao",
+          lat: 34.1,
+          lon: -118.2,
+          onGround: true,
+        },
         100_000,
       ),
     ).toMatchObject({
@@ -1972,18 +2307,132 @@ describe("liveState msg-rate buffer", () => {
 
   it("trims mpsBuffer to 60 samples", () => {
     useIdentStore.setState({
-      stats: { now: 0, last1min: { messages_valid: 600 } },
+      identStatus: {
+        schema: "ident.status.v1",
+        producer: { kind: "readsb" },
+        observedAt: {
+          kind: "producer_provided",
+          source: "stats_now",
+          value: { epochSec: 100 },
+        },
+        freshness: {
+          aircraftAgeSec: null,
+          statsAgeSec: 0,
+          receiverObservedAgeSec: null,
+        },
+        messageRate: {
+          kind: "producer_provided",
+          source: "stats_last1min_messages_valid",
+          value: { hz: 10, basisSec: 60 },
+        },
+        diagnostics: [],
+      },
     });
     for (let i = 0; i < 75; i++) sampleMpsOnce();
     const buf = useIdentStore.getState().liveState.mpsBuffer;
     expect(buf.length).toBe(60);
-    // 600 msgs / 60 s = 10 msg/s in every slot.
     expect(buf.every((v) => v === 10)).toBe(true);
   });
 
   it("falls back to 0 when stats are missing", () => {
     sampleMpsOnce();
     expect(useIdentStore.getState().liveState.mpsBuffer).toEqual([0]);
+  });
+
+  it("does not expose raw stats ingestion", () => {
+    expect("ingestStats" in useIdentStore.getState()).toBe(false);
+  });
+
+  it("does not fall back to raw stats when normalized rate is unavailable", () => {
+    useIdentStore.setState({
+      identStatus: {
+        schema: "ident.status.v1",
+        producer: { kind: "skyaware978" },
+        observedAt: {
+          kind: "producer_provided",
+          source: "aircraft_now",
+          value: { epochSec: 100 },
+        },
+        freshness: {
+          aircraftAgeSec: 0,
+          statsAgeSec: null,
+          receiverObservedAgeSec: null,
+        },
+        messageRate: { kind: "unavailable", reason: "counter_reset" },
+        diagnostics: [],
+      },
+    });
+    sampleMpsOnce();
+    expect(useIdentStore.getState().liveState.mpsBuffer).toEqual([0]);
+  });
+});
+
+describe("normalized status ingest", () => {
+  beforeEach(resetStore);
+
+  it("merges partial status snapshots field by field", () => {
+    const store = useIdentStore.getState();
+    store.ingestStatus({
+      schema: "ident.status.v1",
+      producer: { kind: "readsb", version: "3.14" },
+      observedAt: {
+        kind: "producer_provided",
+        source: "aircraft_now",
+        value: { epochSec: 100 },
+      },
+      freshness: {
+        aircraftAgeSec: 1,
+        statsAgeSec: null,
+        receiverObservedAgeSec: null,
+      },
+      receiverPosition: {
+        kind: "producer_provided",
+        source: "receiver_json",
+        value: { lat: 37.4, lon: -122.1 },
+      },
+      maxRange: {
+        kind: "producer_provided",
+        source: "outline_last24h_vertices",
+        value: {
+          nm: 142,
+          scope: "last24h",
+          computation: "max_receiver_to_outline_vertex",
+        },
+      },
+      diagnostics: [],
+    });
+    store.ingestStatus({
+      schema: "ident.status.v1",
+      producer: { kind: "readsb", version: "3.14" },
+      observedAt: {
+        kind: "producer_provided",
+        source: "stats_now",
+        value: { epochSec: 101 },
+      },
+      freshness: {
+        aircraftAgeSec: 2,
+        statsAgeSec: 0,
+        receiverObservedAgeSec: null,
+      },
+      messageRate: {
+        kind: "producer_provided",
+        source: "stats_last1min_messages_valid",
+        value: { hz: 12, basisSec: 60 },
+      },
+      diagnostics: [],
+    });
+
+    const status = useIdentStore.getState().identStatus;
+    expect(status?.receiverPosition?.kind).toBe("producer_provided");
+    expect(status?.messageRate?.kind).toBe("producer_provided");
+    expect(status?.maxRange?.kind).toBe("producer_provided");
+    expect(status?.observedAt.kind).toBe("producer_provided");
+    if (status?.observedAt.kind !== "producer_provided") {
+      throw new Error("observedAt was not producer-provided");
+    }
+    expect(status.observedAt.value.epochSec).toBe(101);
+    expect(status?.freshness.statsAgeSec).toBe(0);
+    expect(useIdentStore.getState().receiver?.lat).toBe(37.4);
   });
 });
 

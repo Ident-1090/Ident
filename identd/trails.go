@@ -5,7 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log"
+	"log/slog"
 	"math"
 	"os"
 	"path/filepath"
@@ -17,14 +17,16 @@ import (
 
 const (
 	restartTrailCacheName = "trails.json.gz"
+	trailCacheVersion     = 1
 	trailSegmentDwell     = time.Minute
 	trailAirborneNoise    = 10 * time.Second
 )
 
 type TrailOptions struct {
-	MemoryWindow    time.Duration
-	SampleInterval  time.Duration
-	RestartCacheDir string
+	MemoryWindow       time.Duration
+	SampleInterval     time.Duration
+	RestartCacheDir    string
+	StartupDiagnostics *DiagnosticCollector
 }
 
 type TrailStore struct {
@@ -35,12 +37,12 @@ type TrailStore struct {
 
 	aircraft      map[string][]trailPoint
 	trailStates   map[string]trailAircraftState
-	invalidAlts   map[string]struct{}
 	snapshot      []byte
 	snapshotDirty bool
 
 	cacheGeneration      uint64
 	cacheSavedGeneration uint64
+	startupDiagnostics   *DiagnosticCollector
 }
 
 type trailPoint struct {
@@ -49,7 +51,6 @@ type trailPoint struct {
 	Alt       *float64 `json:"alt"`
 	Ts        int64    `json:"ts"`
 	Ground    bool     `json:"ground,omitempty"`
-	Stale     bool     `json:"stale,omitempty"`
 	Segment   int      `json:"segment"`
 	GS        *float64 `json:"gs,omitempty"`
 	Track     *float64 `json:"track,omitempty"`
@@ -63,28 +64,9 @@ type trailEnvelopeData struct {
 }
 
 type trailCacheFile struct {
+	Version  int                           `json:"version"`
 	Aircraft map[string][]trailPoint       `json:"aircraft"`
 	States   map[string]trailAircraftState `json:"states,omitempty"`
-}
-
-type aircraftTrailFrame struct {
-	Now      float64              `json:"now"`
-	Aircraft []aircraftTrailInput `json:"aircraft"`
-}
-
-type aircraftTrailInput struct {
-	Hex       string          `json:"hex"`
-	Type      string          `json:"type"`
-	Lat       *float64        `json:"lat"`
-	Lon       *float64        `json:"lon"`
-	AltBaro   json.RawMessage `json:"alt_baro"`
-	AltGeom   *float64        `json:"alt_geom"`
-	Altitude  *float64        `json:"altitude"`
-	GS        *float64        `json:"gs"`
-	Track     *float64        `json:"track"`
-	SeenPos   *float64        `json:"seen_pos"`
-	Ground    bool            `json:"ground"`
-	Airground json.RawMessage `json:"airground"`
 }
 
 type trailAircraftState struct {
@@ -97,27 +79,23 @@ type trailAircraftState struct {
 
 func NewTrailStore(options TrailOptions) *TrailStore {
 	return &TrailStore{
-		memoryWindow:   options.MemoryWindow,
-		sampleInterval: options.SampleInterval,
-		cacheDir:       options.RestartCacheDir,
-		aircraft:       map[string][]trailPoint{},
-		trailStates:    map[string]trailAircraftState{},
-		invalidAlts:    map[string]struct{}{},
-		snapshotDirty:  true,
+		memoryWindow:       options.MemoryWindow,
+		sampleInterval:     options.SampleInterval,
+		cacheDir:           options.RestartCacheDir,
+		aircraft:           map[string][]trailPoint{},
+		trailStates:        map[string]trailAircraftState{},
+		snapshotDirty:      true,
+		startupDiagnostics: options.StartupDiagnostics,
 	}
 }
 
-func (s *TrailStore) IngestAircraftJSON(b []byte) []byte {
-	var frame aircraftTrailFrame
-	if err := json.Unmarshal(b, &frame); err != nil {
-		return nil
-	}
+func (s *TrailStore) IngestAircraftFrame(frame identAircraftFrame) []byte {
 	if len(frame.Aircraft) == 0 {
 		return nil
 	}
 	nowMs := time.Now().UnixMilli()
-	if numberIsFinite(frame.Now) && frame.Now > 0 {
-		nowMs = int64(math.Round(frame.Now * 1000))
+	if numberIsFinite(frame.ObservedAtEpochSec) && frame.ObservedAtEpochSec > 0 {
+		nowMs = int64(math.Round(frame.ObservedAtEpochSec * 1000))
 	}
 
 	delta := map[string][]trailPoint{}
@@ -132,27 +110,22 @@ func (s *TrailStore) IngestAircraftJSON(b []byte) []byte {
 			continue
 		}
 		ground := trailGround(ac)
-		alt, altSource, invalidAlt := trailAltitude(ac, ground)
-		if invalidAlt {
-			s.logInvalidAltitudeLocked(hex)
-		}
+		alt, altSource := trailAltitude(ac, ground)
 		point := trailPoint{
 			Lat:       *ac.Lat,
 			Lon:       *ac.Lon,
 			Alt:       alt,
 			Ts:        nowMs,
 			Ground:    ground,
-			Stale:     trailStale(ac),
-			GS:        finitePointer(ac.GS),
-			Track:     finitePointer(ac.Track),
-			Source:    ac.Type,
+			GS:        finitePointer(ac.GsKt),
+			Track:     finitePointer(ac.TrackDeg),
+			Source:    string(ac.Source),
 			AltSource: altSource,
-			AltGeom:   finitePointer(ac.AltGeom),
+			AltGeom:   finitePointer(ac.AltGeomFt),
 		}
 		series := pruneTrailSeries(s.aircraft[hex], cutoff)
 		if len(series) == 0 && len(s.aircraft[hex]) > 0 {
 			delete(s.trailStates, hex)
-			delete(s.invalidAlts, hex)
 		}
 		if len(series) > 0 && minDeltaMs > 0 && point.Ts-series[len(series)-1].Ts < minDeltaMs {
 			s.aircraft[hex] = series
@@ -185,11 +158,6 @@ func (s *TrailStore) SnapshotEnvelopes() [][]byte {
 	return [][]byte{append([]byte(nil), s.snapshot...)}
 }
 
-func (s *TrailStore) SnapshotJSON() []byte {
-	data := s.SnapshotData()
-	return marshalTrailData(data.Aircraft)
-}
-
 func (s *TrailStore) SnapshotData() trailEnvelopeData {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -211,14 +179,21 @@ func (s *TrailStore) LoadRestartCache() error {
 
 	gz, err := gzip.NewReader(f)
 	if err != nil {
-		log.Printf("trails: ignoring unreadable cache: %v", err)
+		slog.Warn("trails: ignoring unreadable cache", "err", err, "path", filepath.Join(s.cacheDir, restartTrailCacheName))
+		s.recordDiagnostic(warningDiagnostic("trails", "trails.cache.unreadable", "trail restart cache could not be read"))
 		return nil
 	}
 	defer gz.Close()
 
 	var cached trailCacheFile
-	if err := json.NewDecoder(gz).Decode(&cached); err != nil {
-		log.Printf("trails: ignoring unreadable cache: %v", err)
+	if err := decodeIdentJSON(gz, &cached); err != nil {
+		slog.Warn("trails: ignoring unreadable cache", "err", err, "path", filepath.Join(s.cacheDir, restartTrailCacheName))
+		s.recordDiagnostic(warningDiagnostic("trails", "trails.cache.unreadable", "trail restart cache could not be read"))
+		return nil
+	}
+	if cached.Version != trailCacheVersion {
+		slog.Warn("trails: ignoring cache version", "version", cached.Version, "want", trailCacheVersion, "path", filepath.Join(s.cacheDir, restartTrailCacheName))
+		s.recordDiagnostic(warningDiagnostic("trails", "trails.cache.unsupported_version", "trail restart cache version is not supported"))
 		return nil
 	}
 
@@ -235,6 +210,10 @@ func (s *TrailStore) LoadRestartCache() error {
 	return nil
 }
 
+func (s *TrailStore) recordDiagnostic(d diagnostic) {
+	s.startupDiagnostics.Record(d)
+}
+
 func (s *TrailStore) SaveRestartCache() error {
 	if s.cacheDir == "" {
 		return nil
@@ -246,6 +225,7 @@ func (s *TrailStore) SaveRestartCache() error {
 	}
 	generation := s.cacheGeneration
 	cached := trailCacheFile{
+		Version:  trailCacheVersion,
 		Aircraft: copyTrailAircraft(s.aircraft),
 		States:   copyTrailStates(s.trailStates),
 	}
@@ -325,58 +305,21 @@ func normalizeTrailHex(hex string) string {
 	return hex
 }
 
-func trailGround(ac aircraftTrailInput) bool {
-	if ac.Ground {
-		return true
-	}
-	if len(ac.AltBaro) > 0 && string(ac.AltBaro) != "null" {
-		var label string
-		if err := json.Unmarshal(ac.AltBaro, &label); err == nil && label == "ground" {
-			return true
-		}
-	}
-	if len(ac.Airground) > 0 && string(ac.Airground) != "null" {
-		var label string
-		if err := json.Unmarshal(ac.Airground, &label); err == nil {
-			return label == "ground"
-		}
-		var value float64
-		if err := json.Unmarshal(ac.Airground, &value); err == nil {
-			return value == 1
-		}
-	}
-	return false
+func trailGround(ac identAircraft) bool {
+	return ac.OnGround != nil && *ac.OnGround
 }
 
-func trailAltitude(ac aircraftTrailInput, ground bool) (*float64, string, bool) {
-	if len(ac.AltBaro) > 0 && string(ac.AltBaro) != "null" {
-		var label string
-		if err := json.Unmarshal(ac.AltBaro, &label); err == nil {
-			if label == "ground" {
-				return nil, "", false
-			}
-			return nil, "", true
-		}
-		var alt float64
-		if err := json.Unmarshal(ac.AltBaro, &alt); err == nil && numberIsFinite(alt) {
-			return roundAltitude(alt), "baro", false
-		}
-		return nil, "", true
+func trailAltitude(ac identAircraft, ground bool) (*float64, string) {
+	if ac.AltBaroFt != nil && numberIsFinite(*ac.AltBaroFt) {
+		return roundAltitude(*ac.AltBaroFt), "baro"
 	}
 	if ground {
-		return nil, "", false
+		return nil, ""
 	}
-	if ac.AltGeom != nil && numberIsFinite(*ac.AltGeom) {
-		return roundAltitude(*ac.AltGeom), "geom", false
+	if ac.AltGeomFt != nil && numberIsFinite(*ac.AltGeomFt) {
+		return roundAltitude(*ac.AltGeomFt), "geom"
 	}
-	if ac.Altitude != nil && numberIsFinite(*ac.Altitude) {
-		return roundAltitude(*ac.Altitude), "baro", false
-	}
-	return nil, "", false
-}
-
-func trailStale(ac aircraftTrailInput) bool {
-	return ac.SeenPos != nil && numberIsFinite(*ac.SeenPos) && *ac.SeenPos > 20
+	return nil, ""
 }
 
 func finitePointer(v *float64) *float64 {
@@ -384,14 +327,6 @@ func finitePointer(v *float64) *float64 {
 		return nil
 	}
 	return v
-}
-
-func (s *TrailStore) logInvalidAltitudeLocked(hex string) {
-	if _, ok := s.invalidAlts[hex]; ok {
-		return
-	}
-	s.invalidAlts[hex] = struct{}{}
-	log.Printf("trails: invalid alt_baro for %s", hex)
 }
 
 func roundAltitude(alt float64) *float64 {
@@ -430,7 +365,6 @@ func (s *TrailStore) pruneLocked(cutoff int64) {
 		if len(points) == 0 {
 			delete(s.aircraft, hex)
 			delete(s.trailStates, hex)
-			delete(s.invalidAlts, hex)
 			continue
 		}
 		s.aircraft[hex] = points

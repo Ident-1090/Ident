@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"math"
 	"net/http"
 	"os"
@@ -22,19 +22,20 @@ const (
 	replayIndexName       = "index.json"
 	replayBlocksDirName   = "blocks"
 	replayBlockURLPrefix  = "/api/replay/blocks/"
-	replayManifestVersion = 1
+	replayManifestVersion = 2
 )
 
 var replayBlockNameRE = regexp.MustCompile(`^\d+-\d+\.json\.zst$`)
 
 type ReplayOptions struct {
-	Enabled        bool
-	Dir            string
-	Retention      time.Duration
-	MaxBytes       int64
-	BlockDuration  time.Duration
-	SampleInterval time.Duration
-	OnAvailability func(ReplayManifest)
+	Enabled            bool
+	Dir                string
+	Retention          time.Duration
+	MaxBytes           int64
+	BlockDuration      time.Duration
+	SampleInterval     time.Duration
+	OnAvailability     func(ReplayManifest)
+	StartupDiagnostics *DiagnosticCollector
 }
 
 type ReplayStore struct {
@@ -49,11 +50,12 @@ type ReplayStore struct {
 	sampleInterval time.Duration
 	onAvailability func(ReplayManifest)
 
-	blocks      []ReplayBlockIndex
-	byName      map[string]ReplayBlockIndex
-	active      *replayActiveBlock
-	lastSample  int64
-	activeDirty bool
+	blocks             []ReplayBlockIndex
+	byName             map[string]ReplayBlockIndex
+	active             *replayActiveBlock
+	lastSample         int64
+	activeDirty        bool
+	startupDiagnostics *DiagnosticCollector
 }
 
 type ReplayManifest struct {
@@ -86,47 +88,8 @@ type replayBlockFile struct {
 }
 
 type ReplayFrame struct {
-	Ts       int64            `json:"ts"`
-	Aircraft []ReplayAircraft `json:"aircraft"`
-}
-
-type ReplayAircraft struct {
-	Hex         string          `json:"hex"`
-	Type        string          `json:"type,omitempty"`
-	Flight      string          `json:"flight,omitempty"`
-	R           string          `json:"r,omitempty"`
-	T           string          `json:"t,omitempty"`
-	Desc        string          `json:"desc,omitempty"`
-	OwnOp       string          `json:"ownOp,omitempty"`
-	Category    string          `json:"category,omitempty"`
-	Lat         *float64        `json:"lat,omitempty"`
-	Lon         *float64        `json:"lon,omitempty"`
-	AltBaro     json.RawMessage `json:"alt_baro,omitempty"`
-	AltGeom     *float64        `json:"alt_geom,omitempty"`
-	GS          *float64        `json:"gs,omitempty"`
-	Track       *float64        `json:"track,omitempty"`
-	BaroRate    *float64        `json:"baro_rate,omitempty"`
-	GeomRate    *float64        `json:"geom_rate,omitempty"`
-	Squawk      string          `json:"squawk,omitempty"`
-	Emergency   string          `json:"emergency,omitempty"`
-	Messages    *int            `json:"messages,omitempty"`
-	Seen        *float64        `json:"seen,omitempty"`
-	SeenPos     *float64        `json:"seen_pos,omitempty"`
-	RSSI        *float64        `json:"rssi,omitempty"`
-	DBFlags     *int            `json:"dbFlags,omitempty"`
-	Airground   json.RawMessage `json:"airground,omitempty"`
-	NavQNH      *float64        `json:"nav_qnh,omitempty"`
-	NavAltMCP   *float64        `json:"nav_altitude_mcp,omitempty"`
-	NavAltFMS   *float64        `json:"nav_altitude_fms,omitempty"`
-	NavHeading  *float64        `json:"nav_heading,omitempty"`
-	NavModes    []string        `json:"nav_modes,omitempty"`
-	TrueHeading *float64        `json:"true_heading,omitempty"`
-	MagHeading  *float64        `json:"mag_heading,omitempty"`
-}
-
-type replayAircraftFrame struct {
-	Now      float64          `json:"now"`
-	Aircraft []ReplayAircraft `json:"aircraft"`
+	Ts       int64           `json:"ts"`
+	Aircraft []identAircraft `json:"aircraft"`
 }
 
 type replayActiveBlock struct {
@@ -145,15 +108,16 @@ func NewReplayStore(options ReplayOptions) (*ReplayStore, error) {
 		sampleInterval = 5 * time.Second
 	}
 	store := &ReplayStore{
-		enabled:        options.Enabled,
-		dir:            options.Dir,
-		blocksDir:      filepath.Join(options.Dir, replayBlocksDirName),
-		retention:      options.Retention,
-		maxBytes:       options.MaxBytes,
-		blockDuration:  blockDuration,
-		sampleInterval: sampleInterval,
-		onAvailability: options.OnAvailability,
-		byName:         map[string]ReplayBlockIndex{},
+		enabled:            options.Enabled,
+		dir:                options.Dir,
+		blocksDir:          filepath.Join(options.Dir, replayBlocksDirName),
+		retention:          options.Retention,
+		maxBytes:           options.MaxBytes,
+		blockDuration:      blockDuration,
+		sampleInterval:     sampleInterval,
+		onAvailability:     options.OnAvailability,
+		startupDiagnostics: options.StartupDiagnostics,
+		byName:             map[string]ReplayBlockIndex{},
 	}
 	if !options.Enabled {
 		return store, nil
@@ -202,20 +166,16 @@ func (s *ReplayStore) Load() error {
 	return nil
 }
 
-func (s *ReplayStore) IngestAircraftJSON(b []byte) {
+func (s *ReplayStore) IngestAircraftFrame(frame identAircraftFrame) {
 	if !s.enabled {
-		return
-	}
-	var frame replayAircraftFrame
-	if err := json.Unmarshal(b, &frame); err != nil {
 		return
 	}
 	if len(frame.Aircraft) == 0 {
 		return
 	}
 	nowMs := time.Now().UnixMilli()
-	if numberIsFinite(frame.Now) && frame.Now > 0 {
-		nowMs = int64(math.Round(frame.Now * 1000))
+	if numberIsFinite(frame.ObservedAtEpochSec) && frame.ObservedAtEpochSec > 0 {
+		nowMs = int64(math.Round(frame.ObservedAtEpochSec * 1000))
 	}
 
 	minDeltaMs := int64(s.sampleInterval / time.Millisecond)
@@ -236,7 +196,7 @@ func (s *ReplayStore) IngestAircraftJSON(b []byte) {
 		manifest, changed, err := s.finalizeLocked(active, nowMs)
 		s.mu.Unlock()
 		if err != nil {
-			log.Printf("replay: finalize: %v", err)
+			slog.Warn("replay: finalize", "err", err)
 		}
 		if changed {
 			s.publishAvailability(manifest)
@@ -308,7 +268,14 @@ func (s *ReplayStore) loadIndexedBlocks() []ReplayBlockIndex {
 	}
 	defer f.Close()
 	var idx replayIndexFile
-	if err := json.NewDecoder(f).Decode(&idx); err != nil || idx.Version != replayManifestVersion {
+	if err := decodeIdentJSON(f, &idx); err != nil {
+		slog.Warn("replay: ignoring unreadable index", "err", err, "path", filepath.Join(s.dir, replayIndexName))
+		s.recordDiagnostic(warningDiagnostic("replay", "replay.cache.unreadable", "replay index could not be read"))
+		return nil
+	}
+	if idx.Version != replayManifestVersion {
+		slog.Warn("replay: ignoring index version", "version", idx.Version, "want", replayManifestVersion, "path", filepath.Join(s.dir, replayIndexName))
+		s.recordDiagnostic(warningDiagnostic("replay", "replay.cache.unsupported_version", "replay index version is not supported"))
 		return nil
 	}
 	return s.validateBlocks(idx.Blocks)
@@ -351,6 +318,9 @@ func (s *ReplayStore) validateBlocks(blocks []ReplayBlockIndex) []ReplayBlockInd
 		if err != nil || info.IsDir() {
 			continue
 		}
+		if !s.validateBlockVersion(name) {
+			continue
+		}
 		out = append(out, ReplayBlockIndex{
 			Start: start,
 			End:   end,
@@ -360,6 +330,25 @@ func (s *ReplayStore) validateBlocks(blocks []ReplayBlockIndex) []ReplayBlockInd
 		})
 	}
 	return out
+}
+
+func (s *ReplayStore) validateBlockVersion(name string) bool {
+	block, err := readZstdReplayBlock(filepath.Join(s.blocksDir, name))
+	if err != nil {
+		slog.Warn("replay: ignoring unreadable block", "name", name, "path", filepath.Join(s.blocksDir, name), "err", err)
+		s.recordDiagnostic(warningDiagnostic("replay", "replay.cache.unreadable", "replay block could not be read"))
+		return false
+	}
+	if block.Version != replayManifestVersion {
+		slog.Warn("replay: ignoring block version", "name", name, "version", block.Version, "want", replayManifestVersion)
+		s.recordDiagnostic(warningDiagnostic("replay", "replay.cache.unsupported_version", "replay block version is not supported"))
+		return false
+	}
+	return true
+}
+
+func (s *ReplayStore) recordDiagnostic(d diagnostic) {
+	s.startupDiagnostics.Record(d)
 }
 
 func (s *ReplayStore) finalizeLocked(active *replayActiveBlock, nowMs int64) (ReplayManifest, bool, error) {
@@ -405,7 +394,7 @@ func (s *ReplayStore) finalizeLocked(active *replayActiveBlock, nowMs int64) (Re
 	}
 	newSize := info.Size()
 	if newSize > s.maxBytes {
-		log.Printf("replay: skip %s: block size %d exceeds budget %d", name, newSize, s.maxBytes)
+		slog.Warn("replay: skip block size exceeds budget", "name", name, "size", newSize, "want", s.maxBytes)
 		changed := s.pruneLocked(nowMs)
 		if changed {
 			_ = s.writeIndexLocked()
@@ -606,12 +595,12 @@ func removeReplayBlock(blocksDir, name string) {
 		return
 	}
 	if err := os.Remove(filepath.Join(blocksDir, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
-		log.Printf("replay: remove %s: %v", name, err)
+		slog.Warn("replay: remove", "name", name, "path", filepath.Join(blocksDir, name), "err", err)
 	}
 }
 
-func compactReplayAircraft(in []ReplayAircraft) []ReplayAircraft {
-	out := make([]ReplayAircraft, 0, len(in))
+func compactReplayAircraft(in []identAircraft) []identAircraft {
+	out := make([]identAircraft, 0, len(in))
 	for _, ac := range in {
 		ac.Hex = normalizeTrailHex(ac.Hex)
 		if ac.Hex == "" {
@@ -635,6 +624,5 @@ func readZstdReplayBlock(path string) (replayBlockFile, error) {
 		return out, err
 	}
 	defer zr.Close()
-	err = json.NewDecoder(zr).Decode(&out)
-	return out, err
+	return out, decodeIdentJSON(zr, &out)
 }

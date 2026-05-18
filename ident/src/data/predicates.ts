@@ -7,7 +7,7 @@ const DEFAULT_ALT_RANGE_FT: [number, number] = [0, 45_000];
 export interface FilterState {
   // Accepts two shapes:
   //   - Set<string> of letter-prefix codes (e.g. Set(["A", "B"])): legacy call
-  //     sites and tests filter by the first character of aircraft.category.
+  //     sites and tests filter by the first character of aircraft.cat.
   //   - Record<CategoryKey, boolean>: the store-slice shape consumed by the
   //     rail's FiltersCard. Empty / all-false means "match anything".
   categories?: Set<string> | Record<CategoryKey, boolean>;
@@ -57,18 +57,18 @@ export interface FilterState {
   viewportHexes?: Set<string> | null;
 }
 
-// Map an aircraft.category letter code (A0..C7) to a semantic category key.
+// Map an aircraft.cat letter code (A0..C7) to a semantic category key.
 // When `dbFlags` is provided and its low bit is set, readsb has tagged the
 // airframe as military (via its aircraft DB lookup); that wins over the ADS-B
 // category code so a military C-17 counts as `mil` rather than `airline`.
 // Returns null when nothing matches a filter bucket.
 export function categoryKeyFor(
-  category: string | undefined,
+  cat: string | undefined,
   dbFlags?: number,
 ): CategoryKey {
   if (typeof dbFlags === "number" && (dbFlags & 1) === 1) return "mil";
-  if (!category || category.length < 2) return "unknown";
-  switch (category) {
+  if (!cat || cat.length < 2) return "unknown";
+  switch (cat) {
     case "A7":
       return "rotor";
     // A1 (light) maps to GA; A2/A3/A4/A5 are commercial airliner sizes; A6 is
@@ -118,11 +118,11 @@ export function matchesFilter(ac: Aircraft, f: FilterState): boolean {
   if (f.categories) {
     if (f.categories instanceof Set) {
       if (f.categories.size > 0) {
-        const cat = ac.category ? ac.category[0] : "";
+        const cat = ac.cat ? ac.cat[0] : "";
         if (!f.categories.has(cat)) return false;
       }
     } else if (anyCategoryKeySelected(f.categories)) {
-      const key = categoryKeyFor(ac.category, ac.dbFlags);
+      const key = categoryKeyFor(ac.cat, ac.dbFlags);
       if (!f.categories[key]) return false;
     }
   }
@@ -145,7 +145,7 @@ export function matchesFilter(ac: Aircraft, f: FilterState): boolean {
 
   if (f.operatorContains && f.operatorContains.length > 0) {
     const needle = f.operatorContains.toLowerCase();
-    const hay = [ac.ownOp, ac.desc]
+    const hay = [ac.op, ac.desc]
       .filter(Boolean)
       .map((s) => (s as string).toLowerCase());
     if (!hay.some((s) => s.includes(needle))) return false;
@@ -186,7 +186,7 @@ export function matchesFilter(ac: Aircraft, f: FilterState): boolean {
 
   if (f.regPrefix && f.regPrefix.length > 0) {
     const needle = f.regPrefix.toLowerCase();
-    const reg = (ac.r ?? "").toLowerCase();
+    const reg = (ac.reg ?? "").toLowerCase();
     if (!reg.startsWith(needle)) return false;
   }
 
@@ -198,13 +198,13 @@ export function matchesFilter(ac: Aircraft, f: FilterState): boolean {
 
   if (f.typePrefix && f.typePrefix.length > 0) {
     const needle = f.typePrefix.toLowerCase();
-    const t = (ac.t ?? "").toLowerCase();
+    const t = (ac.typeDesignator ?? "").toLowerCase();
     if (!t.startsWith(needle)) return false;
   }
 
   if (f.sourceEquals && f.sourceEquals.length > 0) {
     const want = f.sourceEquals.toLowerCase();
-    const src = (ac.type ?? "").toLowerCase();
+    const src = (ac.source ?? "").toLowerCase();
     if (want === "adsb") {
       if (!src.startsWith("adsb_")) return false;
     } else if (want === "tisb") {
@@ -216,14 +216,14 @@ export function matchesFilter(ac: Aircraft, f: FilterState): boolean {
 
   if (f.gsRangeKt) {
     const [min, max] = f.gsRangeKt;
-    const gs = typeof ac.gs === "number" ? ac.gs : null;
+    const gs = typeof ac.gsKt === "number" ? ac.gsKt : null;
     if (gs == null) return false;
     if (gs < min || gs > max) return false;
   }
 
   if (f.vsRangeFpm) {
     const [min, max] = f.vsRangeFpm;
-    const vs = typeof ac.baro_rate === "number" ? ac.baro_rate : null;
+    const vs = typeof ac.baroRateFpm === "number" ? ac.baroRateFpm : null;
     if (vs == null) return false;
     if (vs < min || vs > max) return false;
   }
@@ -237,10 +237,10 @@ export function matchesFilter(ac: Aircraft, f: FilterState): boolean {
 
   if (f.hdgCenter != null && f.hdgTolerance != null) {
     const hdg =
-      typeof ac.track === "number"
-        ? ac.track
-        : typeof ac.true_heading === "number"
-          ? ac.true_heading
+      typeof ac.trackDeg === "number"
+        ? ac.trackDeg
+        : typeof ac.trueHeadingDeg === "number"
+          ? ac.trueHeadingDeg
           : null;
     if (hdg == null) return false;
     // Shortest angular distance, modulo 360.
@@ -263,7 +263,7 @@ export function matchesFilter(ac: Aircraft, f: FilterState): boolean {
     const callsign =
       typeof ac.flight === "string" ? ac.flight.trim().toUpperCase() : "";
     const route = callsign ? f.routeByCallsign?.[callsign] : null;
-    const hay = [ac.hex, ac.flight, ac.r, ac.t, ac.squawk]
+    const hay = [ac.hex, ac.flight, ac.reg, ac.typeDesignator, ac.squawk]
       .filter(Boolean)
       .map((s) => (s as string).toLowerCase());
     if (route) {
@@ -277,12 +277,10 @@ export function matchesFilter(ac: Aircraft, f: FilterState): boolean {
 }
 
 function isGroundAircraft(ac: Aircraft): boolean {
-  return (
-    ac.alt_baro === "ground" || ac.airground === "ground" || ac.airground === 1
-  );
+  return ac.onGround === true;
 }
 
 function filterAltitudeFt(ac: Aircraft): number | null {
   if (isGroundAircraft(ac)) return 0;
-  return typeof ac.alt_baro === "number" ? ac.alt_baro : null;
+  return typeof ac.altBaroFt === "number" ? ac.altBaroFt : null;
 }

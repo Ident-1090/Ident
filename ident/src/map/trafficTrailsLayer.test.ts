@@ -12,20 +12,22 @@ import {
 
 const UAL: Aircraft = {
   hex: "abc123",
+  idKind: "icao",
   flight: "UAL123",
-  alt_baro: 12000,
+  altBaroFt: 12000,
   lat: 37.5,
   lon: -122.3,
-  type: "adsb_icao",
+  source: "adsb_icao",
 };
 
 const SWA: Aircraft = {
   hex: "def456",
+  idKind: "icao",
   flight: "SWA456",
-  alt_baro: 24000,
+  altBaroFt: 24000,
   lat: 37.6,
   lon: -122.4,
-  type: "adsb_icao",
+  source: "adsb_icao",
 };
 
 function point(ts: number, alt: number | null = 12000): TrailPoint {

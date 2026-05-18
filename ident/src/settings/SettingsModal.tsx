@@ -1,7 +1,7 @@
-import { ExternalLink, X } from "lucide-react";
+import { X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
-import { type UpdateSlice, useIdentStore } from "../data/store";
+import { useIdentStore } from "../data/store";
 import type { ClockMode, UnitMode } from "../data/types";
 
 const TRAIL_FADE_OPTIONS = [
@@ -13,7 +13,6 @@ const TRAIL_FADE_OPTIONS = [
 
 export function SettingsModal({ onClose }: { onClose: () => void }) {
   const settings = useIdentStore((s) => s.settings);
-  const update = useIdentStore((s) => s.update);
   const setSettings = useIdentStore((s) => s.setSettings);
 
   const [form, setForm] = useState(() => settings);
@@ -185,7 +184,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
             )}
           </SettingsSection>
 
-          <SettingsSection title="Time and trails">
+          <SettingsSection title="Time and trails" last>
             <ControlRow label="Clock">
               <ChoiceGroup<ClockMode>
                 value={form.clock}
@@ -222,10 +221,6 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
               />
             </ControlRow>
           </SettingsSection>
-
-          <SettingsSection title="Updates" layout="row" last>
-            <UpdateDetails update={update} />
-          </SettingsSection>
         </div>
 
         <div className="flex flex-col-reverse gap-2 border-t border-(--color-line) bg-paper-2 px-4 py-3 sm:flex-row sm:justify-end">
@@ -247,90 +242,6 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
       </div>
     </>
   );
-}
-
-function UpdateDetails({ update }: { update: UpdateSlice }) {
-  const latestUrl = update.latest?.url;
-  const showStatusDot = updateNeedsAttention(update.status);
-  return (
-    <div className="grid gap-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="flex min-h-9 items-center gap-2 rounded-sm border border-(--color-line) bg-paper px-3">
-          {showStatusDot && (
-            <span
-              data-testid="update-status-dot"
-              className="h-2 w-2 rounded-full bg-(--color-warn)"
-            />
-          )}
-          <span className="font-mono text-[11px] font-medium uppercase tracking-[0.05em] text-(--color-ink)">
-            {updateStatusLabel(update.status)}
-          </span>
-        </div>
-        <UpdateValue
-          label="Installed"
-          value={formatVersion(update.current?.version)}
-        />
-        <UpdateValue
-          label="Latest"
-          value={formatVersion(update.latest?.version)}
-        />
-      </div>
-      {update.status === "unavailable" && update.error && (
-        <div className="rounded-sm border border-(--color-line-soft) bg-paper-2 px-3 py-2 font-mono text-[11px] text-ink-soft">
-          {update.error}
-        </div>
-      )}
-      {latestUrl && (
-        <a
-          href={latestUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex h-9 w-fit items-center gap-2 rounded-sm border border-(--color-line-strong) bg-paper px-3 font-mono text-[11px] font-medium uppercase tracking-[0.06em] text-(--color-ink) hover:bg-paper-2"
-        >
-          <ExternalLink size={13} strokeWidth={1.8} aria-hidden="true" />
-          Release notes
-        </a>
-      )}
-    </div>
-  );
-}
-
-function UpdateValue({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="flex min-h-9 items-center gap-2 rounded-sm border border-(--color-line) bg-paper px-3 font-mono text-[11px]">
-      <span className="font-medium uppercase tracking-[0.06em] text-ink-faint">
-        {label}
-      </span>
-      <span className="text-ink-soft">{value}</span>
-    </div>
-  );
-}
-
-function updateStatusLabel(status: string): string {
-  switch (status) {
-    case "available":
-      return "Update available";
-    case "current":
-      return "Up to date";
-    case "checking":
-      return "Checking";
-    case "disabled":
-      return "Disabled";
-    case "unavailable":
-      return "Unable to check";
-    case "unknown":
-      return "Unknown";
-    default:
-      return "Not checked";
-  }
-}
-
-function updateNeedsAttention(status: string): boolean {
-  return status === "available" || status === "unavailable";
-}
-
-function formatVersion(value: string | undefined): string {
-  return value?.trim() ? value : "-";
 }
 
 function SettingsSection({

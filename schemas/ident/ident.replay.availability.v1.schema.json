@@ -1,0 +1,39 @@
+{
+  "type": "object",
+  "properties": {
+    "schema": {
+      "const": "ident.replay.availability.v1"
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "fromEpochMs": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "toEpochMs": {
+      "type": [
+        "null",
+        "integer"
+      ]
+    },
+    "blockSec": {
+      "type": "integer"
+    },
+    "blockCount": {
+      "type": "integer"
+    }
+  },
+  "$id": "https://github.com/Ident-1090/Ident/schemas/ident/ident.replay.availability.v1.schema.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Ident replay availability",
+  "required": [
+    "schema",
+    "enabled",
+    "blockSec",
+    "blockCount"
+  ],
+  "additionalProperties": false
+}

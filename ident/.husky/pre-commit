@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+set -eu
+
+repo_root="$(cd "$(dirname "$0")/../.." && pwd)"
+
+cd "$repo_root/identd"
+unformatted="$(gofmt -l .)"
+if [ -n "$unformatted" ]; then
+  printf 'gofmt would rewrite:\n%s\n' "$unformatted" >&2
+  exit 1
+fi
+go test . -run TestIdentSchemasAreCurrent -count=1
+
+cd "$repo_root/ident"
+pnpm check-ident-schemas
+pnpm exec lint-staged

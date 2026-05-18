@@ -1,14 +1,12 @@
-// Types mirror readsb's aircraft.json / receiver.json / stats.json schemas.
-// readsb is BSD-3-Clause; these are structural descriptions, not copied code.
+// Types for producer JSON compatibility plus Ident-owned wire schemas.
+// Upstream schema references are structural descriptions, not copied code.
 
 export type AircraftType =
   | "adsb_icao"
   | "adsb_icao_nt"
   | "adsr_icao"
   | "tisb_icao"
-  | "adsc"
   | "mlat"
-  | "other"
   | "mode_s"
   | "adsb_other"
   | "adsr_other"
@@ -17,64 +15,78 @@ export type AircraftType =
   | "mode_ac"
   | "unknown";
 
+export type AircraftIDKind = "icao" | "non_icao" | "unknown";
+
 export interface Aircraft {
   hex: string;
-  type?: AircraftType;
+  idKind: AircraftIDKind;
+  source: AircraftType;
   flight?: string;
-  r?: string;
-  t?: string;
+  reg?: string;
+  typeDesignator?: string;
   desc?: string;
-  ownOp?: string;
-  category?: string;
+  op?: string;
+  cat?: string;
   lat?: number;
   lon?: number;
-  alt_baro?: number | "ground";
-  alt_geom?: number;
-  gs?: number;
-  ias?: number;
-  tas?: number;
+  seenPosSec?: number;
+  nic?: number;
+  rcM?: number;
+  altBaroFt?: number;
+  altGeomFt?: number;
+  onGround?: boolean;
+  gsKt?: number;
+  iasKt?: number;
+  tasKt?: number;
   mach?: number;
-  wd?: number;
-  ws?: number;
-  oat?: number;
-  tat?: number;
-  track?: number;
-  track_rate?: number;
-  roll?: number;
-  mag_heading?: number;
-  true_heading?: number;
-  baro_rate?: number;
-  geom_rate?: number;
+  trackDeg?: number;
+  calcTrackDeg?: number;
+  trackRateDegSec?: number;
+  rollDeg?: number;
+  magHeadingDeg?: number;
+  trueHeadingDeg?: number;
+  baroRateFpm?: number;
+  geomRateFpm?: number;
+  windDirDeg?: number;
+  windKt?: number;
+  oatC?: number;
+  tatC?: number;
+  pressHPa?: number;
+  humidity?: number;
+  turb?: string;
+  mrarSource?: string;
   squawk?: string;
   emergency?: string;
-  nav_qnh?: number;
-  nav_altitude_mcp?: number;
-  nav_altitude_fms?: number;
-  nav_heading?: number;
-  nav_modes?: string[];
-  nic?: number;
-  rc?: number;
-  version?: number;
-  nic_baro?: number;
-  nac_p?: number;
-  nac_v?: number;
+  alert?: boolean;
+  spi?: boolean;
+  qnhHPa?: number;
+  mcpAltFt?: number;
+  fmsAltFt?: number;
+  navHdgDeg?: number;
+  navModes?: string[];
+  adsbVersion?: number;
+  uatVersion?: number;
+  nicBaro?: number;
+  nacP?: number;
+  nacV?: number;
   sil?: number;
-  sil_type?: string;
+  silType?: string;
   gva?: number;
   sda?: number;
-  messages?: number;
-  seen?: number;
-  seen_pos?: number;
-  rssi?: number;
+  aircraftMessagesTotal?: number;
+  seenSec?: number;
+  rssiDbfs?: number;
   dbFlags?: number;
-  // readsb sets alt_baro to "ground" and sometimes includes airground as a
-  // convenience; keep optional since not all frames set it.
-  airground?: number | "ground" | "airborne";
+  mlatFields?: string[];
+  tisbFields?: string[];
+  segment?: number;
 }
 
 export interface AircraftFrame {
-  now: number;
-  messages?: number;
+  schema?: string;
+  producer?: IdentProducer;
+  observedAtEpochSec: number;
+  frameMessagesTotal?: number;
   aircraft: Aircraft[];
 }
 
@@ -161,8 +173,17 @@ export interface OutlineJson {
   [k: string]: unknown;
 }
 
+export interface IdentRangeOutline {
+  schema: "ident.rangeOutline.v1";
+  producer: IdentProducer;
+  observedAtEpochSec: number;
+  source: "outline_json";
+  scope: "last24h" | "alltime" | "points" | "other";
+  coordinates: Array<[number, number]>;
+}
+
 // Semantic aircraft category key used by the rail's FiltersCard.
-// The mapping from aircraft.category (ADS-B A0..C7 letter codes) to these keys
+// The mapping from aircraft.cat (ADS-B A0..C7 letter codes) to these keys
 // lives in predicates.ts.
 export type CategoryKey =
   | "airline"
@@ -225,13 +246,12 @@ export interface TrailPoint {
   alt: number | null;
   ts: number;
   ground?: boolean;
-  stale?: boolean;
   segment: number;
   gs?: number;
   track?: number;
   source?: AircraftType;
   alt_source?: "baro" | "geom";
-  alt_geom?: number;
+  altGeomFt?: number;
 }
 
 export type TrailPointInput = Omit<TrailPoint, "segment"> & {
@@ -258,8 +278,168 @@ export interface ReplayFrame {
   aircraft: Aircraft[];
 }
 
+export interface IdentProducer {
+  kind: "readsb" | "dump1090-fa" | "skyaware978" | "unknown";
+  version?: string;
+}
+
+export type IdentCapabilitySource =
+  | "producer_provided"
+  | "ident_derived"
+  | "unavailable";
+
+export interface IdentCapabilities {
+  aircraft: IdentCapabilitySource;
+  receiverPosition: IdentCapabilitySource;
+  messageRate: IdentCapabilitySource;
+  gain: IdentCapabilitySource;
+  uptime: IdentCapabilitySource;
+  maxRange: IdentCapabilitySource;
+  rangeOutline: IdentCapabilitySource;
+  signalDiagnostics: IdentCapabilitySource;
+  meteorology: IdentCapabilitySource;
+  replay: IdentCapabilitySource;
+  trails: IdentCapabilitySource;
+}
+
+export interface IdentCapabilitiesEnvelope {
+  schema: "ident.capabilities.v1";
+  producer: IdentProducer;
+  capabilities: IdentCapabilities;
+}
+
+export interface IdentConfig {
+  schema: "ident.config.v1";
+  station?: string;
+  lineOfSight?: HeyWhatsThatJson;
+}
+
+export type IdentRouteEntry =
+  | {
+      callsign: string;
+      origin?: string;
+      destination?: string;
+      route?: string;
+      dropped?: false;
+    }
+  | { callsign: string; dropped: true };
+
+export interface IdentRoutes {
+  schema: "ident.routes.v1";
+  observedAtEpochSec?: number;
+  routes: IdentRouteEntry[];
+}
+
+export interface IdentReplayAvailability {
+  schema: "ident.replay.availability.v1";
+  enabled: boolean;
+  fromEpochMs?: number;
+  toEpochMs?: number;
+  blockSec: number;
+  blockCount: number;
+}
+
+export type IdentUnavailableReason =
+  | "not_provided_by_producer"
+  | "awaiting_classification"
+  | "awaiting_second_sample"
+  | "producer_changed"
+  | "counter_reset"
+  | "clock_not_advanced"
+  | "stale_sample"
+  | "malformed_file";
+
+export interface IdentUnavailableValue {
+  kind: "unavailable";
+  reason: IdentUnavailableReason;
+}
+
+export interface IdentProvidedValue<TValue, TSource extends string> {
+  kind: "producer_provided";
+  source: TSource;
+  value: TValue;
+}
+
+export interface IdentDerivedValue<TValue, TSource extends string> {
+  kind: "ident_derived";
+  source: TSource;
+  value: TValue;
+}
+
+export type IdentStatusValue<TValue, TSource extends string> =
+  | IdentProvidedValue<TValue, TSource>
+  | IdentDerivedValue<TValue, TSource>
+  | IdentUnavailableValue;
+
+export interface IdentDiagnostic {
+  severity: "info" | "warning" | "error";
+  channel: string;
+  code: string;
+  message: string;
+  actionLabel?: string;
+  actionUrl?: string;
+}
+
+export type IdentObservedAtStatus = IdentStatusValue<
+  { epochSec: number },
+  "stats_now" | "stats_window_end" | "aircraft_now" | "ingest_clock"
+>;
+
+export interface IdentFreshness {
+  aircraftAgeSec: number | null;
+  statsAgeSec: number | null;
+  receiverObservedAgeSec: number | null;
+}
+
+export interface IdentStatus {
+  schema: "ident.status.v1";
+  producer: IdentProducer;
+  observedAt: IdentObservedAtStatus;
+  freshness: IdentFreshness;
+  receiverPosition?: IdentStatusValue<
+    { lat: number; lon: number },
+    "receiver_json"
+  >;
+  messageRate?: IdentStatusValue<
+    { hz: number; basisSec?: number },
+    | "stats_last1min_messages_valid"
+    | "stats_last1min_messages"
+    | "aircraft_counter_delta"
+  >;
+  gain?: IdentStatusValue<
+    { db: number },
+    | "top_level"
+    | "latest_local"
+    | "last1min_local"
+    | "last5min_local"
+    | "last15min_local"
+    | "total_local"
+  >;
+  uptime?: IdentStatusValue<
+    { sec: number; subject: "receiver" | "ident" },
+    | "stats_now_minus_total_start"
+    | "window_end_minus_total_start"
+    | "ident_process_start"
+  >;
+  maxRange?: IdentStatusValue<
+    {
+      nm: number;
+      scope: "last24h" | "alltime" | "points" | "other" | "stats";
+      computation:
+        | "max_receiver_to_outline_vertex"
+        | "producer_reported_distance";
+    },
+    | "outline_last24h_vertices"
+    | "outline_alltime_vertices"
+    | "outline_points_vertices"
+    | "outline_other_vertices"
+    | "stats_max_distance_meters"
+  >;
+  diagnostics: IdentDiagnostic[];
+}
+
 export interface ReplayBlockFile {
-  version: 1;
+  version: 2;
   start: number;
   end: number;
   step_ms: number;

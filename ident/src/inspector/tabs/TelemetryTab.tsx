@@ -8,6 +8,7 @@ import {
   resolveUnitOverrides,
   temperatureLabelFromC,
 } from "../../settings/format";
+import { padHeading } from "../heading";
 import { KvList, KvRow } from "../KvRow";
 import { loadRouteForAircraft } from "../route";
 
@@ -32,10 +33,6 @@ function categoryText(cat: string | undefined): string {
   if (!cat) return "—";
   const label = CATEGORY_LABELS[cat];
   return label ? `${cat} · ${label}` : cat;
-}
-
-function pad3(n: number): string {
-  return String(Math.round(n)).padStart(3, "0");
 }
 
 export function TelemetryTab({
@@ -65,24 +62,24 @@ export function TelemetryTab({
   }, [flight, lat, lon]);
 
   const ias =
-    aircraft.ias != null
-      ? airSpeedLabelFromKnots(aircraft.ias, units.horizontalSpeed)
+    aircraft.iasKt != null
+      ? airSpeedLabelFromKnots(aircraft.iasKt, units.horizontalSpeed)
       : "—";
   const tas =
-    aircraft.tas != null
-      ? airSpeedLabelFromKnots(aircraft.tas, units.horizontalSpeed)
+    aircraft.tasKt != null
+      ? airSpeedLabelFromKnots(aircraft.tasKt, units.horizontalSpeed)
       : "—";
   const mach = aircraft.mach != null ? `M${aircraft.mach.toFixed(2)}` : "M—";
   const selHdg =
-    aircraft.nav_heading != null ? `${pad3(aircraft.nav_heading)}°` : "—";
+    aircraft.navHdgDeg != null ? `${padHeading(aircraft.navHdgDeg)}°` : "—";
 
   const windStr =
-    aircraft.wd != null && aircraft.ws != null
-      ? `${pad3(aircraft.wd)}° / ${airSpeedLabelFromKnots(aircraft.ws, units.horizontalSpeed)}`
+    aircraft.windDirDeg != null && aircraft.windKt != null
+      ? `${padHeading(aircraft.windDirDeg)}° / ${airSpeedLabelFromKnots(aircraft.windKt, units.horizontalSpeed)}`
       : "—";
   const oatStr =
-    aircraft.oat != null
-      ? temperatureLabelFromC(aircraft.oat, units.temperature)
+    aircraft.oatC != null
+      ? temperatureLabelFromC(aircraft.oatC, units.temperature)
       : "—";
 
   const position =
@@ -104,24 +101,26 @@ export function TelemetryTab({
       aircraft.lat,
       aircraft.lon,
     );
-    fromRx = `${airDistanceLabelFromNm(d, units.distance)} · ${pad3(b)}°`;
+    fromRx = `${airDistanceLabelFromNm(d, units.distance)} · ${padHeading(b)}°`;
   }
 
   return (
     <KvList>
       <KvRow k="Flight" v={aircraft.flight?.trim() || "—"} />
       <KvRow k="ICAO 24" v={aircraft.hex.toUpperCase()} />
-      <KvRow k="Registration" v={aircraft.r || "—"} />
+      <KvRow k="Registration" v={aircraft.reg || "—"} />
       <KvRow
         k="Aircraft"
         v={
-          aircraft.t
-            ? [aircraft.t, aircraft.desc].filter(Boolean).join(" · ")
+          aircraft.typeDesignator
+            ? [aircraft.typeDesignator, aircraft.desc]
+                .filter(Boolean)
+                .join(" · ")
             : "—"
         }
       />
-      <KvRow k="Operator" v={aircraft.ownOp || "—"} />
-      <KvRow k="Category" v={categoryText(aircraft.category)} />
+      <KvRow k="Operator" v={aircraft.op || "—"} />
+      <KvRow k="Category" v={categoryText(aircraft.cat)} />
       <KvRow k="Route" v={route?.route ?? "—"} />
       <KvRow k="Origin" v={route?.origin ?? "—"} />
       <KvRow k="Destination" v={route?.destination ?? "—"} />

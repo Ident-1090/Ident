@@ -196,7 +196,7 @@ describe("replay controls", () => {
     window.cancelAnimationFrame = vi.fn() as typeof window.cancelAnimationFrame;
     globalThis.fetch = vi.fn(async (url: string) =>
       responseJson({
-        version: 1,
+        version: 2,
         start: url.includes("65000-120000") ? 65_000 : 0,
         end: url.includes("65000-120000") ? 120_000 : 60_000,
         step_ms: 1000,
@@ -224,7 +224,7 @@ describe("replay controls", () => {
         ],
         cache: {
           "/api/replay/blocks/0-60000.json.zst": {
-            version: 1,
+            version: 2,
             start: 0,
             end: 60_000,
             step_ms: 1000,
@@ -285,7 +285,7 @@ describe("replay controls", () => {
         ],
         cache: {
           "/api/replay/blocks/0-60000.json.zst": {
-            version: 1,
+            version: 2,
             start: 0,
             end: 60_000,
             step_ms: 1000,
@@ -317,7 +317,7 @@ describe("replay controls", () => {
 
     requests.get("/api/replay/blocks/60000-120000.json.zst")?.resolve(
       responseJson({
-        version: 1,
+        version: 2,
         start: 60_000,
         end: 120_000,
         step_ms: 1000,
@@ -333,7 +333,7 @@ describe("replay controls", () => {
     window.cancelAnimationFrame = vi.fn() as typeof window.cancelAnimationFrame;
     globalThis.fetch = vi.fn(async () =>
       responseJson({
-        version: 1,
+        version: 2,
         start: 60_000,
         end: 120_000,
         step_ms: 1000,
@@ -395,7 +395,7 @@ describe("replay controls", () => {
     ) as typeof window.requestAnimationFrame;
     window.cancelAnimationFrame = vi.fn() as typeof window.cancelAnimationFrame;
     globalThis.fetch = vi.fn(async () =>
-      responseJson({ version: 1, start: 120_000, end: 180_000, frames: [] }),
+      responseJson({ version: 2, start: 120_000, end: 180_000, frames: [] }),
     ) as never;
     useIdentStore.setState((st) => ({
       replay: {

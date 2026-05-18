@@ -216,7 +216,6 @@ export const VALUE_SUGGESTIONS: Record<string, ValueSuggestion[]> = {
     { value: "mlat", desc: "MLAT (multilateration)" },
     { value: "tisb", desc: "All TIS-B sources" },
     { value: "mode_s", desc: "Mode S (no position)" },
-    { value: "adsc", desc: "ADS-C (oceanic / satellite)" },
   ],
   sqk: [
     { value: "7500", desc: "Hijack" },
@@ -837,23 +836,23 @@ export function buildLiveFieldSuggestions(
       if (cs.length >= 3 && /^[A-Z]{3}/.test(cs)) bump(cs.slice(0, 3));
     }
   } else if (field === "hex") {
-    // Most-recently-seen: lowest `seen` value wins. We can't dedupe-by-freq
+    // Most-recently-seenSec: lowest `seen` value wins. We can't dedupe-by-freq
     // since hexes are unique; sort by seen ascending instead.
     const sorted = [...aircraftMap.values()]
       .slice()
-      .sort((a, b) => (a.seen ?? Infinity) - (b.seen ?? Infinity))
+      .sort((a, b) => (a.seenSec ?? Infinity) - (b.seenSec ?? Infinity))
       .slice(0, 10);
     return sorted
       .map((ac) => ac.hex)
       .filter((h): h is string => Boolean(h))
       .map((h) => ({ value: h.toLowerCase(), desc: `hex ${h.toLowerCase()}` }));
   } else if (field === "reg") {
-    for (const ac of aircraftMap.values()) bump(ac.r);
+    for (const ac of aircraftMap.values()) bump(ac.reg);
   } else if (field === "type") {
-    for (const ac of aircraftMap.values()) bump(ac.t);
+    for (const ac of aircraftMap.values()) bump(ac.typeDesignator);
   } else if (field === "op") {
     for (const ac of aircraftMap.values()) {
-      const op = ac.ownOp?.trim().split(/\s+/)[0];
+      const op = ac.op?.trim().split(/\s+/)[0];
       bump(op);
     }
   } else if (field === "rt") {

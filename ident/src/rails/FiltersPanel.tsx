@@ -120,7 +120,7 @@ export function FiltersPanel() {
       unknown: 0,
     };
     for (const ac of aircraft.values()) {
-      counts[categoryKeyFor(ac.category, ac.dbFlags)]++;
+      counts[categoryKeyFor(ac.cat, ac.dbFlags)]++;
     }
     return counts;
   }, [aircraft]);
@@ -153,7 +153,7 @@ export function FiltersPanel() {
               key={c.key}
               active={on}
               aria-pressed={on}
-              aria-label={`Filter category: ${c.label}`}
+              aria-label={`Filter cat: ${c.label}`}
               onClick={() =>
                 setSearchQuery(setCategoryFilterClause(searchQuery, c.key, !on))
               }

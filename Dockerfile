@@ -6,6 +6,7 @@ COPY ident/package.json ident/pnpm-lock.yaml ./
 RUN PNPM_VERSION="$(node -p 'require("./package.json").packageManager.split("@").pop()')" \
   && npm install -g "pnpm@${PNPM_VERSION}" \
   && pnpm install --frozen-lockfile
+COPY schemas/ /src/schemas/
 COPY ident/ ./
 RUN pnpm build
 

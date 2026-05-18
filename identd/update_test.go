@@ -12,6 +12,45 @@ import (
 	"time"
 )
 
+func TestNextUpdateDiagnosticEnvelopeDedupsWhenStatusUnchanged(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/repos/Ident-1090/Ident/releases/latest":
+			_ = json.NewEncoder(w).Encode(githubRelease{
+				TagName:     "v1.2.0",
+				Name:        "Ident v1.2.0",
+				HTMLURL:     "https://github.com/Ident-1090/Ident/releases/tag/v1.2.0",
+				PublishedAt: mustTime(t, "2026-04-23T10:00:00Z"),
+			})
+		case "/repos/Ident-1090/Ident/compare/abc123def456...v1.2.0":
+			_ = json.NewEncoder(w).Encode(githubCompare{Status: "ahead"})
+		}
+	}))
+	defer ts.Close()
+
+	checker := NewUpdateChecker(UpdateCheckerOptions{
+		Enabled: true,
+		Repo:    "Ident-1090/Ident",
+		APIBase: ts.URL,
+		TTL:     time.Hour,
+		Current: VersionInfo{Version: "abc123def456", Commit: "abc123def456"},
+	})
+	normalizer := NewProducerStatusNormalizer()
+
+	env, current := nextUpdateDiagnosticEnvelope(context.Background(), normalizer, checker, nil)
+	if env == nil || current == nil {
+		t.Fatalf("first iteration should publish: env=%q diag=%#v", env, current)
+	}
+
+	// Same status on the next tick must not re-broadcast: the goroutine
+	// runs forever on a fixed interval and naive republish floods clients
+	// with identical envelopes for the lifetime of the release window.
+	env2, _ := nextUpdateDiagnosticEnvelope(context.Background(), normalizer, checker, current)
+	if env2 != nil {
+		t.Fatalf("identical status republished: env=%q", env2)
+	}
+}
+
 func TestUpdateCheckerReportsAvailableRelease(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -51,6 +90,16 @@ func TestUpdateCheckerReportsAvailableRelease(t *testing.T) {
 	}
 	if status.Error != "" {
 		t.Fatalf("error = %q", status.Error)
+	}
+	diagnostic, ok := status.Diagnostic()
+	if !ok {
+		t.Fatal("available update did not produce diagnostic")
+	}
+	if diagnostic.Code != "update.release.available" || diagnostic.Severity != "info" {
+		t.Fatalf("diagnostic = %#v", diagnostic)
+	}
+	if diagnostic.ActionURL == "" || diagnostic.ActionLabel != "Release notes" {
+		t.Fatalf("diagnostic action = %#v", diagnostic)
 	}
 }
 

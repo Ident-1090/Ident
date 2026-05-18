@@ -11,15 +11,16 @@ import {
 
 const UAL: Aircraft = {
   hex: "abc123",
+  idKind: "icao",
   flight: "UAL123",
-  t: "B738",
-  alt_baro: 34000,
-  gs: 420,
-  track: 90,
+  typeDesignator: "B738",
+  altBaroFt: 34000,
+  gsKt: 420,
+  trackDeg: 90,
   lat: 37.42,
   lon: -122.08,
-  seen: 0,
-  type: "adsb_icao",
+  seenSec: 0,
+  source: "adsb_icao",
 };
 
 const units = resolveUnitOverrides("metric", presetUnitOverrides("metric"));
