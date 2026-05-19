@@ -3,10 +3,12 @@ import {
   type CSSProperties,
   type KeyboardEvent,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import { match, P } from "ts-pattern";
+import { useFrontendDiagnosticsSnapshot } from "../data/frontendDiagnostics";
 import {
   diagnosticIdentity,
   type NotificationSuppression,
@@ -124,7 +126,18 @@ export interface ReceiverDiagnostics {
 export function useReceiverDiagnostics(): ReceiverDiagnostics {
   const identStatus = useIdentStore((s) => s.identStatus);
   const capabilities = useIdentStore((s) => s.capabilities?.capabilities);
-  const diagnostics = useIdentStore((s) => s.diagnostics);
+  const backendDiagnostics = useIdentStore((s) => s.diagnostics);
+  const frontendDiagnostics = useFrontendDiagnosticsSnapshot();
+  // Merge backend + frontend diagnostics into one list sorted newest-first.
+  // Frontend codes live under a `frontend.*` channel namespace so identity
+  // collisions with backend codes are impossible — straight concat is safe.
+  const diagnostics = useMemo(
+    () =>
+      [...backendDiagnostics, ...frontendDiagnostics].sort(
+        (a, b) => b.seenAtEpochMs - a.seenAtEpochMs,
+      ),
+    [backendDiagnostics, frontendDiagnostics],
+  );
 
   const normalizedGain = presentStatusValue(identStatus?.gain)?.db ?? null;
   const gainLabel =

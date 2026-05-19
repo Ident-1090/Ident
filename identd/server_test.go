@@ -436,7 +436,9 @@ func TestServerServesReplayManifestAndIndexedBlock(t *testing.T) {
 	}
 
 	client := &http.Client{Transport: &http.Transport{DisableCompression: true}}
-	resp, err = client.Get(ts.URL + "/api/replay/blocks/" + block.Name)
+	zstdReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/replay/blocks/"+block.Name, nil)
+	zstdReq.Header.Set("Accept-Encoding", "zstd")
+	resp, err = client.Do(zstdReq)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -446,6 +448,62 @@ func TestServerServesReplayManifestAndIndexedBlock(t *testing.T) {
 	}
 	if got := resp.Header.Get("Content-Encoding"); got != "zstd" {
 		t.Fatalf("encoding = %q, want zstd", got)
+	}
+
+	// Client without zstd in Accept-Encoding (plain-HTTP Chrome): the
+	// server must still passthrough the raw bytes but omit the encoding
+	// header so the browser does not try to natively decode. The client
+	// detects the zstd magic and decompresses in JS instead.
+	plainReq, _ := http.NewRequest(http.MethodGet, ts.URL+"/api/replay/blocks/"+block.Name, nil)
+	plainReq.Header.Set("Accept-Encoding", "gzip, deflate")
+	resp, err = client.Do(plainReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("plain block status = %d", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Content-Encoding"); got != "" {
+		t.Fatalf("plain block content-encoding = %q, want empty", got)
+	}
+	if got := resp.Header.Get("Content-Type"); got != "application/octet-stream" {
+		t.Fatalf("plain block content-type = %q, want application/octet-stream", got)
+	}
+	// Magic check that the body really is raw zstd, not silently decoded.
+	if len(body) < 4 || body[0] != 0x28 || body[1] != 0xb5 || body[2] != 0x2f || body[3] != 0xfd {
+		t.Fatalf("plain block body does not start with zstd magic; first 8 bytes: %x", body[:min(8, len(body))])
+	}
+}
+
+func TestClientAcceptsZstd(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"", false},
+		{"gzip, deflate", false},
+		{"zstd", true},
+		{"gzip, deflate, br, zstd", true},
+		{"ZSTD", true},
+		{"zstd;q=0.5", true},
+		{"zstd;q=0", false},
+		{"zstd; q=0", false},
+		{"zstd ;q=0", false},
+		{"zstd;Q=0", false},
+		{"gzip, zstd;q=0, deflate", false},
+		// Wildcard only promises acceptance of unlisted encodings, not the
+		// ability to decode them. Treat as not-zstd.
+		{"*", false},
+		// "identity" explicitly asks for no encoding.
+		{"identity", false},
+		{"identity;q=1, gzip", false},
+	}
+	for _, tc := range cases {
+		if got := clientAcceptsZstd(tc.in); got != tc.want {
+			t.Errorf("clientAcceptsZstd(%q) = %v, want %v", tc.in, got, tc.want)
+		}
 	}
 }
 

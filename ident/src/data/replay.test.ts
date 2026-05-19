@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  __resetFrontendDiagnosticsForTest,
+  snapshotFrontendDiagnostics,
+} from "./frontendDiagnostics";
+import {
   blocksForRange,
   ensureReplayRange,
   refreshReplayManifest,
@@ -49,6 +53,7 @@ function resetStore() {
 describe("replay data loading", () => {
   beforeEach(() => {
     resetStore();
+    __resetFrontendDiagnosticsForTest();
     window.history.replaceState(null, "", "/ident/#/");
   });
 
@@ -56,6 +61,7 @@ describe("replay data loading", () => {
     globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
     window.history.replaceState(null, "", "/");
+    __resetFrontendDiagnosticsForTest();
   });
 
   it("loads the manifest from the mounted app path", async () => {
@@ -611,6 +617,49 @@ describe("replay data loading", () => {
       ],
     ).toBeTruthy();
   });
+
+  it("surfaces a frontend diagnostic when a replay block fails to decode", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    globalThis.fetch = vi.fn(async (url: string) =>
+      url.includes("manifest")
+        ? responseJson(manifest())
+        : responseJson({ version: 2, frames: null }),
+    ) as never;
+
+    await refreshReplayManifest();
+    await ensureReplayRange(120_000, 180_000, { background: true });
+
+    const snap = snapshotFrontendDiagnostics();
+    const decodeDiag = snap.find(
+      (d) => d.code === "replay.block_decode_failed",
+    );
+    expect(decodeDiag).toBeDefined();
+    expect(decodeDiag?.channel).toBe("frontend.replay");
+    expect(decodeDiag?.severity).toBe("warning");
+    expect(decodeDiag?.message).toContain(
+      "/api/replay/blocks/120000-180000.json.zst",
+    );
+  });
+
+  it("surfaces a frontend diagnostic when a replay block fetch fails", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    globalThis.fetch = vi.fn(async (url: string) => {
+      if (url.includes("manifest")) return responseJson(manifest());
+      return { ok: false, status: 502, json: async () => null } as Response;
+    }) as never;
+
+    await refreshReplayManifest();
+    await ensureReplayRange(120_000, 180_000, { background: true });
+
+    const snap = snapshotFrontendDiagnostics();
+    const loadDiag = snap.find((d) => d.code === "replay.block_load_failed");
+    expect(loadDiag).toBeDefined();
+    expect(loadDiag?.channel).toBe("frontend.replay");
+    expect(loadDiag?.severity).toBe("warning");
+    expect(loadDiag?.message).toContain(
+      "/api/replay/blocks/120000-180000.json.zst",
+    );
+  });
 });
 
 function manifest() {
@@ -687,7 +736,17 @@ function replayBlock() {
 }
 
 function responseJson(body: unknown): Response {
-  return { ok: true, status: 200, json: async () => body } as Response;
+  return {
+    ok: true,
+    status: 200,
+    json: async () => body,
+    // Replay block loads read the response as bytes and decide whether to
+    // zstd-decompress based on a magic-byte prefix check. The mock surfaces
+    // the JSON serialization here so the no-zstd-magic path parses straight
+    // through; tests that exercise the zstd path can override arrayBuffer.
+    arrayBuffer: async () =>
+      new TextEncoder().encode(JSON.stringify(body)).buffer,
+  } as Response;
 }
 
 function abortError(): DOMException {

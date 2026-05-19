@@ -367,10 +367,13 @@ directory behind the reverse proxy and let the proxy serve finalized
 `.json.zst` files directly:
 
 ```caddyfile
+@accepts_zstd header Accept-Encoding *zstd*
+
 handle_path /api/replay/blocks/* {
 	root * /var/lib/ident/replay/blocks
-	header Content-Type application/json
-	header Content-Encoding zstd
+	header Content-Type application/octet-stream
+	header @accepts_zstd Content-Type application/json
+	header @accepts_zstd Content-Encoding zstd
 	header Cache-Control "public, max-age=31536000, immutable"
 	file_server
 }

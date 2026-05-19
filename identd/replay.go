@@ -238,10 +238,46 @@ func (s *ReplayStore) ServeBlock(w http.ResponseWriter, r *http.Request, name st
 		return
 	}
 	path := filepath.Join(s.blocksDir, block.Name)
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Content-Encoding", "zstd")
+	// Negotiate Content-Encoding from the request. The file on disk is
+	// always raw zstd. When the client accepts zstd we passthrough with the
+	// encoding header set so the browser decompresses natively. When it
+	// doesn't (notably plain-HTTP Chrome, which restricts zstd to HTTPS)
+	// we still passthrough the raw bytes but omit the encoding header —
+	// the client detects the zstd magic and decompresses in JS. We never
+	// decompress on the server: that would be a CPU amplification vector.
+	if clientAcceptsZstd(r.Header.Get("Accept-Encoding")) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Encoding", "zstd")
+	} else {
+		w.Header().Set("Content-Type", "application/octet-stream")
+	}
 	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 	http.ServeFile(w, r, path)
+}
+
+// clientAcceptsZstd reports whether the Accept-Encoding header contains a
+// usable zstd token. Honors the explicit-disable form "zstd;q=0" but
+// otherwise ignores q-values — they're vanishingly rare in practice and
+// every modern client either lists zstd or doesn't.
+//
+// Wildcard "*" and "identity" are intentionally treated as not-zstd: "*"
+// only promises that unlisted encodings are acceptable, not that the client
+// can decode them, and "identity" explicitly asks for no encoding. Sending
+// raw zstd to either group would re-create the ERR_CONTENT_DECODING_FAILED
+// failure mode this whole path exists to prevent.
+func clientAcceptsZstd(header string) bool {
+	for _, raw := range strings.Split(header, ",") {
+		parts := strings.SplitN(strings.TrimSpace(raw), ";", 2)
+		token := strings.TrimSpace(parts[0])
+		if !strings.EqualFold(token, "zstd") {
+			continue
+		}
+		if len(parts) == 2 && strings.EqualFold(strings.TrimSpace(parts[1]), "q=0") {
+			return false
+		}
+		return true
+	}
+	return false
 }
 
 func (s *ReplayStore) removeTempFiles() error {

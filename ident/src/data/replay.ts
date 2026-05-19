@@ -1,4 +1,9 @@
 import { appPath } from "./basePath";
+import { emitFrontendDiagnostic } from "./frontendDiagnostics";
+import {
+  decodeReplayBlockResponse,
+  ReplayBlockBodyError,
+} from "./replayBlockBody";
 import { replayFollowsLiveEdge, useIdentStore } from "./store";
 import type {
   ReplayBlockFile,
@@ -44,8 +49,11 @@ class ReplayLoadCanceled extends Error {
 }
 
 class ReplayBlockFormatError extends Error {
-  constructor(readonly url: string) {
-    super(`Invalid replay block: ${url}`);
+  constructor(
+    readonly url: string,
+    options?: { cause?: unknown },
+  ) {
+    super(`Invalid replay block: ${url}`, options);
     this.name = "ReplayBlockFormatError";
   }
 }
@@ -188,25 +196,48 @@ function loadReplayBlock(block: ReplayBlockIndex): Promise<void> | null {
     try {
       if (useIdentStore.getState().replay.cache[block.url]) return;
       const url = appPath(block.url.replace(/^\//, ""));
-      const body = await fetchJson<ReplayBlockFile>(
+      const bytes = await fetchReplayBlockBytes(
         url,
-        {
-          cache: "force-cache",
-        },
+        { cache: "force-cache" },
         controller.signal,
       );
       if (controller.signal.aborted) throw new ReplayLoadCanceled();
+      const body = decodeReplayBlockResponse(bytes) as ReplayBlockFile;
       if (body.version !== 2 || !Array.isArray(body.frames)) {
         throw new ReplayBlockFormatError(block.url);
       }
       useIdentStore.getState().setReplayBlock(block.url, body);
     } catch (err) {
-      if (
-        err instanceof ReplayLoadCanceled ||
-        err instanceof ReplayBlockFormatError
-      ) {
+      if (err instanceof ReplayLoadCanceled) {
         throw err;
       }
+      if (err instanceof ReplayBlockFormatError) {
+        emitFrontendDiagnostic({
+          severity: "warning",
+          channel: "frontend.replay",
+          code: "replay.block_decode_failed",
+          message: `Could not decode replay block ${block.url}`,
+        });
+        throw err;
+      }
+      if (err instanceof ReplayBlockBodyError) {
+        emitFrontendDiagnostic({
+          severity: "warning",
+          channel: "frontend.replay",
+          code: "replay.block_decode_failed",
+          message: `Could not decode replay block ${block.url}`,
+        });
+        // Forward the fzstd / JSON.parse cause so console + debuggers can
+        // surface why the body failed; the bare format error otherwise only
+        // names the URL.
+        throw new ReplayBlockFormatError(block.url, { cause: err });
+      }
+      emitFrontendDiagnostic({
+        severity: "warning",
+        channel: "frontend.replay",
+        code: "replay.block_load_failed",
+        message: `Could not load replay block ${block.url}`,
+      });
       throw new ReplayBlockLoadError(block.url, err);
     } finally {
       if (blockLoads.get(block.url)?.promise === load) {
@@ -278,6 +309,46 @@ function manifestIndexByUrl(blocks: ReplayBlockIndex[]): Map<string, number> {
   });
   blockIndexByManifest.set(blocks, next);
   return next;
+}
+
+// fetchReplayBlockBytes returns the raw response body for a block URL. The
+// caller decides whether to parse as JSON or zstd-decompress-then-parse via
+// decodeReplayBlockResponse — we cannot tell from the response which form
+// the server delivered, since modern browsers strip Content-Encoding once
+// they've natively decoded.
+async function fetchReplayBlockBytes(
+  url: string,
+  init: RequestInit,
+  abortSignal: AbortSignal,
+): Promise<Uint8Array> {
+  const controller = new AbortController();
+  let timedOut = false;
+  let canceled = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, REPLAY_FETCH_TIMEOUT_MS);
+  const abort = () => {
+    canceled = true;
+    controller.abort();
+  };
+  if (abortSignal.aborted) throw new ReplayLoadCanceled();
+  abortSignal.addEventListener("abort", abort, { once: true });
+  try {
+    const res = await fetch(url, { ...init, signal: controller.signal });
+    if (!res.ok) throw new Error(`Replay request failed: ${res.status}`);
+    return new Uint8Array(await res.arrayBuffer());
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      if (canceled || abortSignal.aborted) throw new ReplayLoadCanceled();
+      if (!timedOut) throw new ReplayLoadCanceled();
+      throw new Error("Replay request timed out");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+    abortSignal.removeEventListener("abort", abort);
+  }
 }
 
 async function fetchJson<T>(

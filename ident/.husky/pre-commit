@@ -13,4 +13,9 @@ go test . -run TestIdentSchemasAreCurrent -count=1
 
 cd "$repo_root/ident"
 pnpm check-ident-schemas
+# Full-tree format check matches CI's `pnpm format:check`. lint-staged only
+# touches files in its glob, so anything outside it (e.g. scripts/, ad-hoc
+# fixtures) could slip past pre-commit but trip CI. Catching it here keeps
+# the two scopes in sync.
+pnpm format:check
 pnpm exec lint-staged
