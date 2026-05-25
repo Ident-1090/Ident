@@ -20,6 +20,11 @@ identd/web/*
 # Generated receiver fixture output.
 fixtures/receiver-sample/
 
+# Documentation site.
+docs/node_modules/
+docs/.vitepress/dist/
+docs/.vitepress/cache/
+
 # Local working instructions for this release-prep checkout.
 CLAUDE.local.md
 AGENTS.override.md

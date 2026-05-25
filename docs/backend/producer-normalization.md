@@ -1,0 +1,165 @@
+# Producer normalization
+
+ADS-B decoders write a handful of JSON files to disk: a live aircraft snapshot,
+a receiver description, a statistics file, and a range outline. `identd` watches
+these files and republishes them over its websocket hub as Ident-owned types.
+The supported decoders (readsb, dump1090-fa, and the dump978/skyaware978 UAT
+decoder) overlap in what they write but disagree on field names, units, and
+which files they emit at all. All of that dialect knowledge lives in one place
+in `identd`, behind a small per-decoder adapter. The frontend never sees raw
+decoder JSON.
+
+## Why the differences are absorbed in one place
+
+The alternative would be to forward decoder JSON more or less untouched and let
+the frontend branch on which decoder is running. That spreads dialect knowledge
+across the whole system: a schema change, a unit quirk, or a newly supported
+decoder would mean edits in both the backend and the frontend, and the frontend
+would carry conditional logic for decoders a given operator will never run.
+Folding the differences into `identd` keeps the frontend contract fixed
+regardless of what sits underneath, at the cost of a translation layer that has
+to be kept honest against each decoder's actual output.
+
+## The adapter shape
+
+Each decoder is represented by an adapter that knows how to do a few things:
+recognize its own decoder from the receiver file, describe which pieces of
+operational data that decoder actually provides, and translate each of the four
+files into Ident types. An adapter that cannot supply a given file says so
+rather than guessing; the UAT decoder, for instance, emits no statistics file
+and no range outline, and its adapter reports both as absent.
+
+The receiver file translates into a small record holding the decoder name, a
+version string, and the receiver's coordinates when present. The statistics
+file becomes a message rate, a gain figure, an uptime, and a maximum observed
+range, each tagged with whether the value came from the decoder or was derived
+by Ident. The aircraft file becomes a list of normalized aircraft. The outline
+file becomes a polygon.
+
+## How a decoder is identified
+
+Identification runs when the receiver file changes, not on every aircraft frame.
+Aircraft data arrives at roughly one update per second; re-deciding the decoder
+identity that often would be wasted work, and the identity rarely changes once a
+deployment is running. The decision is made from the content of the receiver
+file rather than from file paths, because an operator can mount a decoder's
+output wherever they like.
+
+There is no scoring. Adapters are tried in a fixed order and the first one that
+recognizes the receiver file wins; nothing weighs how well several adapters
+match. readsb is tried first and is identified by an explicit flag it sets in
+its receiver file. The UAT decoder is tried next and is identified by a version
+string that begins with its name. dump1090-fa is tried last and is identified by
+its version string containing a known marker. A version string that is merely
+present, or non-empty, does not identify dump1090-fa; the marker has to be there.
+
+```mermaid
+flowchart TD
+  C[receiver file changes] --> R{readsb flag set?}
+  R -->|yes| RB[readsb]
+  R -->|no| U{version begins with the UAT decoder name?}
+  U -->|yes| UAT[dump978 / skyaware978]
+  U -->|no| D{version contains the dump1090-fa marker?}
+  D -->|yes| DF[dump1090-fa]
+  D -->|no| UN[unclassified]
+```
+
+Order is the only tie-breaker, and that has a consequence worth stating: a feed
+whose version string begins with the UAT decoder's name is claimed by that
+adapter before the dump1090-fa check ever runs. Keeping order as the sole
+priority mechanism avoids a configuration table that most deployments would
+never touch, but it does mean the order itself is load-bearing, including in
+tests, where reordering the adapters changes which one claims an ambiguous fixture.
+
+A decoder that no adapter recognizes stays unclassified. Some decoders write
+aircraft JSON that Ident could in principle read but are simply not recognized
+by any adapter and so never get classified. Others are structurally
+incompatible: a decoder whose aircraft file is a bare array, without the
+surrounding frame fields Ident expects, would be rejected during translation
+even if it were somehow classified. These are different situations, but from the
+operator's point of view both end the same way, with no decoder-shaped data
+published.
+
+## Forcing a decoder, and catching the disagreement
+
+An operator can override automatic identification and name the decoder
+explicitly through an environment variable or its matching command-line flag,
+with a few accepted spellings per decoder. The override selects the adapter, but
+automatic identification still runs on every receiver-file change. When the two
+disagree, `identd` emits a diagnostic rather than quietly trusting the override,
+so a misconfiguration is visible instead of hidden. If the named decoder is one
+this build does not support, that is reported too.
+
+## Nothing is published before classification
+
+`identd` starts the receiver-file watcher right away but holds off on the
+aircraft, statistics, and outline watchers until a decoder has been identified.
+Until then there is no adapter to translate those files, and starting their
+watchers early would produce a steady stream of "waiting for classification"
+diagnostics, one per file update. The HTTP server starts before this gate so the
+interface stays reachable while the wait plays out. No decoder-shaped data
+reaches the hub until classification succeeds.
+
+## Where the decoders actually differ
+
+Most of the aircraft translation is shared across decoders. The visible
+per-decoder differences are in how the statistics file becomes a status, and
+they are mostly about units and which field to trust.
+
+readsb's message rate comes from a count it labels as valid messages over its
+recent window. That label means the message decoded to a plausible result, not
+that it passed a strict integrity check, so the rate should be read as
+"plausibly valid traffic" rather than a clean-signal guarantee. readsb reports
+maximum range in meters; the adapter converts to nautical miles before putting
+it on the wire, and the conversion matters, because treating the figure as kilometers
+would be wrong by roughly two orders of magnitude. Uptime is the gap between the
+file's current timestamp and the start of its all-time window.
+
+dump1090-fa takes its message rate from a plain message count rather than a
+validity-filtered one, and its window boundaries are floating-point seconds, not
+milliseconds; a decoder that assumed milliseconds would compute an interval a
+thousand times too short. Its uptime is measured from the end of the recent
+window back to the start of the all-time window. It writes no range outline.
+
+The UAT decoder writes no statistics file at all, so its adapter produces no
+status from one, and it marks gain and uptime as unavailable rather than
+implying they exist.
+
+## What a normalized aircraft looks like
+
+A normalized aircraft frame carries one entry per aircraft the decoder currently
+sees. The fields are an effective union across the supported decoders: a field
+that any one decoder can supply has a place in the Ident type, and frames simply
+omit the fields a given aircraft or decoder does not provide.
+
+Field names carry their units, so a reader does not have to remember which
+decoder measures a given quantity in which unit. The aircraft address is always
+present and lowercased, and a separate classification of the address records
+whether it looks like a standard ICAO address, a non-ICAO address, or something
+unrecognized. The decoder's notion of how a track was acquired is mapped onto a
+closed set of values; an acquisition type Ident does not know about becomes
+"unknown" rather than leaking the raw decoder string onto the wire. No raw
+decoder fields are forwarded untranslated.
+
+Ground state gets special handling because decoders express it in more than one
+way. A frame may carry an explicit ground flag, an altitude field whose value is
+the literal text "ground", or a separate air/ground field that may be a word or
+a number. The adapter folds these into a single on-ground value, preferring the
+explicit flag, then the altitude sentinel, then the air/ground field. Barometric
+altitude is reported only as a number; when the decoder signals ground through
+the altitude field, the altitude is treated as absent rather than as a height.
+This single on-ground value is what trail segmentation reads (see
+[Aircraft trails](/backend/trails)).
+
+## What each decoder can do
+
+Alongside the status and aircraft data, `identd` publishes a description of which
+features a decoder supports. Each feature is marked as provided by the decoder,
+derived by Ident, or unavailable. The adapter sets a conservative baseline for
+its decoder when the receiver file is read, and live data can promote a feature
+as statistics or aircraft frames confirm it is actually present. Promotion is
+one-directional within a single decoder: a later receiver-file update does not
+demote a feature that earlier live data already established, so the interface
+does not flicker a capability off and on as files arrive in different orders.
+A demotion happens only on a real change of circumstance, such as the decoder
+itself changing.

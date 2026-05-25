@@ -12,17 +12,13 @@ aircraft details, receiver status, and range overlays in one place. It runs
 beside the decoder and feeder software you already use, so your receiver can
 keep hearing and sharing aircraft the same way it does today.
 
-<!-- Screenshot placeholder:
+## Documentation
 
-Add desktop and mobile screenshots for the release page.
+Full documentation lives on [Ident docs](https://ident-1090.github.io/Ident/).
+Install, configuration, and design details are there. This README is a short
+overview and a set of pointers.
 
-Suggested layout:
-- Desktop map with traffic list and aircraft inspector open.
-- Mobile map with bottom sheet or drawer visible.
-
--->
-
-## What You Get
+## What you get
 
 - A modern ADS-B traffic screen built around your receiver data.
 - Omnibar search and filters for flights, registrations, squawks, aircraft
@@ -39,7 +35,7 @@ Suggested layout:
 Ident is a display and operator console. It is not a radio decoder, feeder
 client, or MLAT client.
 
-## Receiver Compatibility
+## Receiver compatibility
 
 Ident is built for common self-hosted ADS-B receiver stacks.
 
@@ -59,527 +55,44 @@ part of the supported compatibility set yet.
 ## Install
 
 Ident ships as `identd`, a single local service that serves the web app and
-streams receiver updates to browsers. Release builds embed the web UI into the
-Go binary with `go:embed`.
+streams receiver updates to browsers. It installs as a Docker Compose service,
+which is the tested path, or as a Debian package or standalone binary.
 
-Pick the install style that matches how you manage the receiver today:
-
-- **Debian package** for PiAware, readsb, and other Debian/Raspberry Pi OS
-  receiver boxes.
-- **Docker Compose** when your receiver stack already runs in containers.
-- **Standalone binary** for manual installs, non-Debian systems, and testing.
-
-### Debian Package
-
-Run this on the receiver host to download the latest `.deb` for its CPU and
-install it:
-
-```sh
-set -eu
-case "$(dpkg --print-architecture)" in
-  amd64) ident_arch=linux-amd64 ;;
-  arm64) ident_arch=linux-arm64 ;;
-  armhf) ident_arch=linux-armv7 ;;
-  *)
-    echo "Unsupported Debian architecture: $(dpkg --print-architecture)" >&2
-    exit 1
-    ;;
-esac
-
-curl -fL \
-  "https://github.com/Ident-1090/Ident/releases/latest/download/identd-${ident_arch}.deb" \
-  -o identd.deb
-sudo apt install ./identd.deb
-```
-
-This covers `amd64`, `arm64`, and 32-bit Raspberry Pi OS `armhf` installs.
-
-Start Ident:
-
-```sh
-sudo systemctl enable --now identd
-```
-
-Then open this from another device on the same network:
-
-```text
-http://receiver.local:8080/
-```
-
-If your receiver is not named `receiver.local`, use its hostname or IP address.
-
-Most supported installs need no config change. If Ident cannot find traffic,
-edit `/etc/ident/identd.env` and set the receiver JSON directory:
-
-```sh
-IDENT_DATA_DIR=/run/readsb
-```
-
-Then restart:
-
-```sh
-sudo systemctl restart identd
-```
-
-### Docker Compose
-
-For Docker installs, use Compose so the service starts again after reboot and
-keeps the receiver data mount in one place.
-
-If the decoder writes JSON on the host, mount that directory read-only:
-
-```yaml
-services:
-  ident:
-    image: ghcr.io/ident-1090/ident:latest
-    restart: unless-stopped
-    ports:
-      - "8080:8080"
-    environment:
-      IDENT_ADDR: ":8080"
-      IDENT_DATA_DIR: "/run/readsb"
-    volumes:
-      - /run/readsb:/run/readsb:ro
-```
-
-The left side of the volume is the path on the receiver host. The right side is
-the path inside the Ident container, and should match `IDENT_DATA_DIR`.
-Recent trails are kept by `identd`; Docker's writable container layer preserves
-the compressed trail cache across a normal `docker restart`.
-
-If Ident is being added to an existing Compose stack, share the same receiver
-JSON volume with the decoder service:
-
-```yaml
-services:
-  receiver:
-    # Your existing decoder service.
-    volumes:
-      - receiver-json:/run/readsb
-
-  ident:
-    image: ghcr.io/ident-1090/ident:latest
-    restart: unless-stopped
-    ports:
-      - "8080:8080"
-    environment:
-      IDENT_ADDR: ":8080"
-      IDENT_DATA_DIR: "/run/readsb"
-    volumes:
-      - receiver-json:/run/readsb:ro
-
-volumes:
-  receiver-json:
-    driver_opts:
-      type: tmpfs
-      device: tmpfs
-```
-
-In that layout, the decoder writes `aircraft.json` into the shared volume and
-Ident reads the same files without needing direct access to the host filesystem.
-
-The `tmpfs` driver keeps the JSON in RAM rather than on disk. Decoders rewrite
-`aircraft.json` at ~1 Hz; on a Raspberry Pi or any flash-backed host that's a
-fast path to wearing the storage out. The files are ephemeral anyway — they
-describe live receiver state, not anything that needs to survive a restart.
-
-Start it:
-
-```sh
-docker compose up -d
-```
-
-Then open it from the receiver host or another device on the same network:
-
-```text
-http://receiver.local:8080/
-```
-
-### Standalone Binary
-
-For manual installs, download the latest binary archive for the current OS and
-CPU:
-
-```sh
-set -eu
-
-case "$(uname -s)" in
-  Linux) ident_os=linux ;;
-  Darwin) ident_os=darwin ;;
-  FreeBSD) ident_os=freebsd ;;
-  *)
-    echo "Unsupported OS: $(uname -s)" >&2
-    exit 1
-    ;;
-esac
-
-case "$(uname -m)" in
-  x86_64|amd64) ident_arch=amd64 ;;
-  aarch64|arm64) ident_arch=arm64 ;;
-  armv7l|armv7*) ident_arch=armv7 ;;
-  *)
-    echo "Unsupported CPU: $(uname -m)" >&2
-    exit 1
-    ;;
-esac
-
-curl -fL \
-  "https://github.com/Ident-1090/Ident/releases/latest/download/identd-${ident_os}-${ident_arch}.tar.gz" \
-  -o identd.tar.gz
-tar -xzf identd.tar.gz
-
-./identd \
-  --addr 0.0.0.0:8080 \
-  --data-dir /run/readsb
-```
-
-Use `--addr 127.0.0.1:8080` when Ident is behind a same-host reverse proxy. Use
-`--addr 0.0.0.0:8080` when other devices on your LAN should connect directly.
-
-### Finding Receiver Data
-
-Ident needs read-only access to the directory containing `aircraft.json`.
-Common paths are:
-
-```text
-/run/readsb
-/run/dump1090-fa
-/run/skyaware978
-```
-
-Check the receiver host:
-
-```sh
-ls /run/readsb/aircraft.json
-ls /run/dump1090-fa/aircraft.json
-ls /run/skyaware978/aircraft.json
-```
-
-Use the path that exists as `IDENT_DATA_DIR` or `--data-dir`.
+The [install guide](https://ident-1090.github.io/Ident/getting-started/install)
+walks through each method, points Ident at your receiver data, and covers
+per-decoder setup.
 
 ## Configuration
 
-Most installs only need an address and a receiver data directory.
-
-```sh
-IDENT_ADDR=127.0.0.1:8080
-```
-
-When `IDENT_DATA_DIR` is unset, `identd` looks for `aircraft.json` in common
-receiver runtime directories such as `/run/readsb` and `/run/dump1090-fa`. Set
-`IDENT_DATA_DIR` when your receiver writes JSON somewhere else.
-
-Ident serves at the URL root by default. If your reverse proxy passes a path
-prefix through to `identd`, set the same prefix on the service:
-
-```sh
-IDENT_BASE_PATH=/ident
-```
-
-If your reverse proxy strips the prefix before forwarding, leave
-`IDENT_BASE_PATH` unset. Do not both strip the prefix and set `IDENT_BASE_PATH`.
-
-Receiver file names are configurable for stacks that use a different layout.
-
-```sh
-IDENT_DATA_DIR=/run/readsb
-IDENT_AIRCRAFT_FILE=aircraft.json
-IDENT_RECEIVER_FILE=receiver.json
-IDENT_STATS_FILE=stats.json
-IDENT_OUTLINE_FILE=outline.json
-```
-
-For PiAware and dump1090-fa, set `IDENT_DATA_DIR` to the directory where
-`aircraft.json` is written.
-
-Ident usually detects the upstream type from `receiver.json`. If a receiver
-setup needs an explicit selection, set `IDENT_UPSTREAM_TYPE` or pass
-`--upstream-type`.
-
-```sh
-IDENT_UPSTREAM_TYPE=dump1090-fa
-```
-
-Supported values are `readsb`, `dump1090-fa`, and `skyaware978`. The aliases
-`piaware`, `dump978-fa`, and `dump978` are also accepted. An invalid value is
-ignored and surfaced as a diagnostic notification while Ident falls back to
-automatic detection.
-
-### Station identity and overlays
-
-Optional. These show up in the UI and as part of the Line-of-Sight overlay
-when present.
-
-```sh
-IDENT_STATION_NAME="My Station"
-IDENT_HEYWHATSTHAT_PANORAMA_ID=YOUR_PANORAMA_ID
-IDENT_HEYWHATSTHAT_ALTS=1000,3000,10000
-```
-
-`IDENT_HEYWHATSTHAT_PANORAMA_ID` points at a panorama you generated on
-[heywhatsthat.com](https://heywhatsthat.com). `IDENT_HEYWHATSTHAT_ALTS` is a
-comma-separated list of altitudes for the rings; leave it unset for a single
-40,000 ft (12,192 m) ring.
-
-### Trails
-
-Ident keeps recent aircraft trails inside `identd` instead of requiring a
-separate history producer. The defaults retain two hours, sample each aircraft
-at most once every five seconds, and write a compressed restart cache once a
-minute.
-
-```sh
-IDENT_TRAILS_MEMORY_WINDOW_SEC=7200
-IDENT_TRAILS_SAMPLE_INTERVAL_SEC=5
-IDENT_TRAILS_RESTART_CACHE=true
-IDENT_TRAILS_RESTART_CACHE_DIR=/var/cache/ident
-IDENT_TRAILS_RESTART_CACHE_INTERVAL_SEC=60
-```
-
-Disabling the restart cache keeps trails memory-only; they will be lost when
-`identd` exits.
-
-### Replay
-
-Replay is opt-in because it writes longer-lived history blocks. When enabled,
-`identd` samples live `aircraft.json`, closes one compressed block every five
-minutes, writes an index, and prunes old blocks by both age and byte budget.
-The byte budget is mandatory so a misconfigured receiver cannot fill the host
-disk.
-
-```sh
-IDENT_REPLAY_ENABLE=true
-IDENT_REPLAY_DIR=/var/lib/ident/replay
-IDENT_REPLAY_RETENTION_SEC=259200
-IDENT_REPLAY_MAX_BYTES=524288000
-IDENT_REPLAY_BLOCK_SEC=300
-IDENT_REPLAY_SAMPLE_INTERVAL_SEC=5
-```
-
-With the example above, Ident keeps up to three days of replay data and never
-keeps more than 500 MiB of finalized blocks. The currently open block is not
-listed or served until it rolls over, so the smallest replay unit is five
-minutes.
-
-`identd` can serve replay blocks itself through `/api/replay/blocks/*`. Replay
-blocks are JSON compressed with zstd. For busy public displays, put the replay
-directory behind the reverse proxy and let the proxy serve finalized
-`.json.zst` files directly:
-
-```caddyfile
-@accepts_zstd header Accept-Encoding *zstd*
-
-handle_path /api/replay/blocks/* {
-	root * /var/lib/ident/replay/blocks
-	header Content-Type application/octet-stream
-	header @accepts_zstd Content-Type application/json
-	header @accepts_zstd Content-Encoding zstd
-	header Cache-Control "public, max-age=31536000, immutable"
-	file_server
-}
-
-reverse_proxy 127.0.0.1:8080
-```
-
-Keep the normal `identd` reverse proxy for `/api/replay/manifest.json` and
-`/api/ws`; the browser uses the local manifest to discover finalized block
-URLs. The block URLs are relative to the current Ident mount path, so the same
-setup works at `/` or behind a prefix such as `/ident`.
-
-## How It Works
-
-```text
-browser
-  -> /              web UI
-  -> /api/ws        live traffic, config, and routes
-  -> /api/trails/*  recent trail seed
-  -> /api/replay/*  replay manifest and finalized replay blocks
-  -> /healthz       service health
-
-identd
-  -> serves the embedded web app
-  -> watches receiver JSON files
-  -> maintains recent aircraft trails
-  -> optionally writes bounded compressed replay blocks
-  -> sends typed updates to connected browsers
-```
-
-The browser talks to Ident endpoints under the current mount path. `identd`
-handles receiver-specific paths and file names, so the web app does not need to
-know where the decoder stores files on disk.
-
-## Status bar and notifications
-
-The status bar at the bottom of the window shows the live feed health, the
-producer ("readsb", "dump1090-fa", etc.), and a few quality cells (Gain,
-Uptime, Max Range) when the producer actually publishes those values. Rows that
-the producer does not support are omitted rather than shown blank, so a missing
-cell is informational, not a bug.
-
-A bell at the right of the status bar opens the diagnostic notification center.
-Diagnostics surface conditions like "stats source is stale" or "update
-available"; notifications can be snoozed for seven days or hidden on the
-current device.
-
-On startup, `identd` waits for `receiver.json` to appear before it begins
-ingesting aircraft, stats, or outline files. The service log shows
-`awaiting producer classification` once at startup and then
-`still awaiting producer classification` every thirty seconds until the file
-becomes available. The web UI loads either way, so you can connect to it
-while waiting.
-
-## Updates
-
-Ident checks GitHub Releases through `identd` and reports available releases
-through the diagnostics notification center. Browsers only receive the latest
-available release notice from the local Ident service; they do not call GitHub
-directly.
-
-Ident does not replace the running binary, package, or container. Updates are
-installed by the operator through the release artifact, package, or container
-tag they choose.
-
-Update checks can be disabled or pointed at a fork:
-
-```sh
-IDENT_UPDATE_CHECK=true
-IDENT_UPDATE_REPO=Ident-1090/Ident
-IDENT_UPDATE_INTERVAL_SEC=86400
-```
-
-## Network Access
-
-Ident is meant to run on a private receiver network or behind your own reverse
-proxy.
-
-Core live traffic display only needs local receiver files. Optional integrations
-may contact outside services:
-
-- map tile providers for selected map styles
-- route lookup services when route hints are enabled
-- aircraft photo APIs when photo cards are enabled
-- GitHub Releases when update checks are enabled
-
-Put authentication in front of Ident before exposing it outside a private
-network.
-
-## Development
-
-Repository layout:
-
-```text
-ident/      React web UI
-identd/     Go service and embedded release binary
-packaging/  systemd, Docker, and package assets
-```
-
-Development runs the frontend and service separately.
-
-```sh
-cd ident
-pnpm install
-pnpm dev
-
-cd ../identd
-go run .
-```
-
-For a self-contained Docker development stack with generated receiver data:
-
-```sh
-docker compose -f docker-compose.dev.yaml up --build
-```
-
-Then open:
-
-```text
-http://localhost:8080/
-```
-
-### Receiver Fixture
-
-For UI work and end-to-end tests without a live decoder, generate receiver and
-trail history fixture files into an ignored local directory:
-
-```sh
-node scripts/generate-receiver-fixture.mjs \
-  --seed demo \
-  --out fixtures/receiver-sample \
-  --aircraft 150 \
-  --frames 1
-```
-
-Point `identd` at those files:
-
-```sh
-cd identd
-IDENT_DATA_DIR="../fixtures/receiver-sample" go run .
-```
-
-To keep aircraft moving while a browser is open, run the generator from the repo
-root in another terminal:
-
-```sh
-node scripts/generate-receiver-fixture.mjs \
-  --seed demo \
-  --out fixtures/receiver-sample \
-  --live \
-  --interval-ms 1000
-```
-
-The default fixture uses synthetic movement with real aircraft identities, so
-photo and registration lookups behave like they do with live receiver data.
-
-Useful checks:
-
-```sh
-node --test scripts/*.test.mjs
-
-cd ident
-pnpm test
-pnpm check
-pnpm build
-
-cd ../identd
-go test ./...
-```
-
-Build the embedded release binary:
-
-```sh
-./scripts/build-identd.sh
-```
-
-The script builds the web app, stages it for `go:embed`, and writes
-`dist/identd`.
-
-Nix users can enter the development shell or run the build helpers:
-
-```sh
-nix develop
-nix run .#build-identd
-nix run .#package-identd
-```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) before opening issues or pull requests.
+Most installs only need an address and the directory where the receiver writes
+`aircraft.json`. When that directory is unset, `identd` looks in common receiver
+runtime paths such as `/run/readsb` and `/run/dump1090-fa`.
+
+Environment variables and flags cover the receiver data location, upstream type,
+base path for reverse proxies, station identity and overlays, trails, replay, and
+update checks. See the
+[configuration reference](https://ident-1090.github.io/Ident/getting-started/configuration).
 
 ## Security
 
 Ident reads local receiver data and serves it to browsers that can reach the
-service.
-
-Default operating posture:
-
-- bind `identd` to localhost by default, including when a same-host reverse
-  proxy is used
-- bind to a LAN interface only when direct LAN access or a proxy on another host
-  is intentional
-- mount receiver data read-only
-- do not expose Ident publicly without authentication
-
-Do not paste feeder credentials, private station details, or exact receiver
-location information into public issues.
+service. Bind `identd` to localhost by default, mount receiver data read-only,
+and do not expose Ident publicly without authentication in front of it. Do not
+paste feeder credentials, private station details, or exact receiver location
+information into public issues.
 
 Report vulnerabilities through GitHub private vulnerability reporting:
 
-https://github.com/Ident-1090/Ident/security/advisories/new
+<https://github.com/Ident-1090/Ident/security/advisories/new>
+
+## Contributing
+
+Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to
+contribute, including the DCO sign-off. For local setup, builds, and the checks to
+run, see the [development guide](https://ident-1090.github.io/Ident/development);
+for how the system fits together, the
+[architecture overview](https://ident-1090.github.io/Ident/architecture).
+
+## License
+
+See [LICENSE](LICENSE).

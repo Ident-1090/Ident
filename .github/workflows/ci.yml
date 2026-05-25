@@ -2,11 +2,23 @@ name: CI
 
 on:
   pull_request:
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".gitignore"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/workflows/docs.yml"
   push:
     branches:
       - main
     tags:
       - "v*"
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".gitignore"
+      - ".github/ISSUE_TEMPLATE/**"
+      - ".github/workflows/docs.yml"
   workflow_dispatch:
     inputs:
       version:
@@ -425,7 +437,8 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=${{ needs.metadata.outputs.version }},enable=${{ needs.metadata.outputs.is_release == 'true' }}
-            type=raw,value=latest
+            type=raw,value=latest,enable=${{ needs.metadata.outputs.is_release == 'true' }}
+            type=raw,value=staging,enable=${{ needs.metadata.outputs.is_release != 'true' }}
       - name: Create manifest list and push
         id: manifest
         working-directory: /tmp/digests
@@ -433,7 +446,7 @@ jobs:
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf '${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@sha256:%s ' *)
-          digest="$(docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          digest="$(docker buildx imagetools inspect ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }} --format '{{json .Manifest.Digest}}' | tr -d '"')"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
       - name: Attest container image
         uses: actions/attest-build-provenance@v4

@@ -21,12 +21,33 @@ Use placeholders such as `receiver.local`, `YOUR_LAT`, `YOUR_LON`, and
 
 ## Documentation Rules
 
+The repository has a documentation site under `docs/`. Every change must keep it
+true. This is not optional: before a change is finished, verify the doc pages that
+describe the affected area still match the code, and update them in the same
+change whenever behavior, design, configuration, install shape, interfaces, or
+network access move. A change that leaves a doc page wrong is not complete until
+the page is fixed. The writing conventions for the site, including how to verify
+claims against the code, live in `docs/AGENTS.md`.
+
 - Write for receiver owners first, then add technical detail.
 - Keep install commands minimal and copyable.
 - Mention optional network access when a feature calls outside the receiver.
 - Do not compare Ident directly to other projects in public docs.
 - Keep examples generic enough for readsb, ultrafeeder, dump1090-fa, and
   PiAware users. Use stack-specific examples only in stack-specific sections.
+
+### Docs as the plan
+
+The docs are the design surface for a change, not an afterthought written at the
+end. The lifecycle is:
+
+- In the plan phase, write the doc for the change first, as the design. A human
+  reads that doc as the plan and reviews it before the work proceeds.
+- While the work is in progress, the doc may carry a task breakdown or todo list
+  for that change, so the plan and the work stay in one place.
+- At delivery, none of that may remain. The published docs are camera-ready: no
+  todo lists, no task breakdowns, no "planned" or "in progress" scaffolding. They
+  describe what exists. Track unfinished follow-ups outside the published docs.
 
 ## Development Rules
 
@@ -35,8 +56,9 @@ Use placeholders such as `receiver.local`, `YOUR_LAT`, `YOUR_LON`, and
 - Weigh per-frame and render-path cost. Prefer identity-stable selector
   outputs, avoid hot-loop allocations, and skip imperative updates (`setData`,
   GPU uploads) when inputs are unchanged.
-- Update docs when configuration, install shape, privacy behavior, or network
-  access changes.
+- Every change includes documentation verification and update: confirm the docs
+  for the affected area still match, and update them in the same change. See the
+  Documentation Rules above.
 - Do not choose or change the project license without maintainer approval.
 
 ## State and Data Rules
