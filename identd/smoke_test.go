@@ -77,6 +77,39 @@ func TestLoadConfigFromReadsUpstreamTypeEnv(t *testing.T) {
 	}
 }
 
+func TestLoadConfigFromReadsReplayCacheControls(t *testing.T) {
+	cfg, err := loadConfigFrom(nil, func(key string) string {
+		switch key {
+		case "IDENT_REPLAY_CACHE_REINDEX":
+			return "false"
+		case "IDENT_REPLAY_CLEANUP_LOW_WATERMARK":
+			return "0.85"
+		default:
+			return ""
+		}
+	})
+	if err != nil {
+		t.Fatalf("load config: %v", err)
+	}
+	if cfg.ReplayCacheReindex {
+		t.Fatalf("replay cache reindex = true, want false")
+	}
+	if cfg.ReplayCleanupLowWatermark != 0.85 {
+		t.Fatalf("replay cleanup low watermark = %v, want 0.85", cfg.ReplayCleanupLowWatermark)
+	}
+}
+
+func TestLoadConfigFromRejectsRemovedReplayFlags(t *testing.T) {
+	for _, args := range [][]string{
+		{"--replay-block-duration", "5m"},
+		{"--replay-retention", "24h"},
+	} {
+		if _, err := loadConfigFrom(args, func(string) string { return "" }); err == nil {
+			t.Fatalf("loadConfigFrom(%v) succeeded, want unknown flag error", args)
+		}
+	}
+}
+
 func TestDetectReceiverDataDirUsesFirstCandidateWithAircraftJSON(t *testing.T) {
 	root := t.TempDir()
 	first := filepath.Join(root, "readsb")

@@ -4,11 +4,16 @@ import {
   decodeReplayBlockResponse,
   ReplayBlockBodyError,
 } from "./replayBlockBody";
-import { replayFollowsLiveEdge, useIdentStore } from "./store";
+import {
+  type ReplaySlice,
+  replayFollowsLiveEdge,
+  useIdentStore,
+} from "./store";
 import type {
   ReplayBlockFile,
   ReplayBlockIndex,
   ReplayManifest,
+  TrailPoint,
 } from "./types";
 
 const MANIFEST_URL = "api/replay/manifest.json";
@@ -22,6 +27,13 @@ const blockIndexByManifest = new WeakMap<
   Map<string, number>
 >();
 let foregroundRangeLoadCount = 0;
+
+export function __resetReplayLoaderForTests(): void {
+  manifestLoad = null;
+  rangeLoads.clear();
+  blockLoads.clear();
+  foregroundRangeLoadCount = 0;
+}
 
 type ReplayRangeLoad = {
   blocks: ReplayBlockIndex[];
@@ -79,8 +91,9 @@ export async function refreshReplayManifest(
       const manifest = await fetchJson<ReplayManifest>(appPath(MANIFEST_URL), {
         cache: "no-store",
       });
-      useIdentStore.getState().setReplayManifest(normalizeManifest(manifest));
-      return manifest;
+      const normalized = normalizeManifest(manifest);
+      useIdentStore.getState().setReplayManifest(normalized);
+      return normalized;
     } catch (err) {
       if (!options.preserveReplayError) {
         useIdentStore
@@ -110,7 +123,17 @@ export async function ensureReplayRange(
     useIdentStore.getState().setReplayLoading(false);
     return;
   }
-  const blocks = blocksForRange(st.replay.blocks, sinceMs, untilMs);
+  const blocks = blocksForRange(st.replay.blocks, sinceMs, untilMs).filter(
+    (block) =>
+      !st.replay.unavailableBlockUrls?.[block.url] &&
+      !replayBlockCoveredLocally(
+        st.replay,
+        st.trailsByHex,
+        block,
+        sinceMs,
+        untilMs,
+      ),
+  );
   abortStaleBlockLoads(st.replay.blocks, blocks);
   if (blocks.length === 0) return;
 
@@ -177,7 +200,8 @@ export async function ensureReplayRange(
 
 function rangeLoadIsReusable(load: ReplayRangeLoad): boolean {
   return load.blocks.every((block) => {
-    if (useIdentStore.getState().replay.cache[block.url]) return true;
+    const replay = useIdentStore.getState().replay;
+    if (replay.cache[block.url]) return true;
     const pending = blockLoads.get(block.url);
     return !pending?.controller.signal.aborted;
   });
@@ -203,7 +227,11 @@ function loadReplayBlock(block: ReplayBlockIndex): Promise<void> | null {
       );
       if (controller.signal.aborted) throw new ReplayLoadCanceled();
       const body = decodeReplayBlockResponse(bytes) as ReplayBlockFile;
-      if (body.version !== 2 || !Array.isArray(body.frames)) {
+      if (
+        body.version !== 2 ||
+        !Array.isArray(body.frames) ||
+        !hasReplayFrameSample(body.frames)
+      ) {
         throw new ReplayBlockFormatError(block.url);
       }
       useIdentStore.getState().setReplayBlock(block.url, body);
@@ -211,6 +239,7 @@ function loadReplayBlock(block: ReplayBlockIndex): Promise<void> | null {
       if (err instanceof ReplayLoadCanceled) {
         throw err;
       }
+      useIdentStore.getState().markReplayBlockUnavailable(block.url);
       if (err instanceof ReplayBlockFormatError) {
         emitFrontendDiagnostic({
           severity: "warning",
@@ -247,6 +276,81 @@ function loadReplayBlock(block: ReplayBlockIndex): Promise<void> | null {
   })();
   blockLoads.set(block.url, { controller, promise: load });
   return load;
+}
+
+function replayBlockCoveredLocally(
+  replay: ReplaySlice,
+  trailsByHex: Record<string, TrailPoint[]>,
+  block: ReplayBlockIndex,
+  sinceMs: number,
+  untilMs: number,
+): boolean {
+  const start = Math.max(block.start, Math.min(sinceMs, untilMs));
+  const end = Math.min(block.end, Math.max(sinceMs, untilMs));
+  if (end < start) return true;
+  return rangeCoveredByIntervals(start, end, [
+    ...replayLocalIntervals(replay),
+    ...trailStoreIntervals(trailsByHex),
+  ]);
+}
+
+function replayLocalIntervals(replay: ReplaySlice): Array<ReplayRangeInterval> {
+  const intervals = Object.values(replay.cache)
+    .filter((block) => block.frames.length > 0)
+    .map((block) => ({ start: block.start, end: block.end }));
+  if (replay.recent && replay.recent.frames.length > 0) {
+    intervals.push({ start: replay.recent.start, end: replay.recent.end });
+  }
+  return intervals.sort((a, b) => a.start - b.start);
+}
+
+function trailStoreIntervals(
+  trailsByHex: Record<string, TrailPoint[]>,
+): Array<ReplayRangeInterval> {
+  const intervals: Array<ReplayRangeInterval> = [];
+  for (const points of Object.values(trailsByHex)) {
+    if (points.length === 0) continue;
+    let start = Number.POSITIVE_INFINITY;
+    let end = Number.NEGATIVE_INFINITY;
+    for (const point of points) {
+      if (!Number.isFinite(point.ts)) continue;
+      start = Math.min(start, point.ts);
+      end = Math.max(end, point.ts);
+    }
+    if (Number.isFinite(start) && Number.isFinite(end)) {
+      intervals.push({ start, end });
+    }
+  }
+  return intervals.sort((a, b) => a.start - b.start);
+}
+
+type ReplayRangeInterval = { start: number; end: number };
+
+function rangeCoveredByIntervals(
+  start: number,
+  end: number,
+  intervals: Array<ReplayRangeInterval>,
+): boolean {
+  let coveredUntil = start;
+  for (const interval of intervals) {
+    if (!Number.isFinite(interval.start) || !Number.isFinite(interval.end))
+      continue;
+    if (interval.end < coveredUntil) continue;
+    if (interval.start > coveredUntil) return false;
+    coveredUntil = Math.max(coveredUntil, interval.end);
+    if (coveredUntil >= end) return true;
+  }
+  return false;
+}
+
+function hasReplayFrameSample(frames: unknown[]): boolean {
+  return frames.some(
+    (frame) =>
+      frame != null &&
+      typeof frame === "object" &&
+      typeof (frame as { ts?: unknown }).ts === "number" &&
+      Number.isFinite((frame as { ts: number }).ts),
+  );
 }
 
 function abortStaleBlockLoads(

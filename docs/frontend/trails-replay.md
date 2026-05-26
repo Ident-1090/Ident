@@ -37,6 +37,11 @@ immutable once written, so they are cached aggressively in the browser; the
 manifest itself is fetched without caching so a freshly recorded block becomes
 visible.
 
+The scrubber treats availability as coverage, not progress. A highlighted
+segment means Ident has a finalized block for that part of the selected window.
+Gaps can appear inside the same replay window when old blocks were cleaned up or
+when a cache repair removed a bad block.
+
 The block list is held in time order, and the code that finds which blocks
 cover a requested range, and that later detects gaps between them, depends on
 that ordering. Rather than trust the manifest to arrive sorted, the list is
@@ -52,10 +57,10 @@ up fetches that will land too late to matter.
 
 Block failures are handled differently depending on the cause. Bytes that
 arrive but cannot be decoded as a valid block surface an error to the user and
-are not retried, because re-fetching the same bad bytes would not help. A
-failed or rejected request, by contrast, refreshes the manifest and retries,
-since the backend may have rotated the file and a newer manifest can point at a
-working URL.
+are reported back to `identd` so stale coverage can be repaired. A failed or
+rejected request, by contrast, refreshes the manifest and retries, since the
+backend may have rotated the file and a newer manifest can point at a working
+URL.
 
 ## Reconstructing replay trails
 
@@ -79,20 +84,32 @@ the rebuild off the per-tick path:
 sequenceDiagram
   participant P as Playhead
   participant R as Replay store
-  participant C as Block cache
+  participant C as Local cache
   participant S as Server
   participant M as Map
   P->>R: advance (every tick)
   R->>R: resolve to frame
-  R->>C: blocks in range?
-  C-->>R: cached blocks
-  C->>S: fetch missing blocks
+  R->>C: local trail/replay data in range?
+  C-->>R: retained trail points or cached blocks
+  C->>S: fetch missing finalized blocks
   Note over C,S: abort far-away loads
   S-->>C: immutable blocks
   R->>R: rebuild trails from frames
   Note over R: keyed on frame, not playhead
   R->>M: trails (same path as live)
 ```
+
+The browser also treats the recent trail seed and retained live trail buffer as
+replay coverage for the current segment. That matters near the live edge, where
+the aircraft path may exist in the restart trail cache before the corresponding
+replay block has been finalized to disk. In that case the local trail data is
+used first, and finalized blocks are fetched only for gaps the local data cannot
+cover.
+
+If a finalized block fails to load or decode, the browser treats that block as
+unavailable for the current session. It is excluded from later preload attempts
+and from the visible coverage segments until the manifest changes or a later
+load succeeds.
 
 Trail fade is measured against that same frame time, not against the wall
 clock. The icons on the map are drawn from a recorded frame, so measuring how

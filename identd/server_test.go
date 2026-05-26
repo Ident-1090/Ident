@@ -419,7 +419,7 @@ func TestServerServesReplayManifestAndIndexedBlock(t *testing.T) {
 	defer cancel()
 	store := newTestReplayStore(t, 10_000_000)
 	store.IngestAircraftFrame(replayFrameForTest(120, "abc123", 34.1, -118.1))
-	store.IngestAircraftFrame(replayFrameForTest(181, "abc123", 34.2, -118.2))
+	store.IngestAircraftFrame(replayFrameForTest(301, "abc123", 34.2, -118.2))
 	block := store.Manifest().Blocks[0]
 
 	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{Replay: store})
@@ -477,6 +477,61 @@ func TestServerServesReplayManifestAndIndexedBlock(t *testing.T) {
 	}
 }
 
+func TestServerServesReplayCacheArtifacts(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := newTestReplayStore(t, 10_000_000)
+	store.IngestAircraftFrame(replayFrameForTest(120, "abc123", 34.1, -118.1))
+	store.IngestAircraftFrame(replayFrameForTest(301, "abc123", 34.2, -118.2))
+
+	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{Replay: store})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	for _, path := range []string{
+		"/api/replay/blocks/manifest.cache.json",
+		"/api/replay/blocks/1970/01/01/manifest.cache.json",
+	} {
+		resp, err := ts.Client().Get(ts.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("%s status = %d, want 200", path, resp.StatusCode)
+		}
+		if got := resp.Header.Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
+			t.Fatalf("%s content-type = %q, want application/json", path, got)
+		}
+	}
+}
+
+func TestServerDoesNotAcceptReplayBlockFailureReports(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	store := newTestReplayStore(t, 10_000_000)
+	store.IngestAircraftFrame(replayFrameForTest(120, "abc123", 34.1, -118.1))
+	store.IngestAircraftFrame(replayFrameForTest(301, "abc123", 34.2, -118.2))
+	block := store.Manifest().Blocks[0]
+
+	srv := NewServerWithOptions(ctx, NewHub(nil), ServerOptions{Replay: store})
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	body := strings.NewReader(`{"url":"` + block.URL + `","reason":"decode_failed"}`)
+	resp, err := ts.Client().Post(ts.URL+"/api/replay/block-failure", "application/json", body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+	if got := store.Manifest().Blocks; len(got) != 1 || got[0].Name != block.Name {
+		t.Fatalf("manifest blocks after report = %#v, want original block %q", got, block.Name)
+	}
+}
+
 func TestClientAcceptsZstd(t *testing.T) {
 	cases := []struct {
 		in   string
@@ -519,7 +574,7 @@ func TestServerReplayBlockRejectsTraversalUnknownAndActive(t *testing.T) {
 
 	for _, path := range []string{
 		"/api/replay/blocks/../../etc/passwd",
-		"/api/replay/blocks/120000-180000.json.zst",
+		"/api/replay/blocks/1970/01/01/300000-600000.json.zst",
 		"/api/replay/blocks/missing.json.zst",
 	} {
 		resp, err := ts.Client().Get(ts.URL + path)

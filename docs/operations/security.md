@@ -45,13 +45,12 @@ cannot alter what the receiver produces.
 When replay is enabled, finalized blocks are served from disk by name under a
 fixed endpoint prefix. Two checks stand between a request and the filesystem.
 The requested name must match the exact shape `identd` gives its own blocks (a
-plain numeric pattern with a fixed extension, no path separators or relative
-segments), and a name that passes that check must also be present in the
-in-memory index of blocks `identd` has actually written. A crafted name aimed at
-escaping the blocks directory fails the first check; a well-formed name for a
-file `identd` never produced fails the second. Both paths return a not-found
-result before any filesystem path is built from caller input. Tests cover a
-traversal attempt against this endpoint.
+UTC day path and a fixed extension, with no relative segments), and a name that
+passes that check must also be present in the in-memory cache of finalized
+blocks. A crafted name aimed at escaping the blocks directory fails the first
+check; a well-formed name for a file `identd` never produced fails the second.
+Both paths return a not-found result before caller input can choose an arbitrary
+filesystem path.
 
 ## Outbound network access
 

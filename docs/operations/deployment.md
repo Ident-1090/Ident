@@ -72,10 +72,11 @@ works at the root or behind a prefix without further configuration.
 
 ## Serving replay blocks from the proxy
 
-Ident can serve finalized replay blocks itself. For a busy public display, those
-files can instead be served straight from disk by the reverse proxy, taking that
-I/O off Ident. This works because finalized blocks are immutable files on disk,
-but it carries a constraint that is easy to miss.
+Ident can serve finalized replay artifacts itself. For a busy public display,
+those files can instead be served straight from disk by the reverse proxy,
+taking that I/O off Ident. This works because finalized blocks are immutable
+files on disk and cache manifests are ordinary JSON, but it carries a constraint
+that is easy to miss.
 
 The blocks are stored as raw zstd-compressed JSON, and Ident's own handler
 negotiates how to deliver them. When a client advertises that it accepts zstd,

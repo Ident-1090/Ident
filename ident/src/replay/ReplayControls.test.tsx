@@ -30,6 +30,7 @@ function resetStore() {
       availableTo: 180_000,
       blockSec: 60,
       blocks: [],
+      unavailableBlockUrls: {},
       cache: {},
       mode: "live",
       playheadMs: null,
@@ -442,6 +443,261 @@ describe("replay controls", () => {
     ).not.toContain("w-full");
   });
 
+  it("renders replay coverage as block segments instead of progress fill", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        availableFrom: 0,
+        availableTo: 600_000,
+        blockSec: 300,
+        mode: "replay",
+        playheadMs: 150_000,
+        blocks: [
+          {
+            start: 0,
+            end: 300_000,
+            url: "/api/replay/blocks/1970/01/01/0-300000.json.zst",
+            bytes: 100,
+          },
+          {
+            start: 450_000,
+            end: 600_000,
+            url: "/api/replay/blocks/1970/01/01/450000-600000.json.zst",
+            bytes: 100,
+          },
+        ],
+      },
+    }));
+
+    act(() => root.render(<ReplayScrubber />));
+
+    const segments = Array.from(
+      host.querySelectorAll<HTMLElement>(
+        '[data-testid="replay-coverage-segment"]',
+      ),
+    );
+    expect(segments).toHaveLength(2);
+    expect(segments[0].style.left).toBe("0%");
+    expect(segments[0].style.width).toBe("50%");
+    expect(segments[1].style.left).toBe("75%");
+    expect(segments[1].style.width).toBe("25%");
+    expect(segments[0].style.width).not.toBe("25%");
+  });
+
+  it("does not render coverage for replay blocks that failed to load", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        availableFrom: 0,
+        availableTo: 600_000,
+        blockSec: 300,
+        mode: "replay",
+        playheadMs: 150_000,
+        unavailableBlockUrls: {
+          "/api/replay/blocks/1970/01/01/0-300000.json.zst": true,
+        },
+        blocks: [
+          {
+            start: 0,
+            end: 300_000,
+            url: "/api/replay/blocks/1970/01/01/0-300000.json.zst",
+            bytes: 100,
+          },
+          {
+            start: 300_000,
+            end: 600_000,
+            url: "/api/replay/blocks/1970/01/01/300000-600000.json.zst",
+            bytes: 100,
+          },
+        ],
+      },
+    }));
+
+    act(() => root.render(<ReplayScrubber />));
+
+    const segments = Array.from(
+      host.querySelectorAll<HTMLElement>(
+        '[data-testid="replay-coverage-segment"]',
+      ),
+    );
+    expect(segments).toHaveLength(1);
+    expect(segments[0].style.left).toBe("50%");
+    expect(segments[0].style.width).toBe("50%");
+  });
+
+  it("renders recent replay seed coverage on the scrubber", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        availableFrom: 0,
+        availableTo: 600_000,
+        blockSec: 300,
+        mode: "replay",
+        playheadMs: 300_000,
+        recent: {
+          version: 2,
+          start: 300_000,
+          end: 600_000,
+          step_ms: 5_000,
+          frames: [
+            {
+              ts: 300_000,
+              aircraft: [
+                {
+                  hex: "recent",
+                  idKind: "icao",
+                  source: "adsb_icao",
+                  flight: "RECENT",
+                },
+              ],
+            },
+          ],
+        },
+        blocks: [
+          {
+            start: 0,
+            end: 300_000,
+            url: "/api/replay/blocks/1970/01/01/0-300000.json.zst",
+            bytes: 100,
+          },
+        ],
+      },
+    }));
+
+    act(() => root.render(<ReplayScrubber />));
+
+    const segments = Array.from(
+      host.querySelectorAll<HTMLElement>(
+        '[data-testid="replay-coverage-segment"]',
+      ),
+    );
+    expect(segments).toHaveLength(1);
+    expect(segments[0].style.left).toBe("0%");
+    expect(segments[0].style.width).toBe("100%");
+  });
+
+  it("renders loaded replay cache coverage even when the manifest no longer lists it", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        availableFrom: 0,
+        availableTo: 600_000,
+        blockSec: 300,
+        mode: "replay",
+        playheadMs: 150_000,
+        blocks: [],
+        cache: {
+          "/api/replay/blocks/1970/01/01/0-300000.json.zst": {
+            version: 2,
+            start: 0,
+            end: 300_000,
+            step_ms: 5_000,
+            frames: [
+              {
+                ts: 0,
+                aircraft: [
+                  {
+                    hex: "cached",
+                    idKind: "icao",
+                    source: "adsb_icao",
+                    flight: "CACHED",
+                  },
+                ],
+              },
+            ],
+          },
+        },
+      },
+    }));
+
+    act(() => root.render(<ReplayScrubber />));
+
+    const segment = host.querySelector<HTMLElement>(
+      '[data-testid="replay-coverage-segment"]',
+    );
+    expect(segment?.style.left).toBe("0%");
+    expect(segment?.style.width).toBe("50%");
+  });
+
+  it("does not render replay coverage while live", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        availableFrom: 0,
+        availableTo: 600_000,
+        blockSec: 300,
+        mode: "live",
+        playheadMs: null,
+        blocks: [
+          {
+            start: 0,
+            end: 600_000,
+            url: "/api/replay/blocks/1970/01/01/0-600000.json.zst",
+            bytes: 100,
+          },
+        ],
+      },
+    }));
+
+    act(() => root.render(<ReplayScrubber />));
+
+    expect(
+      host.querySelector('[data-testid="replay-coverage-segment"]'),
+    ).toBeNull();
+  });
+
+  it("merges adjacent replay coverage and clips it to the selected window", () => {
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        availableFrom: 0,
+        availableTo: 900_000,
+        blockSec: 300,
+        mode: "replay",
+        playheadMs: 450_000,
+        viewWindow: {
+          rangeId: "custom",
+          rangeMs: 600_000,
+          fromExpr: "custom",
+          toExpr: "custom",
+          fixedEndMs: 750_000,
+          requestedEndMs: 750_000,
+        },
+        blocks: [
+          {
+            start: 0,
+            end: 300_000,
+            url: "/api/replay/blocks/1970/01/01/0-300000.json.zst",
+            bytes: 100,
+          },
+          {
+            start: 300_000,
+            end: 600_000,
+            url: "/api/replay/blocks/1970/01/01/300000-600000.json.zst",
+            bytes: 100,
+          },
+          {
+            start: 600_000,
+            end: 900_000,
+            url: "/api/replay/blocks/1970/01/01/600000-900000.json.zst",
+            bytes: 100,
+          },
+        ],
+      },
+    }));
+
+    act(() => root.render(<ReplayScrubber />));
+
+    const segments = Array.from(
+      host.querySelectorAll<HTMLElement>(
+        '[data-testid="replay-coverage-segment"]',
+      ),
+    );
+    expect(segments).toHaveLength(1);
+    expect(segments[0].style.left).toBe("0%");
+    expect(segments[0].style.width).toBe("100%");
+  });
+
   it("renders a replay row skeleton while replay availability is loading", () => {
     useIdentStore.setState((st) => ({
       connectionStatus: { ...st.connectionStatus, ws: "connecting" },
@@ -852,6 +1108,14 @@ describe("replay controls", () => {
         ...st.replay,
         availableFrom: 0,
         availableTo: 24 * 60 * 60_000,
+        blocks: [
+          {
+            start: 0,
+            end: 24 * 60 * 60_000,
+            url: "/api/replay/blocks/1970/01/01/0-86400000.json.zst",
+            bytes: 100,
+          },
+        ],
       },
     }));
     act(() => root.render(<ReplayScrubber />));
@@ -949,6 +1213,14 @@ describe("replay controls", () => {
         ...st.replay,
         availableFrom: 0,
         availableTo: 24 * 60 * 60_000,
+        blocks: [
+          {
+            start: 0,
+            end: 24 * 60 * 60_000,
+            url: "/api/replay/blocks/1970/01/01/0-86400000.json.zst",
+            bytes: 100,
+          },
+        ],
       },
     }));
     act(() => root.render(<ReplayScrubber />));
@@ -974,12 +1246,12 @@ describe("replay controls", () => {
     const input = host.querySelector(
       '[aria-label="Replay time"]',
     ) as HTMLInputElement;
-    const fill = host.querySelector(
-      '[data-testid="replay-scrubber-track"] > div',
+    const fill = host.querySelector<HTMLElement>(
+      '[data-testid="replay-coverage-segment"]',
     ) as HTMLDivElement;
     expect(input.min).toBe("0");
     expect(input.max).toBe(String(48 * 60 * 60_000));
-    expect(fill.style.width).toBe("25%");
+    expect(fill.style.width).toBe("50%");
   });
 
   it("resolves custom now ranges from wall clock when replay availability is slightly behind", () => {

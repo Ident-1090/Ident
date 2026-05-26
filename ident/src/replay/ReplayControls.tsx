@@ -20,7 +20,11 @@ import {
   replayFollowsLiveEdge,
   useIdentStore,
 } from "../data/store";
-import type { ClockMode } from "../data/types";
+import type {
+  ClockMode,
+  ReplayBlockFile,
+  ReplayBlockIndex,
+} from "../data/types";
 import { Tooltip } from "../ui/Tooltip";
 
 const PRELOAD_BEHIND_MS = 10 * 60 * 1000;
@@ -256,6 +260,12 @@ export const ReplayScrubber = memo(function ReplayScrubber() {
   const viewWindow = useIdentStore((s) => s.replay.viewWindow);
   const followLiveEdge = useIdentStore((s) => s.replay.followLiveEdge);
   const replayError = useIdentStore((s) => s.replay.error);
+  const blocks = useIdentStore((s) => s.replay.blocks);
+  const unavailableBlockUrls = useIdentStore(
+    (s) => s.replay.unavailableBlockUrls,
+  );
+  const cache = useIdentStore((s) => s.replay.cache);
+  const recent = useIdentStore((s) => s.replay.recent);
   const clockMode = useIdentStore((s) => s.settings.clock);
   const wsStatus = useIdentStore((s) => s.connectionStatus.ws);
   const enterReplay = useIdentStore((s) => s.enterReplay);
@@ -433,11 +443,15 @@ export const ReplayScrubber = memo(function ReplayScrubber() {
         variant="desktop"
         trackTestId="replay-scrubber-track"
         replayWindow={replayWindow}
+        coverageBlocks={blocks}
+        unavailableBlockUrls={unavailableBlockUrls}
+        loadedBlocks={cache}
+        recentBlock={recent ?? null}
+        showCoverage={active}
         scrubber={scrubber}
         clockMode={clockMode}
         playheadVisible={playheadVisible}
         playheadAtLiveEdge={playheadAtLiveEdge}
-        showTraversedFill={active && !playheadAtLiveEdge}
         showInactiveLiveHandle={!active && !replayWindow.isPastWindow}
         showTickLabels
       />
@@ -474,22 +488,30 @@ function ReplayTrack({
   variant,
   trackTestId,
   replayWindow,
+  coverageBlocks,
+  unavailableBlockUrls,
+  loadedBlocks,
+  recentBlock,
+  showCoverage,
   scrubber,
   clockMode,
   playheadVisible,
   playheadAtLiveEdge,
-  showTraversedFill,
   showInactiveLiveHandle = false,
   showTickLabels = false,
 }: {
   variant: "desktop" | "mobile";
   trackTestId: string;
   replayWindow: ResolvedReplayWindow;
+  coverageBlocks: ReplayBlockIndex[];
+  unavailableBlockUrls?: Record<string, true>;
+  loadedBlocks?: Record<string, ReplayBlockFile>;
+  recentBlock?: ReplayBlockFile | null;
+  showCoverage: boolean;
   scrubber: ReturnType<typeof useReplayScrubber>;
   clockMode: ClockMode;
   playheadVisible: boolean;
   playheadAtLiveEdge: boolean;
-  showTraversedFill: boolean;
   showInactiveLiveHandle?: boolean;
   showTickLabels?: boolean;
 }) {
@@ -503,21 +525,29 @@ function ReplayTrack({
   const playheadToken = playheadAtLiveEdge
     ? "var(--color-live)"
     : "var(--color-warn)";
-  const availableStartPct =
-    ((replayWindow.availableStart - replayWindow.start) /
-      Math.max(1, replayWindow.rangeMs)) *
-    100;
-  const availableEndPct =
-    ((replayWindow.availableEnd - replayWindow.start) /
-      Math.max(1, replayWindow.rangeMs)) *
-    100;
-  const fillStartPct = clampNumber(availableStartPct, 0, 100);
-  const fillEndPct = clampNumber(
-    Math.min(clampedPct, availableEndPct),
-    fillStartPct,
-    100,
-  );
-  const fillWidthPct = Math.max(0, fillEndPct - fillStartPct);
+  const coverageIntervals = showCoverage
+    ? replayCoverageIntervals(
+        coverageBlocks,
+        unavailableBlockUrls ?? {},
+        loadedBlocks ?? {},
+        recentBlock ?? null,
+        replayWindow,
+      )
+    : [];
+  const coverageStyle = (interval: ReplayCoverageInterval) => {
+    const domainMs = Math.max(1, replayWindow.rangeMs);
+    const left = clampNumber(
+      ((interval.start - replayWindow.start) / domainMs) * 100,
+      0,
+      100,
+    );
+    const right = clampNumber(
+      ((interval.end - replayWindow.start) / domainMs) * 100,
+      left,
+      100,
+    );
+    return { left: `${left}%`, width: `${Math.max(0, right - left)}%` };
+  };
   const strategy = tickStrategy(replayWindow.rangeMs);
   const ticks = Array.from({ length: strategy.count }, (_, i) => {
     const left = (i / Math.max(1, strategy.count - 1)) * 100;
@@ -527,9 +557,9 @@ function ReplayTrack({
     variant === "desktop"
       ? "relative h-[7px] flex-1 rounded-l-full rounded-r-[2px] border border-(--color-line) bg-paper-3 cursor-pointer"
       : "relative h-[7px] rounded-full border border-(--color-line) bg-[rgb(from_var(--color-paper)_r_g_b_/_0.24)]";
-  const fillClass =
+  const coverageClass =
     variant === "desktop"
-      ? "absolute left-[-1px] top-[-1px] bottom-[-1px] rounded-l-full rounded-r-none bg-[color-mix(in_oklab,var(--color-warn)_30%,transparent)]"
+      ? "absolute top-[-1px] bottom-[-1px] rounded-[2px] bg-[color-mix(in_oklab,var(--color-warn)_36%,transparent)]"
       : "absolute left-[-1px] top-[-1px] bottom-[-1px] rounded-full bg-[color-mix(in_oklab,var(--color-warn)_30%,transparent)]";
   const playheadClass =
     variant === "desktop"
@@ -551,12 +581,14 @@ function ReplayTrack({
 
   return (
     <div data-testid={trackTestId} className={trackClass}>
-      {showTraversedFill && (
+      {coverageIntervals.map((interval) => (
         <div
-          className={fillClass}
-          style={{ left: `${fillStartPct}%`, width: `${fillWidthPct}%` }}
+          key={`${interval.start}-${interval.end}`}
+          data-testid="replay-coverage-segment"
+          className={coverageClass}
+          style={coverageStyle(interval)}
         />
-      )}
+      ))}
       {ticks.map(({ i, left, key }) => {
         if (i === strategy.count - 1) return null;
         const major = i % strategy.majorEvery === 0;
@@ -669,6 +701,50 @@ function ReplayTrack({
       />
     </div>
   );
+}
+
+type ReplayCoverageInterval = { start: number; end: number };
+
+function replayCoverageIntervals(
+  blocks: ReplayBlockIndex[],
+  unavailableBlockUrls: Record<string, true>,
+  loaded: Record<string, ReplayBlockFile>,
+  recent: ReplayBlockFile | null,
+  replayWindow: ResolvedReplayWindow,
+): ReplayCoverageInterval[] {
+  const intervals: ReplayCoverageInterval[] = [];
+  const sources: Array<{ start: number; end: number }> = [];
+  for (const block of blocks) {
+    if (!unavailableBlockUrls[block.url]) sources.push(block);
+  }
+  for (const block of Object.values(loaded)) {
+    if (block.frames.length > 0) {
+      sources.push({ start: block.start, end: block.end });
+    }
+  }
+  if (recent && recent.frames.length > 0) {
+    sources.push({ start: recent.start, end: recent.end });
+  }
+  for (const block of sources.sort((a, b) => a.start - b.start)) {
+    if (
+      !Number.isFinite(block.start) ||
+      !Number.isFinite(block.end) ||
+      block.end <= replayWindow.start ||
+      block.start >= replayWindow.end
+    ) {
+      continue;
+    }
+    const start = Math.max(block.start, replayWindow.start);
+    const end = Math.min(block.end, replayWindow.end);
+    if (end <= start) continue;
+    const prev = intervals.at(-1);
+    if (prev && start <= prev.end) {
+      prev.end = Math.max(prev.end, end);
+    } else {
+      intervals.push({ start, end });
+    }
+  }
+  return intervals;
 }
 
 function RangeChip({
@@ -1283,11 +1359,15 @@ function MiniScrubber({
         variant="mobile"
         trackTestId="mobile-replay-scrubber-track"
         replayWindow={replayWindow}
+        coverageBlocks={replay.blocks}
+        unavailableBlockUrls={replay.unavailableBlockUrls}
+        loadedBlocks={replay.cache}
+        recentBlock={replay.recent ?? null}
+        showCoverage={replay.mode === "replay" && replay.playheadMs != null}
         scrubber={scrubber}
         clockMode={clockMode}
         playheadVisible
         playheadAtLiveEdge={playheadAtLiveEdge}
-        showTraversedFill={!playheadAtLiveEdge}
       />
       <div className="flex justify-between font-mono text-[10px] text-ink-faint">
         <span>{leftLabel}</span>

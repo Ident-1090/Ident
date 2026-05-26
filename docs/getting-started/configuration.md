@@ -83,41 +83,51 @@ Disabling the restart cache keeps trails memory-only; they will be lost when
 
 Replay is opt-in because it writes longer-lived history blocks. When enabled,
 `identd` samples live `aircraft.json`, closes one compressed block every five
-minutes, writes an index, and prunes old blocks by both age and byte budget.
-The byte budget is mandatory so a misconfigured receiver cannot fill the host
-disk.
+minutes, writes cache manifests, and prunes old blocks by byte budget. The byte
+budget is mandatory so a misconfigured receiver cannot fill the host disk.
 
 ```sh
 IDENT_REPLAY_ENABLE=true
 IDENT_REPLAY_DIR=/var/lib/ident/replay
-IDENT_REPLAY_RETENTION_SEC=259200
 IDENT_REPLAY_MAX_BYTES=524288000
-IDENT_REPLAY_BLOCK_SEC=300
+IDENT_REPLAY_CLEANUP_LOW_WATERMARK=0.90
+IDENT_REPLAY_CACHE_REINDEX=true
 IDENT_REPLAY_SAMPLE_INTERVAL_SEC=5
 ```
 
-With the example above, Ident keeps up to three days of replay data and never
-keeps more than 500 MiB of finalized blocks. The currently open block is not
-listed or served until it rolls over, so the smallest replay unit is five
-minutes. See [Replay history](/backend/replay) for how blocks are recorded and
-served.
+With the example above, Ident treats 500 MiB as the high watermark. When the
+estimated finalized replay size exceeds that value, it may delete oldest cached
+blocks until the estimate falls below 90% of the byte budget. The currently open
+block is not listed or served until it rolls over, so the smallest replay unit is
+five minutes. See [Replay history](/backend/replay) for how blocks are recorded
+and served.
 
 ## Serving replay blocks through a reverse proxy
 
-`identd` can serve replay blocks itself through `/api/replay/blocks/*`. Replay
-blocks are JSON compressed with zstd. For busy public displays, put the replay
-directory behind the reverse proxy and let the proxy serve finalized
-`.json.zst` files directly:
+`identd` can serve replay artifacts itself through `/api/replay/blocks/*`.
+Replay blocks are JSON compressed with zstd, while `manifest.cache.json` files
+are ordinary JSON. For busy public displays, put the replay `blocks` directory
+behind the reverse proxy and let the proxy serve finalized artifacts directly:
 
 ```text
-@accepts_zstd header Accept-Encoding *zstd*
-
 handle_path /api/replay/blocks/* {
 	root * /var/lib/ident/replay/blocks
-	header Content-Type application/octet-stream
+
+	@zstd_block {
+		path *.zst
+		file
+	}
+	header @zstd_block Content-Type application/octet-stream
+	header @zstd_block Cache-Control "public, max-age=31536000, immutable"
+
+	@accepts_zstd {
+		path *.zst
+		file
+		header Accept-Encoding *zstd*
+	}
 	header @accepts_zstd Content-Type application/json
 	header @accepts_zstd Content-Encoding zstd
-	header Cache-Control "public, max-age=31536000, immutable"
+
 	file_server
 }
 

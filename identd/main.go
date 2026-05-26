@@ -60,9 +60,9 @@ type Config struct {
 	TrailsRestartCacheInterval time.Duration
 	ReplayEnable               bool
 	ReplayDir                  string
-	ReplayRetention            time.Duration
 	ReplayMaxBytes             int64
-	ReplayBlockDuration        time.Duration
+	ReplayCleanupLowWatermark  float64
+	ReplayCacheReindex         bool
 	ReplaySampleInterval       time.Duration
 }
 
@@ -145,13 +145,13 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 	}
 
 	replay, err := NewReplayStore(ReplayOptions{
-		Enabled:        cfg.ReplayEnable,
-		Dir:            cfg.ReplayDir,
-		Retention:      cfg.ReplayRetention,
-		MaxBytes:       cfg.ReplayMaxBytes,
-		BlockDuration:  cfg.ReplayBlockDuration,
-		SampleInterval: cfg.ReplaySampleInterval,
-		Diagnostics:    diagnostics,
+		Enabled:             cfg.ReplayEnable,
+		Dir:                 cfg.ReplayDir,
+		MaxBytes:            cfg.ReplayMaxBytes,
+		CleanupLowWatermark: cfg.ReplayCleanupLowWatermark,
+		CacheReindex:        cfg.ReplayCacheReindex,
+		SampleInterval:      cfg.ReplaySampleInterval,
+		Diagnostics:         diagnostics,
 		OnAvailability: func(manifest ReplayManifest) {
 			publishReplayAvailabilityEnvelope(hub, manifest)
 		},
@@ -353,9 +353,9 @@ func loadConfigFrom(args []string, getenv func(string) string) (Config, error) {
 		TrailsRestartCacheInterval: time.Duration(envInt(getenv, "IDENT_TRAILS_RESTART_CACHE_INTERVAL_SEC", 60)) * time.Second,
 		ReplayEnable:               envBool(getenv, "IDENT_REPLAY_ENABLE", false),
 		ReplayDir:                  strings.TrimSpace(getenv("IDENT_REPLAY_DIR")),
-		ReplayRetention:            time.Duration(envInt(getenv, "IDENT_REPLAY_RETENTION_SEC", 0)) * time.Second,
 		ReplayMaxBytes:             envInt64(getenv, "IDENT_REPLAY_MAX_BYTES", 0),
-		ReplayBlockDuration:        time.Duration(envInt(getenv, "IDENT_REPLAY_BLOCK_SEC", 300)) * time.Second,
+		ReplayCleanupLowWatermark:  envFloat64(getenv, "IDENT_REPLAY_CLEANUP_LOW_WATERMARK", 0.90),
+		ReplayCacheReindex:         envBool(getenv, "IDENT_REPLAY_CACHE_REINDEX", true),
 		ReplaySampleInterval:       time.Duration(envInt(getenv, "IDENT_REPLAY_SAMPLE_INTERVAL_SEC", 5)) * time.Second,
 	}
 
@@ -382,9 +382,9 @@ func loadConfigFrom(args []string, getenv func(string) string) (Config, error) {
 	flags.DurationVar(&cfg.TrailsRestartCacheInterval, "trails-restart-cache-interval", cfg.TrailsRestartCacheInterval, "trail restart cache write interval")
 	flags.BoolVar(&cfg.ReplayEnable, "replay-enable", cfg.ReplayEnable, "enable file-backed replay blocks")
 	flags.StringVar(&cfg.ReplayDir, "replay-dir", cfg.ReplayDir, "directory for replay index and compressed blocks")
-	flags.DurationVar(&cfg.ReplayRetention, "replay-retention", cfg.ReplayRetention, "maximum replay history retained on disk")
 	flags.Int64Var(&cfg.ReplayMaxBytes, "replay-max-bytes", cfg.ReplayMaxBytes, "maximum bytes used by finalized replay blocks")
-	flags.DurationVar(&cfg.ReplayBlockDuration, "replay-block-duration", cfg.ReplayBlockDuration, "duration per finalized replay block")
+	flags.Float64Var(&cfg.ReplayCleanupLowWatermark, "replay-cleanup-low-watermark", cfg.ReplayCleanupLowWatermark, "byte-budget cleanup target ratio after replay exceeds max bytes")
+	flags.BoolVar(&cfg.ReplayCacheReindex, "replay-cache-reindex", cfg.ReplayCacheReindex, "rebuild replay cache metadata when cache files are missing or unreadable")
 	flags.DurationVar(&cfg.ReplaySampleInterval, "replay-sample-interval", cfg.ReplaySampleInterval, "minimum interval between replay samples")
 	if err := flags.Parse(args); err != nil {
 		return Config{}, err
@@ -563,6 +563,15 @@ func envInt(getenv func(string) string, key string, def int) int {
 func envInt64(getenv func(string) string, key string, def int64) int64 {
 	if v := getenv(key); v != "" {
 		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			return n
+		}
+	}
+	return def
+}
+
+func envFloat64(getenv func(string) string, key string, def float64) float64 {
+	if v := getenv(key); v != "" {
+		if n, err := strconv.ParseFloat(v, 64); err == nil && n > 0 && n < 1 {
 			return n
 		}
 	}

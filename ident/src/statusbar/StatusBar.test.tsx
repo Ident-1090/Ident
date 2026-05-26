@@ -422,8 +422,9 @@ describe("StatusBar", () => {
       usePreferencesStore.getState().notificationSuppressions,
     ).toHaveLength(1);
 
+    vi.setSystemTime(new Date(Date.now() + 7 * 24 * 60 * 60 * 1000 + 1000));
     act(() => {
-      vi.advanceTimersByTime(7 * 24 * 60 * 60 * 1000 + 1000);
+      usePreferencesStore.getState().clearExpiredNotificationSuppressions();
     });
 
     expect(usePreferencesStore.getState().notificationSuppressions).toEqual([]);

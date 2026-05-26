@@ -13,6 +13,8 @@ import { aircraftRecency } from "./recency";
 import type {
   Aircraft,
   AircraftFrame,
+  AircraftIDKind,
+  AircraftType,
   Alert,
   CategoryKey,
   ClockMode,
@@ -199,6 +201,7 @@ export interface ReplaySlice {
   availableTo: number | null;
   blockSec: number;
   blocks: ReplayBlockIndex[];
+  unavailableBlockUrls: Record<string, true>;
   recent?: ReplayBlockFile | null;
   cache: Record<string, ReplayBlockFile>;
   mode: ReplayMode;
@@ -398,6 +401,7 @@ export interface IdentState {
   setReplayManifest: (manifest: ReplayManifest) => void;
   ingestReplayAvailability: (envelope: IdentReplayAvailability) => void;
   setReplayBlock: (url: string, block: ReplayBlockFile) => void;
+  markReplayBlockUnavailable: (url: string) => void;
   setReplayRecent: (block: ReplayBlockFile | null) => void;
   setReplayLoading: (loading: boolean) => void;
   setReplayError: (error: string | null, url?: string | null) => void;
@@ -482,6 +486,9 @@ function applyReplayAvailability(
 ): ReplaySlice {
   const enabled = update.enabled;
   const blocks = update.blocks ?? replay.blocks;
+  const unavailableBlockUrls = enabled
+    ? replayUnavailableBlockUrls(replay.unavailableBlockUrls, blocks)
+    : {};
   const available = replayAvailability(
     update.remoteFrom,
     update.remoteTo,
@@ -508,6 +515,7 @@ function applyReplayAvailability(
     availableTo,
     blockSec: update.blockSec > 0 ? update.blockSec : replay.blockSec,
     blocks,
+    unavailableBlockUrls,
     recent: enabled ? replay.recent : null,
     mode,
     playheadMs,
@@ -524,10 +532,23 @@ function applyReplayAvailability(
   };
 }
 
+function replayUnavailableBlockUrls(
+  urls: Record<string, true> | undefined,
+  blocks: ReplayBlockIndex[],
+): Record<string, true> {
+  const next: Record<string, true> = {};
+  const manifestUrls = new Set(blocks.map((block) => block.url));
+  for (const url of Object.keys(urls ?? {})) {
+    if (manifestUrls.has(url)) next[url] = true;
+  }
+  return next;
+}
+
 function normalizeReplayBlock(block: ReplayBlockFile): ReplayBlockFile {
   const frames = Array.isArray(block.frames)
     ? block.frames
-        .filter((frame) => typeof frame.ts === "number")
+        .map(normalizeReplayFrame)
+        .filter((frame): frame is ReplayFrame => frame != null)
         .slice()
         .sort((a, b) => a.ts - b.ts)
     : [];
@@ -547,6 +568,181 @@ function normalizeReplayBlock(block: ReplayBlockFile): ReplayBlockFile {
         : 1000,
     frames,
   };
+}
+
+function normalizeReplayFrame(frame: unknown): ReplayFrame | null {
+  const obj = replayObject(frame);
+  if (!obj) return null;
+  const ts = replayNumber(obj, "ts");
+  if (ts == null) return null;
+  const aircraft = Array.isArray(obj.aircraft)
+    ? obj.aircraft
+        .map(normalizeReplayAircraft)
+        .filter((ac): ac is Aircraft => ac != null)
+    : [];
+  return { ts, aircraft };
+}
+
+function normalizeReplayAircraft(raw: unknown): Aircraft | null {
+  const obj = replayObject(raw);
+  if (!obj) return null;
+  const hex = replayString(obj, "hex")?.trim().toLowerCase();
+  if (!hex) return null;
+  if (isCurrentAircraftShape(obj)) {
+    const out: Aircraft = {
+      ...(obj as Partial<Aircraft>),
+      hex,
+      idKind: replayAircraftIDKind(replayString(obj, "idKind"), hex),
+      source: replayAircraftType(replayString(obj, "source")),
+    };
+    const flight = replayString(obj, "flight")?.trim();
+    if (flight) out.flight = flight;
+    return out;
+  }
+  const out: Aircraft = {
+    hex,
+    idKind: replayAircraftIDKind(undefined, hex),
+    source: replayAircraftType(replayString(obj, "type")),
+  };
+  assignReplayString(out, "flight", obj, "flight", true);
+  assignReplayString(out, "reg", obj, "r");
+  assignReplayString(out, "typeDesignator", obj, "t");
+  assignReplayString(out, "desc", obj, "desc");
+  assignReplayString(out, "op", obj, "ownOp");
+  assignReplayString(out, "cat", obj, "category");
+  assignReplayNumber(out, "lat", obj, "lat");
+  assignReplayNumber(out, "lon", obj, "lon");
+  assignReplayNumber(out, "seenPosSec", obj, "seen_pos");
+  assignReplayNumber(out, "altGeomFt", obj, "alt_geom");
+  assignReplayNumber(out, "gsKt", obj, "gs");
+  assignReplayNumber(out, "trackDeg", obj, "track");
+  assignReplayNumber(out, "baroRateFpm", obj, "baro_rate");
+  assignReplayNumber(out, "geomRateFpm", obj, "geom_rate");
+  assignReplayString(out, "squawk", obj, "squawk");
+  assignReplayString(out, "emergency", obj, "emergency");
+  assignReplayNumber(out, "qnhHPa", obj, "nav_qnh");
+  assignReplayNumber(out, "mcpAltFt", obj, "nav_altitude_mcp");
+  assignReplayNumber(out, "fmsAltFt", obj, "nav_altitude_fms");
+  assignReplayNumber(out, "navHdgDeg", obj, "nav_heading");
+  assignReplayNumber(out, "trueHeadingDeg", obj, "true_heading");
+  assignReplayNumber(out, "magHeadingDeg", obj, "mag_heading");
+  assignReplayNumber(out, "aircraftMessagesTotal", obj, "messages");
+  assignReplayNumber(out, "seenSec", obj, "seen");
+  assignReplayNumber(out, "rssiDbfs", obj, "rssi");
+  assignReplayNumber(out, "dbFlags", obj, "dbFlags");
+  const navModes = replayStringArray(obj, "nav_modes");
+  if (navModes) out.navModes = navModes;
+  const altBaro = obj.alt_baro;
+  if (typeof altBaro === "number" && Number.isFinite(altBaro)) {
+    out.altBaroFt = altBaro;
+  } else if (altBaro === "ground") {
+    out.onGround = true;
+  }
+  const airground = replayString(obj, "airground");
+  if (airground === "ground") out.onGround = true;
+  if (airground === "airborne") out.onGround = false;
+  return out;
+}
+
+function isCurrentAircraftShape(obj: Record<string, unknown>): boolean {
+  return (
+    "idKind" in obj ||
+    "source" in obj ||
+    "typeDesignator" in obj ||
+    "altBaroFt" in obj ||
+    "trackDeg" in obj
+  );
+}
+
+function replayObject(value: unknown): Record<string, unknown> | null {
+  return value != null && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function replayString(
+  obj: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = obj[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+function replayNumber(
+  obj: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const value = obj[key];
+  return typeof value === "number" && Number.isFinite(value)
+    ? value
+    : undefined;
+}
+
+function replayStringArray(
+  obj: Record<string, unknown>,
+  key: string,
+): string[] | undefined {
+  const value = obj[key];
+  if (!Array.isArray(value)) return undefined;
+  const out = value.filter(
+    (entry): entry is string => typeof entry === "string",
+  );
+  return out.length > 0 ? out : undefined;
+}
+
+function assignReplayString<K extends keyof Aircraft>(
+  out: Aircraft,
+  target: K,
+  obj: Record<string, unknown>,
+  source: string,
+  trim = false,
+): void {
+  const value = replayString(obj, source);
+  if (value == null) return;
+  const next = trim ? value.trim() : value;
+  if (next) (out[target] as string | undefined) = next;
+}
+
+function assignReplayNumber<K extends keyof Aircraft>(
+  out: Aircraft,
+  target: K,
+  obj: Record<string, unknown>,
+  source: string,
+): void {
+  const value = replayNumber(obj, source);
+  if (value != null) (out[target] as number | undefined) = value;
+}
+
+const REPLAY_AIRCRAFT_TYPES = new Set<AircraftType>([
+  "adsb_icao",
+  "adsb_icao_nt",
+  "adsr_icao",
+  "tisb_icao",
+  "mlat",
+  "mode_s",
+  "adsb_other",
+  "adsr_other",
+  "tisb_trackfile",
+  "tisb_other",
+  "mode_ac",
+  "unknown",
+]);
+
+function replayAircraftType(value: string | undefined): AircraftType {
+  return value && REPLAY_AIRCRAFT_TYPES.has(value as AircraftType)
+    ? (value as AircraftType)
+    : "unknown";
+}
+
+function replayAircraftIDKind(
+  value: string | undefined,
+  hex: string,
+): AircraftIDKind {
+  if (value === "icao" || value === "non_icao" || value === "unknown") {
+    return value;
+  }
+  if (hex.startsWith("~")) return "non_icao";
+  return /^[0-9a-f]{6}$/.test(hex) ? "icao" : "unknown";
 }
 
 function appendRecentReplayFrame(
@@ -725,6 +921,7 @@ const INITIAL_REPLAY_STATE: ReplaySlice = {
   availableTo: null,
   blockSec: 300,
   blocks: [],
+  unavailableBlockUrls: {},
   recent: null,
   cache: {},
   mode: "live",
@@ -1200,15 +1397,35 @@ export const useIdentStore = create<IdentState>((set) => ({
         block,
         normalized,
       );
+      const unavailableBlockUrls = {
+        ...(st.replay.unavailableBlockUrls ?? {}),
+      };
+      delete unavailableBlockUrls[url];
       return {
         replay: {
           ...st.replay,
           cache: { ...st.replay.cache, [url]: normalized },
+          unavailableBlockUrls,
           error: clearError ? null : st.replay.error,
           errorUrl: clearError ? null : st.replay.errorUrl,
         },
       };
     }),
+
+  markReplayBlockUnavailable: (url) =>
+    set((st) =>
+      st.replay.unavailableBlockUrls?.[url]
+        ? st
+        : {
+            replay: {
+              ...st.replay,
+              unavailableBlockUrls: {
+                ...(st.replay.unavailableBlockUrls ?? {}),
+                [url]: true,
+              },
+            },
+          },
+    ),
 
   setReplayRecent: (block) =>
     set((st) => {
@@ -1562,6 +1779,14 @@ const replayAircraftMapByFrame = new WeakMap<
 let replayTrailsCache: {
   blocks: Record<string, ReplayBlockFile>;
   recent: ReplayBlockFile | null | undefined;
+  trailStore: Record<string, TrailPoint[]>;
+  frameTs: number;
+  trailStartMs: number | null;
+  selectedHex: string | null;
+  trails: Record<string, TrailPoint[]>;
+} | null = null;
+let replayTrailStoreCache: {
+  trailStore: Record<string, TrailPoint[]>;
   frameTs: number;
   trailStartMs: number | null;
   selectedHex: string | null;
@@ -1574,6 +1799,7 @@ let displayTrailsCache: {
 
 export function __resetTrailDisplayCachesForTests(): void {
   replayTrailsCache = null;
+  replayTrailStoreCache = null;
   displayTrailsCache = null;
 }
 
@@ -1616,13 +1842,18 @@ export function selectDisplayTrailsByHex(
     return st.trailsByHex;
   }
   const blocks = replayLoadedBlocks(st);
-  if (blocks.length === 0) return EMPTY_REPLAY_TRAILS;
+  const trailStoreTrails = cachedReplayTrailStoreDisplayTrails(
+    st,
+    st.replay.playheadMs,
+  );
+  if (blocks.length === 0) return trailStoreTrails;
   const frame = currentReplayFrameFromBlocks(st, blocks);
-  if (!frame) return EMPTY_REPLAY_TRAILS;
+  if (!frame) return trailStoreTrails;
   if (
     replayTrailsCache &&
     replayTrailsCache.blocks === st.replay.cache &&
     replayTrailsCache.recent === st.replay.recent &&
+    replayTrailsCache.trailStore === st.trailsByHex &&
     replayTrailsCache.frameTs === frame.ts &&
     replayTrailsCache.trailStartMs === st.replay.trailStartMs &&
     replayTrailsCache.selectedHex === st.selectedHex
@@ -1675,16 +1906,77 @@ export function selectDisplayTrailsByHex(
       out[hex] = series.slice(series.length - TRAIL_POINT_CAP);
     }
   }
-  const trails = displayLatestTrailSegments(out);
+  const trails = replayTrailsWithTrailStore(
+    displayLatestTrailSegments(out),
+    cachedReplayTrailStoreDisplayTrails(st, frame.ts),
+  );
   replayTrailsCache = {
     blocks: st.replay.cache,
     recent: st.replay.recent,
+    trailStore: st.trailsByHex,
     frameTs: frame.ts,
     trailStartMs: st.replay.trailStartMs,
     selectedHex,
     trails,
   };
   return trails;
+}
+
+function cachedReplayTrailStoreDisplayTrails(
+  st: IdentState,
+  frameTs: number,
+): Record<string, TrailPoint[]> {
+  if (
+    replayTrailStoreCache &&
+    replayTrailStoreCache.trailStore === st.trailsByHex &&
+    replayTrailStoreCache.frameTs === frameTs &&
+    replayTrailStoreCache.trailStartMs === st.replay.trailStartMs &&
+    replayTrailStoreCache.selectedHex === st.selectedHex
+  ) {
+    return replayTrailStoreCache.trails;
+  }
+  const trails = replayTrailStoreDisplayTrails(st, frameTs);
+  replayTrailStoreCache = {
+    trailStore: st.trailsByHex,
+    frameTs,
+    trailStartMs: st.replay.trailStartMs,
+    selectedHex: st.selectedHex,
+    trails,
+  };
+  return trails;
+}
+
+function replayTrailStoreDisplayTrails(
+  st: IdentState,
+  frameTs: number,
+): Record<string, TrailPoint[]> {
+  const selectedHex = st.selectedHex;
+  const unselectedSince = frameTs - TRAIL_FADE_MAX_SEC * 1000;
+  const out: Record<string, TrailPoint[]> = {};
+  for (const [hex, points] of Object.entries(st.trailsByHex)) {
+    const since =
+      hex === selectedHex
+        ? (st.replay.trailStartMs ?? unselectedSince)
+        : unselectedSince;
+    const kept = points.filter(
+      (point) => point.ts >= since && point.ts <= frameTs,
+    );
+    if (kept.length === 0) continue;
+    out[hex] =
+      hex === selectedHex || kept.length <= TRAIL_POINT_CAP
+        ? latestTrailSegment(kept)
+        : latestTrailSegment(kept.slice(kept.length - TRAIL_POINT_CAP));
+  }
+  return Object.keys(out).length > 0 ? out : EMPTY_REPLAY_TRAILS;
+}
+
+function replayTrailsWithTrailStore(
+  replayTrails: Record<string, TrailPoint[]>,
+  trailStoreTrails: Record<string, TrailPoint[]>,
+): Record<string, TrailPoint[]> {
+  if (trailStoreTrails === EMPTY_REPLAY_TRAILS) return replayTrails;
+  if (replayTrails === EMPTY_REPLAY_TRAILS) return trailStoreTrails;
+  return { ...replayTrails, ...trailStoreTrails };
 }
 
 interface TrailSegmentState {

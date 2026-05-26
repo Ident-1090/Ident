@@ -238,6 +238,57 @@ describe("replay display selectors", () => {
     ).toMatchObject({ flight: "RECENT1" });
   });
 
+  it("uses retained trail store points while replay blocks are unavailable", () => {
+    const points = [
+      { lat: 34.1, lon: -118.2, alt: 3000, ts: 120_000, segment: 0 },
+      { lat: 34.2, lon: -118.3, alt: 3200, ts: 130_000, segment: 0 },
+      { lat: 34.3, lon: -118.4, alt: 3400, ts: 160_000, segment: 0 },
+    ];
+    useIdentStore.setState((st) => ({
+      trailsByHex: {
+        ...st.trailsByHex,
+        abc123: points,
+      },
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 140_000,
+      },
+    }));
+
+    expect(selectDisplayTrailsByHex(useIdentStore.getState()).abc123).toEqual([
+      points[0],
+      points[1],
+    ]);
+  });
+
+  it("reuses retained trail store replay trails while inputs are unchanged", () => {
+    useIdentStore.setState((st) => ({
+      trailsByHex: {
+        ...st.trailsByHex,
+        abc123: [
+          { lat: 34.1, lon: -118.2, alt: 3000, ts: 120_000, segment: 0 },
+          { lat: 34.2, lon: -118.3, alt: 3200, ts: 130_000, segment: 0 },
+        ],
+      },
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 140_000,
+      },
+    }));
+
+    const first = selectDisplayTrailsByHex(useIdentStore.getState());
+
+    expect(selectDisplayTrailsByHex(useIdentStore.getState())).toBe(first);
+  });
+
   it("normalizes fetched replay blocks before selecting a display frame", () => {
     useIdentStore.setState((st) => ({
       replay: {

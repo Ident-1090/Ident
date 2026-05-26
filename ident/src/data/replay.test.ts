@@ -4,6 +4,7 @@ import {
   snapshotFrontendDiagnostics,
 } from "./frontendDiagnostics";
 import {
+  __resetReplayLoaderForTests,
   blocksForRange,
   ensureReplayRange,
   refreshReplayManifest,
@@ -14,10 +15,12 @@ import {
   selectDisplayTrailsByHex,
   useIdentStore,
 } from "./store";
+import type { ReplayBlockFile } from "./types";
 
 const originalFetch = globalThis.fetch;
 
 function resetStore() {
+  __resetReplayLoaderForTests();
   __resetTrailDisplayCachesForTests();
   useIdentStore.setState({
     aircraft: new Map([
@@ -33,6 +36,7 @@ function resetStore() {
       availableTo: null,
       blockSec: 300,
       blocks: [],
+      unavailableBlockUrls: {},
       cache: {},
       mode: "live",
       playheadMs: null,
@@ -59,6 +63,7 @@ describe("replay data loading", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    __resetReplayLoaderForTests();
     vi.restoreAllMocks();
     window.history.replaceState(null, "", "/");
     __resetFrontendDiagnosticsForTest();
@@ -150,6 +155,66 @@ describe("replay data loading", () => {
     expect(selectDisplayTrailsByHex(st).abc123).toHaveLength(2);
   });
 
+  it("expands compact replay aircraft into the display aircraft shape", async () => {
+    const block = {
+      version: 2,
+      start: 120_000,
+      end: 180_000,
+      step_ms: 5_000,
+      frames: [
+        {
+          ts: 130_000,
+          aircraft: [
+            {
+              hex: "abc123",
+              type: "adsb_icao",
+              flight: "UAL123",
+              r: "N12345",
+              t: "B738",
+              lat: 34,
+              lon: -118,
+              alt_baro: 12000,
+              gs: 420,
+              track: 90,
+              seen_pos: 0.5,
+              rssi: -12,
+            },
+            {
+              hex: "ground1",
+              type: "adsb_icao",
+              alt_baro: "ground",
+            },
+          ],
+        },
+      ],
+    };
+    globalThis.fetch = vi.fn(async (url: string) =>
+      url.includes("manifest") ? responseJson(manifest()) : responseJson(block),
+    ) as never;
+
+    await refreshReplayManifest();
+    useIdentStore.getState().enterReplay(130_000);
+    await ensureReplayRange(120_000, 180_000);
+
+    const aircraft = selectDisplayAircraftMap(useIdentStore.getState());
+    expect(aircraft.get("abc123")).toMatchObject({
+      hex: "abc123",
+      idKind: "icao",
+      source: "adsb_icao",
+      flight: "UAL123",
+      reg: "N12345",
+      typeDesignator: "B738",
+      altBaroFt: 12000,
+      gsKt: 420,
+      trackDeg: 90,
+      seenPosSec: 0.5,
+      rssiDbfs: -12,
+    });
+    expect(aircraft.get("ground1")).toMatchObject({
+      onGround: true,
+    });
+  });
+
   it("does not request blocks that are already loaded", async () => {
     const block = replayBlock();
     globalThis.fetch = vi.fn(async (url: string) =>
@@ -161,6 +226,57 @@ describe("replay data loading", () => {
     await ensureReplayRange(120_000, 180_000);
 
     expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it("uses recent replay seed coverage before fetching finalized blocks", async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error("unexpected replay block fetch");
+    }) as never;
+    useIdentStore.setState((st) => ({
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 130_000,
+        blocks: manifest().blocks,
+        recent: replayBlock() as unknown as ReplayBlockFile,
+      },
+    }));
+
+    await ensureReplayRange(130_000, 130_000);
+
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
+  it("uses retained trail store coverage before fetching finalized blocks", async () => {
+    globalThis.fetch = vi.fn(async () => {
+      throw new Error("unexpected replay block fetch");
+    }) as never;
+    useIdentStore.setState((st) => ({
+      trailsByHex: {
+        ...st.trailsByHex,
+        abc123: [
+          { lat: 34.1, lon: -118.2, alt: 3000, ts: 120_000, segment: 0 },
+          { lat: 34.2, lon: -118.3, alt: 3200, ts: 130_000, segment: 0 },
+          { lat: 34.3, lon: -118.4, alt: 3400, ts: 180_000, segment: 0 },
+        ],
+      },
+      replay: {
+        ...st.replay,
+        enabled: true,
+        availableFrom: 120_000,
+        availableTo: 180_000,
+        mode: "replay",
+        playheadMs: 130_000,
+        blocks: manifest().blocks,
+      },
+    }));
+
+    await ensureReplayRange(130_000, 130_000);
+
+    expect(globalThis.fetch).not.toHaveBeenCalled();
   });
 
   it("does not toggle loading for blocks that are already loaded", async () => {
@@ -554,6 +670,7 @@ describe("replay data loading", () => {
 
     await refreshReplayManifest();
     await ensureReplayRange(120_000, 180_000, { background: true });
+    await ensureReplayRange(120_000, 180_000, { background: true });
 
     expect(globalThis.fetch).toHaveBeenCalledTimes(3);
     expect(warn).toHaveBeenCalledWith(
@@ -575,6 +692,10 @@ describe("replay data loading", () => {
     await ensureReplayRange(120_000, 180_000, { background: true });
 
     expect(globalThis.fetch).toHaveBeenCalledTimes(3);
+    expect(globalThis.fetch).not.toHaveBeenCalledWith(
+      "/ident/api/replay/block-failure",
+      expect.anything(),
+    );
     expect(warn).not.toHaveBeenCalledWith(
       "[ident replay] background block load failed",
       expect.any(Error),
@@ -590,7 +711,38 @@ describe("replay data loading", () => {
     );
   });
 
-  it("retries malformed replay blocks and clears the matching error after recovery", async () => {
+  it("surfaces replay blocks whose frames normalize away", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    globalThis.fetch = vi.fn(async (url: string) =>
+      url.includes("manifest")
+        ? responseJson(manifest())
+        : responseJson({
+            version: 2,
+            start: 120_000,
+            end: 180_000,
+            step_ms: 5_000,
+            frames: [{ aircraft: [{ flight: "BROKEN" }] }],
+          }),
+    ) as never;
+
+    await refreshReplayManifest();
+    await ensureReplayRange(120_000, 180_000, { background: true });
+
+    expect(globalThis.fetch).not.toHaveBeenCalledWith(
+      "/ident/api/replay/block-failure",
+      expect.anything(),
+    );
+    expect(useIdentStore.getState().replay.error).toContain(
+      "Invalid replay block",
+    );
+    expect(
+      useIdentStore.getState().replay.cache[
+        "/api/replay/blocks/120000-180000.json.zst"
+      ],
+    ).toBeUndefined();
+  });
+
+  it("does not automatically retry malformed replay blocks", async () => {
     let malformed = true;
     globalThis.fetch = vi.fn(async (url: string) => {
       if (url.includes("manifest")) return responseJson(manifest());
@@ -605,17 +757,18 @@ describe("replay data loading", () => {
     await ensureReplayRange(120_000, 180_000, { background: true });
     await ensureReplayRange(120_000, 180_000);
 
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      "/ident/api/replay/blocks/120000-180000.json.zst",
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
-    );
-    expect(useIdentStore.getState().replay.error).toBeNull();
-    expect(useIdentStore.getState().replay.errorUrl).toBeNull();
+    expect(
+      vi
+        .mocked(globalThis.fetch)
+        .mock.calls.filter(([url]) =>
+          String(url).includes("/api/replay/blocks/120000-180000.json.zst"),
+        ),
+    ).toHaveLength(1);
     expect(
       useIdentStore.getState().replay.cache[
         "/api/replay/blocks/120000-180000.json.zst"
       ],
-    ).toBeTruthy();
+    ).toBeUndefined();
   });
 
   it("surfaces a frontend diagnostic when a replay block fails to decode", async () => {
