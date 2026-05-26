@@ -61,6 +61,24 @@ IDENT_HEYWHATSTHAT_ALTS=1000,3000,10000
 comma-separated list of altitudes for the rings; leave it unset for a single
 40,000 ft (12,192 m) ring.
 
+## Share card
+
+On by default. Ident serves an OpenGraph card so a link to your instance
+shows a preview — the station name with the current message rate, aircraft count,
+and range over a small radar — when posted to chat apps or social sites. The page
+stays `noindex`, so this affects shared links, not search engines.
+
+```sh
+IDENT_PUBLIC_CARD=true
+IDENT_PUBLIC_URL=https://radar.example.test
+```
+
+The card image needs an absolute URL. Ident derives it from the request,
+honoring a reverse proxy's `X-Forwarded-Proto` / `X-Forwarded-Host`; set
+`IDENT_PUBLIC_URL` to your instance's external base URL when the derived value
+is wrong, such as behind a proxy that does not forward those headers. Set
+`IDENT_PUBLIC_CARD=false` to omit the card and its metadata entirely.
+
 ## Trails
 
 Ident keeps recent aircraft trails inside `identd` instead of requiring a

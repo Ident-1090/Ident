@@ -4,7 +4,7 @@ import { execSync } from "node:child_process";
 import { relative, sep } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
-import { defineConfig, loadEnv, type ProxyOptions } from "vite";
+import { defineConfig, loadEnv, type Plugin, type ProxyOptions } from "vite";
 
 // Build version, read at build time: the release tag when built from a tagged
 // commit (the released container), otherwise the short commit hash so ad-hoc /
@@ -23,6 +23,49 @@ const appVersion = (() => {
   };
   return git("describe --tags --exact-match") || git("rev-parse --short HEAD");
 })();
+
+// Demo build only: bake the public showcase's share-card metadata with an
+// absolute og:image (the demo's GitHub Pages URL is known at build time) and
+// opt into search indexing. Real receiver-local deployments are served by
+// identd, which injects their card metadata at request time with an absolute
+// URL derived from the request host — og:image must be absolute, and the
+// deployment host isn't known at build time. Non-demo builds get nothing here.
+function ogMetaPlugin(): Plugin {
+  const DEMO_SITE = "https://ident-1090.github.io/Ident/";
+  const IMG = `${DEMO_SITE}og.png`;
+  const TITLE = "Ident — live ADS-B from your receiver";
+  const DESC =
+    "Live traffic from your own ADS-B receiver, in a fast modern interface for desktop, tablet, and phone.";
+  return {
+    name: "ident-og-meta",
+    transformIndexHtml(html) {
+      if (process.env.VITE_IDENT_DEMO !== "true") return html;
+      const tags = [
+        `<meta name="description" content="${DESC}" />`,
+        `<link rel="canonical" href="${DEMO_SITE}" />`,
+        `<meta property="og:type" content="website" />`,
+        `<meta property="og:site_name" content="Ident" />`,
+        `<meta property="og:title" content="${TITLE}" />`,
+        `<meta property="og:description" content="${DESC}" />`,
+        `<meta property="og:url" content="${DEMO_SITE}" />`,
+        `<meta property="og:image" content="${IMG}" />`,
+        `<meta property="og:image:width" content="1200" />`,
+        `<meta property="og:image:height" content="630" />`,
+        `<meta name="twitter:card" content="summary_large_image" />`,
+        `<meta name="twitter:title" content="${TITLE}" />`,
+        `<meta name="twitter:description" content="${DESC}" />`,
+        `<meta name="twitter:image" content="${IMG}" />`,
+      ].join("\n    ");
+      return html
+        .replace(
+          /<meta name="robots"[^>]*>/,
+          `<meta name="robots" content="index, follow" />`,
+        )
+        .replace(/\s*<meta name="googlebot"[^>]*>/, "")
+        .replace("</head>", `    ${tags}\n  </head>`);
+    },
+  };
+}
 
 function ignoreDevWatchPath(
   filePath: string,
@@ -127,7 +170,7 @@ export default defineConfig(({ mode }) => {
     define: {
       __IDENT_VERSION__: JSON.stringify(appVersion),
     },
-    plugins: [react(), tailwindcss()],
+    plugins: [react(), tailwindcss(), ogMetaPlugin()],
     build: {
       outDir: "dist",
       sourcemap: false,

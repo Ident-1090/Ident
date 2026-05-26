@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -46,6 +47,8 @@ type Config struct {
 	RouteTTL                   time.Duration
 	RouteBatchDelay            time.Duration
 	StationName                string
+	PublicCard                 bool
+	PublicURL                  string
 	LineOfSightPanoramaID      string
 	LineOfSightAlts            string
 	UpdateCheck                bool
@@ -163,11 +166,37 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 		return err
 	}
 
+	// Currently tracked aircraft, updated from each live frame (matches the
+	// frontend's live count, not the longer trail-retention window).
+	var liveAircraft atomic.Int64
+	var card *cardRenderer
+	if cfg.PublicCard {
+		card, err = newCardRenderer(func() CardStats {
+			rate, hasRate, maxRange, hasRange := statusNormalizer.CardStats()
+			return CardStats{
+				Station:     cfg.StationName,
+				MessageRate: rate,
+				HasRate:     hasRate,
+				Aircraft:    int(liveAircraft.Load()),
+				MaxRangeNM:  maxRange,
+				HasRange:    hasRange,
+			}
+		})
+		if err != nil {
+			return err
+		}
+		go card.Run(ctx)
+	}
+
 	srv := NewServerWithOptions(ctx, hub, ServerOptions{
-		BasePath: cfg.BasePath,
-		Web:      bundledWeb(),
-		Replay:   replay,
-		Trails:   trails,
+		BasePath:    cfg.BasePath,
+		Web:         bundledWeb(),
+		Replay:      replay,
+		Trails:      trails,
+		Card:        card,
+		PublicCard:  cfg.PublicCard,
+		StationName: cfg.StationName,
+		PublicURL:   cfg.PublicURL,
 	})
 	httpSrv := &http.Server{
 		Addr:         cfg.Addr,
@@ -186,6 +215,7 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 			aircraftFrame := publishProducerUpdate(hub, statusNormalizer, c.name, b)
 			if c.name == "aircraft" {
 				if aircraftFrame != nil {
+					liveAircraft.Store(int64(len(aircraftFrame.Aircraft)))
 					hub.PublishEnvelope(trails.IngestAircraftFrame(*aircraftFrame), "trails")
 					replay.IngestAircraftFrame(*aircraftFrame)
 					if cs := extractAircraftCallsignsFromFrame(*aircraftFrame); len(cs) > 0 {
@@ -339,6 +369,8 @@ func loadConfigFrom(args []string, getenv func(string) string) (Config, error) {
 		RouteTTL:                   time.Duration(envInt(getenv, "IDENT_RELAY_ROUTE_TTL_SEC", 300)) * time.Second,
 		RouteBatchDelay:            time.Duration(envInt(getenv, "IDENT_RELAY_ROUTE_BATCH_MS", 250)) * time.Millisecond,
 		StationName:                strings.TrimSpace(getenv("IDENT_STATION_NAME")),
+		PublicCard:                 envBool(getenv, "IDENT_PUBLIC_CARD", true),
+		PublicURL:                  strings.TrimSpace(getenv("IDENT_PUBLIC_URL")),
 		LineOfSightPanoramaID:      strings.TrimSpace(getenv("IDENT_HEYWHATSTHAT_PANORAMA_ID")),
 		LineOfSightAlts:            strings.TrimSpace(getenv("IDENT_HEYWHATSTHAT_ALTS")),
 		UpdateCheck:                envBool(getenv, "IDENT_UPDATE_CHECK", true),
@@ -369,6 +401,8 @@ func loadConfigFrom(args []string, getenv func(string) string) (Config, error) {
 	flags.StringVar(&cfg.OutlineFile, "outline-file", cfg.OutlineFile, "outline JSON file name")
 	flags.StringVar(&cfg.UpstreamType, "upstream-type", cfg.UpstreamType, "receiver data upstream type")
 	flags.StringVar(&cfg.StationName, "station-name", cfg.StationName, "display name for the receiver")
+	flags.BoolVar(&cfg.PublicCard, "public-card", cfg.PublicCard, "serve an OpenGraph share card and inject share metadata (default on)")
+	flags.StringVar(&cfg.PublicURL, "public-url", cfg.PublicURL, "external base URL for absolute share-card links (default: derived from the request)")
 	flags.StringVar(&cfg.RouteUpstreamURL, "route-upstream", cfg.RouteUpstreamURL, "route lookup endpoint")
 	flags.StringVar(&cfg.LineOfSightPanoramaID, "line-of-sight-panorama-id", cfg.LineOfSightPanoramaID, "HeyWhatsThat panorama ID for line-of-sight rings")
 	flags.StringVar(&cfg.LineOfSightAlts, "line-of-sight-alts", cfg.LineOfSightAlts, "comma-separated line-of-sight altitudes")
