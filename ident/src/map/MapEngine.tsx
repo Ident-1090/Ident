@@ -12,6 +12,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { emitFrontendDiagnostic } from "../data/frontendDiagnostics";
 import { useIdentStore } from "../data/store";
 import type {
   HeyWhatsThatJson,
@@ -211,6 +212,18 @@ export function MapEngine({ children }: MapEngineProps): ReactElement {
     mapRef.current = instance;
     setMap(instance);
 
+    // Lock the map in the demo so the page can scroll past the full-bleed map:
+    // desktop disables scroll-zoom (wheel scrolls the page); phone also drops
+    // drag/touch so swipes scroll the landing.
+    const cleanupDemoLock =
+      import.meta.env.VITE_IDENT_DEMO === "true"
+        ? lockMapForDemo(
+            instance,
+            containerRef.current,
+            window.matchMedia("(max-width: 767px)").matches,
+          )
+        : undefined;
+
     const onLoad = (): void => {
       disableRemoteGlyphs(instance);
       setIsReady(true);
@@ -234,6 +247,7 @@ export function MapEngine({ children }: MapEngineProps): ReactElement {
     instance.on("styleimagemissing", onStyleImageMissing);
 
     return () => {
+      cleanupDemoLock?.();
       instance.off("load", onLoad);
       instance.off("moveend", onMoveEnd);
       instance.off("styledata", onStyleData);
@@ -555,4 +569,46 @@ function syncLosRings(m: MlMap, data: GeoJSON.FeatureCollection | null): void {
   } else {
     keepLayerBelowTrafficOverlays(m, LYR_LOS_LINE);
   }
+}
+
+// On the desktop hero, disable only scroll-to-zoom so the wheel scrolls the
+// page past the full-bleed map; dragging still pans. The first wheel raises a
+// diagnostic that explains it and showcases the notification surface.
+function lockMapForDemo(
+  map: MlMap,
+  host: HTMLElement | null,
+  phone: boolean,
+): () => void {
+  map.scrollZoom?.disable();
+
+  if (phone) {
+    // A full-bleed map would otherwise trap vertical swipes; let them scroll the
+    // landing instead, and drop zoom/rotate gestures so the demo stays framed.
+    map.dragPan?.disable();
+    map.touchZoomRotate?.disable();
+    map.touchPitch?.disable();
+    map.doubleClickZoom?.disable();
+    const prevTouchAction = host?.style.touchAction ?? "";
+    if (host) host.style.touchAction = "pan-y";
+    return () => {
+      if (host) host.style.touchAction = prevTouchAction;
+    };
+  }
+
+  const onWheel = (): void => {
+    emitFrontendDiagnostic({
+      severity: "info",
+      channel: "frontend.demo",
+      code: "demo.map_locked",
+      message:
+        "Scroll zooms the page in this demo — use the +/- buttons to zoom the map.",
+      ttlMs: 10000,
+    });
+  };
+
+  host?.addEventListener("wheel", onWheel, { passive: true });
+
+  return () => {
+    host?.removeEventListener("wheel", onWheel);
+  };
 }

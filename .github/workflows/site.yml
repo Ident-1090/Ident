@@ -1,0 +1,77 @@
+name: Deploy site
+
+# Builds the public GitHub Pages site: the synthetic demo at the root and the
+# VitePress docs under /docs, deployed together as one artifact.
+
+on:
+  # Publish on release tags so the demo matches the latest released container.
+  # workflow_dispatch builds any ref on demand (a staging deploy): the version
+  # then falls back to the commit hash instead of a release tag.
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow one concurrent deployment; let an in-progress run finish.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.29.2
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: |
+            ident/pnpm-lock.yaml
+            docs/pnpm-lock.yaml
+
+      # Demo app → site root. base is path-relative, so it works under /Ident/.
+      - run: pnpm install --frozen-lockfile
+        working-directory: ident
+      - run: pnpm build
+        working-directory: ident
+        env:
+          VITE_IDENT_DEMO: "true"
+
+      # Docs → /docs.
+      - run: pnpm install --frozen-lockfile
+        working-directory: docs
+      - run: pnpm docs:build
+        working-directory: docs
+        env:
+          DOCS_BASE: /Ident/docs/
+
+      - name: Assemble site
+        run: |
+          mkdir -p _site
+          cp -r ident/dist/. _site/
+          mkdir -p _site/docs
+          cp -r docs/.vitepress/dist/. _site/docs/
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/deploy-pages@v4
+        id: deployment

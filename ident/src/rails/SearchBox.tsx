@@ -23,6 +23,7 @@ export function SearchBox({ onOpenOmnibox, trailing }: Props) {
           type="button"
           onClick={onOpenOmnibox}
           aria-label="Open search"
+          data-tour="search"
           className="min-w-0 flex-1 flex items-center gap-2 bg-paper-2 border border-(--color-line) rounded-sm px-2.5 py-1.5 font-mono text-[12px] cursor-pointer text-left"
         >
           <Search

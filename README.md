@@ -4,7 +4,11 @@ Live traffic from your own ADS-B receiver, in a fast modern display for desktop,
 tablet, and phone.
 
 <p align="center">
-<img width="864" height="498" alt="demo" src="https://github.com/user-attachments/assets/3cc415d3-63b8-4214-bcf2-63d4a1dd30c8" />
+<a href="https://ident-1090.github.io/Ident/"><img width="864" height="498" alt="Ident demo" src="https://github.com/user-attachments/assets/3cc415d3-63b8-4214-bcf2-63d4a1dd30c8" /></a>
+</p>
+
+<p align="center">
+<b><a href="https://ident-1090.github.io/Ident/">▶&nbsp; Try the live demo</a></b>
 </p>
 
 Ident gives a local receiver a clearer day-to-day screen: map, traffic list,
@@ -14,7 +18,7 @@ keep hearing and sharing aircraft the same way it does today.
 
 ## Documentation
 
-Full documentation lives on [Ident docs](https://ident-1090.github.io/Ident/).
+Full documentation lives on [Ident docs](https://ident-1090.github.io/Ident/docs/).
 Install, configuration, and design details are there. This README is a short
 overview and a set of pointers.
 
@@ -58,7 +62,7 @@ Ident ships as `identd`, a single local service that serves the web app and
 streams receiver updates to browsers. It installs as a Docker Compose service,
 which is the tested path, or as a Debian package or standalone binary.
 
-The [install guide](https://ident-1090.github.io/Ident/getting-started/install)
+The [install guide](https://ident-1090.github.io/Ident/docs/getting-started/install)
 walks through each method, points Ident at your receiver data, and covers
 per-decoder setup.
 
@@ -71,7 +75,7 @@ runtime paths such as `/run/readsb` and `/run/dump1090-fa`.
 Environment variables and flags cover the receiver data location, upstream type,
 base path for reverse proxies, station identity and overlays, trails, replay, and
 update checks. See the
-[configuration reference](https://ident-1090.github.io/Ident/getting-started/configuration).
+[configuration reference](https://ident-1090.github.io/Ident/docs/getting-started/configuration).
 
 ## Security
 
@@ -89,9 +93,9 @@ Report vulnerabilities through GitHub private vulnerability reporting:
 
 Contributions are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for how to
 contribute, including the DCO sign-off. For local setup, builds, and the checks to
-run, see the [development guide](https://ident-1090.github.io/Ident/development);
+run, see the [development guide](https://ident-1090.github.io/Ident/docs/development);
 for how the system fits together, the
-[architecture overview](https://ident-1090.github.io/Ident/architecture).
+[architecture overview](https://ident-1090.github.io/Ident/docs/architecture).
 
 ## License
 

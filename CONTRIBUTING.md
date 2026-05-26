@@ -37,7 +37,7 @@ easier to review than a broad change that mixes unrelated work.
 - Keep receiver data read-only by default; document and justify any write path.
 
 For local setup, builds, the checks to run, and the pre-commit hook, see the
-[Development guide](https://ident-1090.github.io/Ident/development).
+[Development guide](https://ident-1090.github.io/Ident/docs/development).
 
 ## Developer Certificate of Origin
 

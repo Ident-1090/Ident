@@ -251,6 +251,16 @@ async function fetchTrailSeed(signal: AbortSignal): Promise<void> {
 }
 
 export function startFeed(): () => void {
+  if (import.meta.env.VITE_IDENT_DEMO === "true") {
+    // Demo build: no backend. Load the synthetic feed lazily so its seed data
+    // stays out of the normal app bundle.
+    let stop = () => {};
+    void import("../demo/demoFeed").then((m) => {
+      stop = m.startDemoFeed();
+    });
+    return () => stop();
+  }
+
   const store = useIdentStore.getState();
   const trailSeedController = new AbortController();
   const client = new WsClient({

@@ -6,6 +6,7 @@
   "packageManager": "pnpm@10.29.2",
   "scripts": {
     "dev": "vite",
+    "dev:demo": "VITE_IDENT_DEMO=true vite",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "test": "pnpm check-ident-schemas && vitest run",

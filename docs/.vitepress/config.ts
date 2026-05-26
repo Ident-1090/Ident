@@ -1,7 +1,7 @@
 import { withMermaid } from "vitepress-plugin-mermaid";
 import llmstxt, { copyOrDownloadAsMarkdownButtons } from "vitepress-plugin-llms";
 
-const base = process.env.DOCS_BASE ?? "/Ident/";
+const base = process.env.DOCS_BASE ?? "/Ident/docs/";
 
 export default withMermaid({
   title: "Ident",

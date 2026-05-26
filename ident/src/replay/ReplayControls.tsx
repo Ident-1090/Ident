@@ -409,6 +409,7 @@ export const ReplayScrubber = memo(function ReplayScrubber() {
   return (
     <div
       data-testid="replay-scrubber"
+      data-tour="replay"
       className="[grid-area:replay] hidden md:flex items-center gap-3 px-4 bg-paper-2 border-b border-(--color-line) font-mono text-[10.5px] text-ink-soft min-w-0"
     >
       <div className="relative shrink-0">

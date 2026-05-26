@@ -1,9 +1,28 @@
 /// <reference types="vitest" />
 
+import { execSync } from "node:child_process";
 import { relative, sep } from "node:path";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig, loadEnv, type ProxyOptions } from "vite";
+
+// Build version, read at build time: the release tag when built from a tagged
+// commit (the released container), otherwise the short commit hash so ad-hoc /
+// staging builds are still identifiable. Empty only when git is unavailable.
+const appVersion = (() => {
+  const git = (args: string): string => {
+    try {
+      return execSync(`git ${args}`, {
+        stdio: ["ignore", "pipe", "ignore"],
+      })
+        .toString()
+        .trim();
+    } catch {
+      return "";
+    }
+  };
+  return git("describe --tags --exact-match") || git("rev-parse --short HEAD");
+})();
 
 function ignoreDevWatchPath(
   filePath: string,
@@ -105,6 +124,9 @@ export default defineConfig(({ mode }) => {
 
   return {
     base: "./",
+    define: {
+      __IDENT_VERSION__: JSON.stringify(appVersion),
+    },
     plugins: [react(), tailwindcss()],
     build: {
       outDir: "dist",

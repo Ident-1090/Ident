@@ -43,8 +43,8 @@ const ICON_MODES: Array<{
   text: string;
   label: string;
 }> = [
-  { key: "arrow", text: "Arrow", label: "Arrow — directional" },
   { key: "icon", text: "Type", label: "Type — aircraft silhouette" },
+  { key: "arrow", text: "Arrow", label: "Arrow — directional" },
 ];
 
 const LABEL_FIELDS: Array<{
@@ -157,7 +157,10 @@ export function Topbar({ onOpenSettings }: { onOpenSettings: () => void }) {
   }
 
   return (
-    <header className="[grid-area:topbar] flex items-stretch min-w-0 bg-paper border-b border-(--color-line) text-[13px]">
+    <header
+      data-tour="topbar"
+      className="[grid-area:topbar] flex items-stretch min-w-0 bg-paper border-b border-(--color-line) text-[13px]"
+    >
       <TopbarBrand site={site} />
 
       {/* Health — clock + map-display controls. Hidden on phone; the drawer

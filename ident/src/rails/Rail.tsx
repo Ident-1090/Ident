@@ -14,6 +14,7 @@ export function Rail({ onOpenOmnibox, collapsed, onCollapsedChange }: Props) {
   if (collapsed) {
     return (
       <div
+        data-tour="rail"
         className="[grid-area:left] h-full w-12 min-h-0 bg-paper border-r border-(--color-line) flex flex-col items-center gap-2 overflow-hidden py-3"
         data-rail-collapsed="true"
       >
@@ -32,6 +33,7 @@ export function Rail({ onOpenOmnibox, collapsed, onCollapsedChange }: Props) {
 
   return (
     <div
+      data-tour="rail"
       className="[grid-area:left] h-full min-h-0 bg-paper border-r border-(--color-line) flex flex-col overflow-hidden"
       data-rail-collapsed="false"
     >

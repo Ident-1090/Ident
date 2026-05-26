@@ -188,7 +188,10 @@ export function useReceiverDiagnostics(): ReceiverDiagnostics {
 export function StatusBar() {
   const { cells, producerLabel, diagnostics } = useReceiverDiagnostics();
   return (
-    <footer className="[grid-area:status] flex items-center gap-0 px-0 py-0 bg-(--color-chrome-bg) text-chrome-ink-soft font-mono text-[10.5px] whitespace-nowrap overflow-hidden">
+    <footer
+      data-tour="status"
+      className="[grid-area:status] flex items-center gap-0 px-0 py-0 bg-(--color-chrome-bg) text-chrome-ink-soft font-mono text-[10.5px] whitespace-nowrap overflow-hidden"
+    >
       <FeedStatusCell />
       {cells.map((c) => (
         <Cell key={c.k} k={c.k} title={c.title} v={c.v} warn={c.warn} />
@@ -422,8 +425,8 @@ export function DiagnosticsCenter({
       : "fixed right-2 bottom-10 z-[65] w-[min(420px,calc(100vw-16px))] border border-(--color-line-strong) bg-paper shadow-2 font-mono text-[11px] text-(--color-ink)";
   const popupClass =
     variant === "mobile"
-      ? "fixed right-14 top-3 z-[64] w-[min(360px,calc(100vw-72px))] border border-(--color-line-strong) bg-paper shadow-2 font-mono text-[11px] text-(--color-ink)"
-      : "fixed right-2 bottom-12 z-[64] w-[min(360px,calc(100vw-16px))] border border-(--color-line-strong) bg-paper shadow-2 font-mono text-[11px] text-(--color-ink)";
+      ? "fixed right-14 top-3 z-[64] w-[min(360px,calc(100vw-72px))] whitespace-normal border border-(--color-line-strong) bg-paper shadow-2 font-mono text-[11px] text-(--color-ink)"
+      : "fixed right-2 bottom-12 z-[64] w-[min(360px,calc(100vw-16px))] whitespace-normal border border-(--color-line-strong) bg-paper shadow-2 font-mono text-[11px] text-(--color-ink)";
   const popupNotification =
     open || notifications.length === 0
       ? null

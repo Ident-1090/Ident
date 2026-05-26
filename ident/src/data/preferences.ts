@@ -108,7 +108,7 @@ export const DEFAULT_LAYERS: Record<LayerKey, boolean> = {
 };
 
 export const DEFAULT_MAP_PREFERENCES: MapPreferences = {
-  labelMode: "arrow",
+  labelMode: "icon",
   layers: DEFAULT_LAYERS,
   labelFields: DEFAULT_LABEL_FIELDS,
   basemapId: "ident",
@@ -267,7 +267,13 @@ export const usePreferencesStore = create<PreferencesState>()(
     }),
     {
       name: PREFERENCES_STORAGE_KEY,
-      storage: createJSONStorage(() => localStorage),
+      // In the demo, ignore and never write the visitor's real preferences:
+      // read nothing (start from defaults) and persist nothing.
+      storage: createJSONStorage(() =>
+        import.meta.env.VITE_IDENT_DEMO === "true"
+          ? { getItem: () => null, setItem: () => {}, removeItem: () => {} }
+          : localStorage,
+      ),
       partialize: (state) => ({
         map: state.map,
         settings: state.settings,
