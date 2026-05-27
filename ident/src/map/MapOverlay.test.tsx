@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { resetPreferencesStoreForTests } from "../data/preferences";
 import { useIdentStore } from "../data/store";
 import type { Aircraft } from "../data/types";
-import { MapEngineContext } from "./MapEngine";
+import { MapEngineContext } from "./MapEngineContext";
 import { MapOverlay } from "./MapOverlay";
 import { AIRCRAFT_ARROW_ICON_ID } from "./mapAircraftIcons";
 import {

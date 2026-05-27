@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
   __resetFrontendDiagnosticsForTest,
-  clearFrontendDiagnostic,
   DEFAULT_FRONTEND_DIAGNOSTIC_TTL_MS,
   emitFrontendDiagnostic,
   FRONTEND_DIAGNOSTIC_CAP,
@@ -128,52 +127,6 @@ describe("frontendDiagnostics", () => {
         seenAt + DEFAULT_FRONTEND_DIAGNOSTIC_TTL_MS + 1,
       ),
     ).toHaveLength(0);
-  });
-
-  it("clear removes an entry by identity", () => {
-    emitFrontendDiagnostic({
-      severity: "warning",
-      channel: "frontend.x",
-      code: "code.a",
-      message: "m",
-    });
-    clearFrontendDiagnostic("frontend.x", "code.a");
-    expect(snapshotFrontendDiagnostics()).toHaveLength(0);
-  });
-
-  it("clear is a no-op when nothing matches the identity", () => {
-    expect(() =>
-      clearFrontendDiagnostic("frontend.nope", "code.absent"),
-    ).not.toThrow();
-    emitFrontendDiagnostic({
-      severity: "warning",
-      channel: "frontend.x",
-      code: "code.a",
-      message: "m",
-    });
-    clearFrontendDiagnostic("frontend.x", "code.a", "wrong-scope");
-    expect(snapshotFrontendDiagnostics()).toHaveLength(1);
-  });
-
-  it("clear respects scope (matches only the identity with that scope)", () => {
-    emitFrontendDiagnostic({
-      severity: "warning",
-      channel: "frontend.x",
-      code: "code.a",
-      scope: "s1",
-      message: "m1",
-    });
-    emitFrontendDiagnostic({
-      severity: "warning",
-      channel: "frontend.x",
-      code: "code.a",
-      scope: "s2",
-      message: "m2",
-    });
-    clearFrontendDiagnostic("frontend.x", "code.a", "s1");
-    const snap = snapshotFrontendDiagnostics();
-    expect(snap).toHaveLength(1);
-    expect(snap[0].scope).toBe("s2");
   });
 
   it("evicts the oldest entry when exceeding FRONTEND_DIAGNOSTIC_CAP", () => {

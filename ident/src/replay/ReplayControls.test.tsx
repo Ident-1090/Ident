@@ -7,13 +7,13 @@ import {
 } from "../data/preferences";
 import * as storeModule from "../data/store";
 import { useIdentStore } from "../data/store";
+import { rewindRangeLabel } from "./labels";
 import {
   DesktopReplayTransport,
   MobileReplayDock,
   MobileReplayFab,
   ReplayRuntime,
   ReplayScrubber,
-  rewindRangeLabel,
 } from "./ReplayControls";
 
 let host: HTMLDivElement;

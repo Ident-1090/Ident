@@ -4,10 +4,8 @@ import type {
   Map as MlMap,
 } from "maplibre-gl";
 import {
-  createContext,
   type ReactElement,
   type ReactNode,
-  useContext,
   useEffect,
   useRef,
   useState,
@@ -21,6 +19,7 @@ import type {
 } from "../data/types";
 import { altLosColor } from "./alt";
 import { circleRing } from "./geodesic";
+import { MapEngineContext } from "./MapEngineContext";
 import { getMaplibre } from "./maplibre";
 import {
   LYR_AIRCRAFT_HIT,
@@ -30,20 +29,6 @@ import {
 import { resolveBasemapTone, useThemeIsDark } from "./mapTone";
 import { type BasemapId, resolveBasemapStyle } from "./styles";
 import { TRAFFIC_TRAILS_LAYER_ID } from "./trafficTrailsLayer";
-
-interface MapEngineContextValue {
-  map: MlMap | null;
-  isReady: boolean;
-}
-
-export const MapEngineContext = createContext<MapEngineContextValue>({
-  map: null,
-  isReady: false,
-});
-
-export function useMap(): MapEngineContextValue {
-  return useContext(MapEngineContext);
-}
 
 const RING_RADII_NM = [25, 50, 100, 150, 200];
 const RING_POINTS = 64;

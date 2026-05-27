@@ -169,6 +169,49 @@ describe("StatusBar", () => {
     expect(container.textContent).not.toContain("MHz ES");
   });
 
+  it("keeps stat value width after a session high-water mark", () => {
+    act(() => {
+      root.render(<StatusBar />);
+    });
+    const gainValue = () =>
+      container.querySelector<HTMLElement>('[data-status-stat-value="gain"]');
+
+    expect(gainValue()?.textContent).toBe("18.6 dB");
+    expect(gainValue()?.style.minWidth).toBe("7ch");
+
+    act(() => {
+      useIdentStore.setState((state) => ({
+        identStatus: {
+          ...state.identStatus!,
+          gain: {
+            kind: "producer_provided",
+            source: "top_level",
+            value: { db: 101.2 },
+          },
+        },
+      }));
+    });
+
+    expect(gainValue()?.textContent).toBe("101.2 dB");
+    expect(gainValue()?.style.minWidth).toBe("8ch");
+
+    act(() => {
+      useIdentStore.setState((state) => ({
+        identStatus: {
+          ...state.identStatus!,
+          gain: {
+            kind: "producer_provided",
+            source: "top_level",
+            value: { db: 4 },
+          },
+        },
+      }));
+    });
+
+    expect(gainValue()?.textContent).toBe("4.0 dB");
+    expect(gainValue()?.style.minWidth).toBe("8ch");
+  });
+
   it("shows optional receiver stats in the folded stats list", () => {
     useIdentStore.setState((state) => ({
       identStatus: {
@@ -228,7 +271,13 @@ describe("StatusBar", () => {
     expect(container.querySelector('[data-status-cell="Signal"]')).toBeNull();
   });
 
-  it("omits stats that are unavailable instead of rendering empty rows", () => {
+  it("renders unavailable receiver stats as placeholders with reasons", () => {
+    usePreferencesStore.setState((state) => ({
+      statusStats: {
+        ...state.statusStats,
+        hidden: state.statusStats.hidden.filter((key) => key !== "signal"),
+      },
+    }));
     useIdentStore.setState((state) => ({
       identStatus: {
         ...state.identStatus!,
@@ -255,6 +304,12 @@ describe("StatusBar", () => {
     );
     expect(button).toBeTruthy();
     expect(button!.textContent).toContain("+1");
+    const visibleSignal = container.querySelector<HTMLElement>(
+      '[data-status-stat="signal"]',
+    );
+    expect(visibleSignal).toBeTruthy();
+    expect(visibleSignal!.textContent).toContain("—");
+    expectTooltipOnPointer(visibleSignal!, "Not provided by upstream");
 
     act(() => button!.click());
 
@@ -262,9 +317,43 @@ describe("StatusBar", () => {
       '[data-testid="status-stats-panel"]',
     );
     expect(panel).toBeTruthy();
-    expect(panel!.textContent).not.toContain("Signal");
+    expect(panel!.textContent).toContain("Signal");
+    expect(panel!.textContent).toContain("—");
     expect(panel!.textContent).toContain("Noise");
     expect(panel!.textContent).toContain("-34.2 dBFS");
+  });
+
+  it("renders stale receiver stats as unavailable placeholders", () => {
+    useIdentStore.setState((state) => ({
+      identStatus: {
+        ...state.identStatus!,
+        stats: {
+          cpuPct: {
+            kind: "unavailable",
+            reason: "stale_sample",
+          },
+        },
+      },
+    }));
+
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    const button = container.querySelector<HTMLButtonElement>(
+      '[data-testid="status-stats-menu-button"]',
+    );
+    expect(button).toBeTruthy();
+    expect(button!.textContent).toContain("+1");
+
+    act(() => button!.click());
+
+    const panel = document.querySelector<HTMLElement>(
+      '[data-testid="status-stats-panel"]',
+    );
+    expect(panel).toBeTruthy();
+    expect(panel!.textContent).toContain("CPU");
+    expect(panel!.textContent).toContain("—");
   });
 
   it("respects the saved status stat order", () => {
@@ -880,6 +969,37 @@ describe("StatusBar", () => {
     expect(container.textContent).toContain("Live");
     expect(container.textContent).toContain("10 msg/s");
     expectTooltipOnPointer(live as HTMLElement, "Live · 10 msg/s");
+  });
+
+  it("keeps live message rate width after a larger value in the same session", () => {
+    act(() => {
+      root.render(<FeedStatusCell />);
+    });
+    expect(
+      container.querySelector<HTMLElement>("[data-live-mps-value]")?.style
+        .minWidth,
+    ).toBe("2ch");
+
+    act(() => {
+      useIdentStore.setState((state) => ({
+        liveState: { ...state.liveState, mpsBuffer: [128] },
+      }));
+    });
+    expect(
+      container.querySelector<HTMLElement>("[data-live-mps-value]")?.style
+        .minWidth,
+    ).toBe("3ch");
+
+    act(() => {
+      useIdentStore.setState((state) => ({
+        liveState: { ...state.liveState, mpsBuffer: [7] },
+      }));
+    });
+    expect(container.textContent).toContain("7 msg/s");
+    expect(
+      container.querySelector<HTMLElement>("[data-live-mps-value]")?.style
+        .minWidth,
+    ).toBe("3ch");
   });
 
   it("shows warming state before transports report status", () => {

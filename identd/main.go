@@ -263,12 +263,9 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 		startWatcher(c)
 	}
 
-	// Receiver-derived conditions (producer.ident.unknown, config.adapter.*)
-	// emit from IngestReceiverJSON only when receiver.json changes on disk.
-	// A stable misconfiguration would otherwise expire from the diagnostic
-	// store within receiverConditionTTL; the heartbeat re-Notes any active
-	// condition so it stays surfaced until the underlying state changes.
-	//
+	// Receiver-derived config conditions emit from IngestReceiverJSON only when
+	// receiver.json changes on disk. A stable misconfiguration would otherwise
+	// expire from the diagnostic store within receiverConditionTTL.
 	go func() {
 		ticker := time.NewTicker(reemitReceiverInterval)
 		defer ticker.Stop()
@@ -278,6 +275,22 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 				return
 			case <-ticker.C:
 				statusNormalizer.ReemitReceiverConditions()
+			}
+		}
+	}()
+
+	// Producer selection has a shorter TTL so a transient startup miss fades
+	// quickly after classification succeeds, while a stable unknown or
+	// ambiguous setup stays visible.
+	go func() {
+		ticker := time.NewTicker(producerSelectionReemitInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				statusNormalizer.ReemitProducerSelectionConditions()
 			}
 		}
 	}()

@@ -12,6 +12,8 @@ import (
 
 const maxCounterElapsedSec = 120
 const minProducerDetectionScore = 50
+const producerUnknownDiagnosticGrace = 30 * time.Second
+const producerUnknownDiagnosticTTL = time.Minute
 
 type producerSelectionState int
 
@@ -43,6 +45,7 @@ type ProducerStatusNormalizer struct {
 	counter            *aircraftCounterSample
 	counterResetReason unavailableReason
 	now                func() time.Time
+	startedAt          time.Time
 	runtimeStats       func() RuntimeStatsSample
 	receiver           *producerReceiverJSON
 
@@ -122,10 +125,12 @@ func newProducerStatusNormalizer(adapters []producerAdapter, now func() time.Tim
 		runtimeStats = func() RuntimeStatsSample { return RuntimeStatsSample{} }
 	}
 	kind, ok := parseUpstreamType(options.UpstreamType)
+	startedAt := now()
 	return &ProducerStatusNormalizer{
 		adapters:             append([]producerAdapter(nil), adapters...),
 		producer:             identProducer{Kind: producerUnknown},
 		now:                  now,
+		startedAt:            startedAt,
 		runtimeStats:         runtimeStats,
 		upstreamTypeRaw:      strings.TrimSpace(options.UpstreamType),
 		upstreamType:         kind,
@@ -358,6 +363,12 @@ func candidatesIncludeKind(candidates []producerCandidate, kind identProducerKin
 }
 
 func (n *ProducerStatusNormalizer) noteUnknownProducerSelection(best producerCandidate) {
+	// Startup can observe receiver.json before the files that identify a
+	// supported producer. Wait briefly before turning incomplete evidence
+	// into an operator-facing diagnostic.
+	if n.now().Sub(n.startedAt) < producerUnknownDiagnosticGrace {
+		return
+	}
 	message := "producer could not be classified from observed files"
 	if best.Score > 0 {
 		message = message + "; strongest evidence score " + strconv.Itoa(best.Score)
@@ -365,7 +376,7 @@ func (n *ProducerStatusNormalizer) noteUnknownProducerSelection(best producerCan
 	if len(best.Evidence) > 0 {
 		message = message + " from " + strings.Join(best.Evidence, ", ")
 	}
-	n.noteWarning("producer", "producer.ident.unknown", message, WithTTL(receiverConditionTTL))
+	n.noteWarning("producer", "producer.ident.unknown", message, WithTTL(producerUnknownDiagnosticTTL))
 }
 
 func (n *ProducerStatusNormalizer) noteAmbiguousProducerSelectionCandidates(candidates []producerCandidate) {
@@ -709,12 +720,11 @@ func (n *ProducerStatusNormalizer) persistLiveValues(status identStatus, mrSourc
 	}
 }
 
-// ReemitReceiverConditions re-Notes the currently-active receiver-derived
-// diagnostics so they survive a single TTL window even when receiver.json
-// hasn't changed. The diagnostic principle is "alive while being re-emitted";
-// receiver.json is event-driven, so a stable misconfiguration would
-// otherwise expire from the store between file changes. The heartbeat
-// goroutine in main.go drives this on reemitReceiverInterval.
+// ReemitReceiverConditions re-Notes the currently-active receiver-derived config
+// diagnostics so they survive a single TTL window even when receiver.json hasn't
+// changed. The diagnostic principle is "alive while being re-emitted";
+// receiver.json is event-driven, so a stable misconfiguration would otherwise
+// expire from the store between file changes.
 func (n *ProducerStatusNormalizer) ReemitReceiverConditions() {
 	n.mu.Lock()
 	defer n.mu.Unlock()
@@ -737,6 +747,15 @@ func (n *ProducerStatusNormalizer) ReemitReceiverConditions() {
 				WithTTL(receiverConditionTTL))
 		}
 	}
+}
+
+// ReemitProducerSelectionConditions re-Notes producer selection diagnostics while
+// no adapter has been selected. It uses a shorter cadence than receiver config
+// conditions because startup classification can resolve quickly after more files
+// arrive.
+func (n *ProducerStatusNormalizer) ReemitProducerSelectionConditions() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
 	if n.adapter == nil {
 		switch detected := n.selectDetectedProducerLocked(); detected.State {
 		case producerSelectionAmbiguous:

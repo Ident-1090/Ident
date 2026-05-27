@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { labelFieldsKey, startMapTimingTrace } from "../debug/mapTiming";
 import type { BasemapId } from "../map/styles";
 import { deriveFilterFromQuery } from "../omnibox/grammar";
+import { emitFrontendDiagnostic } from "./frontendDiagnostics";
 import type { FilterExpressionState } from "./predicates";
 import {
   type LabelFields,
@@ -29,6 +30,7 @@ import type {
   LabelMode,
   LayerKey,
   ReceiverJson,
+  ReceiverStats,
   ReplayBlockFile,
   ReplayBlockIndex,
   ReplayFrame,
@@ -72,6 +74,33 @@ const REPLAY_INTERACTION_GRACE_MS = 10 * 60 * 1000;
 const REPLAY_HEAD_KEEP_MS = 60 * 60 * 1000;
 const REPLAY_PLAYHEAD_KEEP_MS = 60 * 60 * 1000;
 const REPLAY_LOADED_FRAME_CAP = 50_000;
+const RECEIVER_STATS_RETAIN_MS = 5_000;
+const RECEIVER_STATS_DIAGNOSTIC_MS = 30_000;
+
+const RECEIVER_STAT_LABELS: Record<keyof ReceiverStats, string> = {
+  signalDbfs: "Signal",
+  noiseDbfs: "Noise",
+  strongPct: "Strong signal",
+  sampleDrops: "Sample drops",
+  cpuPct: "CPU",
+  ramPct: "RAM",
+};
+
+type ReceiverStatsSeenAt = Partial<Record<keyof ReceiverStats, number>>;
+type ReceiverStatsMetric = NonNullable<ReceiverStats[keyof ReceiverStats]>;
+type ReceiverStatsSlot = {
+  key: keyof ReceiverStats;
+  get: (stats: ReceiverStats | undefined) => ReceiverStatsMetric | undefined;
+};
+
+const RECEIVER_STATS_SLOTS = {
+  signalDbfs: { key: "signalDbfs", get: (stats) => stats?.signalDbfs },
+  noiseDbfs: { key: "noiseDbfs", get: (stats) => stats?.noiseDbfs },
+  strongPct: { key: "strongPct", get: (stats) => stats?.strongPct },
+  sampleDrops: { key: "sampleDrops", get: (stats) => stats?.sampleDrops },
+  cpuPct: { key: "cpuPct", get: (stats) => stats?.cpuPct },
+  ramPct: { key: "ramPct", get: (stats) => stats?.ramPct },
+} satisfies Record<keyof ReceiverStats, ReceiverStatsSlot>;
 
 export function getNow(): number {
   return Date.now();
@@ -261,6 +290,7 @@ export interface IdentState {
   receiver: ReceiverJson | null;
   rangeOutline: IdentRangeOutline | null;
   identStatus: IdentStatus | null;
+  receiverStatsSeenAt: ReceiverStatsSeenAt;
   // Live diagnostics, snapshot-replaced on every `diagnostics` envelope. The
   // backend store dedupes by (channel, code, scope); the wire payload is
   // already the authoritative full set, so consumers replace, never merge.
@@ -938,11 +968,105 @@ const INITIAL_REPLAY_STATE: ReplaySlice = {
   errorUrl: null,
 };
 
+function retainReceiverStats(
+  previous: ReceiverStats | undefined,
+  incoming: ReceiverStats | undefined,
+  seenAt: ReceiverStatsSeenAt,
+  now: number,
+): { stats?: ReceiverStats; seenAt: ReceiverStatsSeenAt } {
+  if (!previous && !incoming) return { stats: undefined, seenAt };
+
+  const nextStats: ReceiverStats = {};
+  const nextSeenAt: ReceiverStatsSeenAt = { ...seenAt };
+  for (const slot of Object.values(RECEIVER_STATS_SLOTS)) {
+    retainReceiverStatSlot(
+      slot,
+      previous,
+      incoming,
+      nextStats,
+      nextSeenAt,
+      now,
+    );
+  }
+
+  return {
+    stats: Object.keys(nextStats).length > 0 ? nextStats : undefined,
+    seenAt: nextSeenAt,
+  };
+}
+
+function retainReceiverStatSlot(
+  slot: ReceiverStatsSlot,
+  previous: ReceiverStats | undefined,
+  incoming: ReceiverStats | undefined,
+  nextStats: ReceiverStats,
+  seenAt: ReceiverStatsSeenAt,
+  now: number,
+): void {
+  const value = retainReceiverStat(
+    slot.key,
+    slot.get(previous),
+    slot.get(incoming),
+    seenAt,
+    now,
+  );
+  if (value) setReceiverStat(nextStats, slot.key, value);
+}
+
+function retainReceiverStat(
+  key: keyof ReceiverStats,
+  previous: ReceiverStatsMetric | undefined,
+  incoming: ReceiverStatsMetric | undefined,
+  seenAt: ReceiverStatsSeenAt,
+  now: number,
+): ReceiverStatsMetric | undefined {
+  if (incoming) {
+    seenAt[key] = now;
+    return incoming;
+  }
+  if (!previous) return undefined;
+
+  const lastSeenAt = seenAt[key] ?? now;
+  seenAt[key] = lastSeenAt;
+  const missingForMs = now - lastSeenAt;
+  if (missingForMs <= RECEIVER_STATS_RETAIN_MS) {
+    return previous;
+  }
+
+  if (missingForMs >= RECEIVER_STATS_DIAGNOSTIC_MS) {
+    emitFrontendDiagnostic({
+      severity: "warning",
+      channel: "frontend",
+      code: "frontend.stats.metric_missing",
+      scope: key,
+      message: `${receiverStatLabel(key)} stopped updating`,
+    });
+  }
+  return staleReceiverStat();
+}
+
+function setReceiverStat<TKey extends keyof ReceiverStats>(
+  stats: ReceiverStats,
+  key: TKey,
+  value: ReceiverStatsMetric,
+): void {
+  stats[key] = value as NonNullable<ReceiverStats[TKey]>;
+}
+
+function staleReceiverStat(): ReceiverStatsMetric {
+  return { kind: "unavailable", reason: "stale_sample" };
+}
+
+function receiverStatLabel(key: keyof ReceiverStats): string {
+  return RECEIVER_STAT_LABELS[key];
+}
+
 export const useIdentStore = create<IdentState>((set) => ({
   aircraft: new Map(),
   receiver: null,
   rangeOutline: null,
   identStatus: null,
+  receiverStatsSeenAt: {},
   diagnostics: [],
   capabilities: null,
   now: 0,
@@ -1059,6 +1183,12 @@ export const useIdentStore = create<IdentState>((set) => ({
   ingestStatus: (status) =>
     set((st) => {
       const previous = st.identStatus;
+      const retainedStats = retainReceiverStats(
+        previous?.stats,
+        status.stats,
+        st.receiverStatsSeenAt,
+        getNow(),
+      );
       const merged: IdentStatus = {
         schema: status.schema,
         observedAt: status.observedAt,
@@ -1068,7 +1198,7 @@ export const useIdentStore = create<IdentState>((set) => ({
         gain: status.gain ?? previous?.gain,
         uptime: status.uptime ?? previous?.uptime,
         maxRange: status.maxRange ?? previous?.maxRange,
-        stats: status.stats ?? previous?.stats,
+        stats: retainedStats.stats,
       };
       const pos =
         merged.receiverPosition?.kind !== "unavailable"
@@ -1087,6 +1217,7 @@ export const useIdentStore = create<IdentState>((set) => ({
               version: producer?.version ?? producer?.kind ?? "unknown",
             }
           : st.receiver,
+        receiverStatsSeenAt: retainedStats.seenAt,
       };
     }),
   // Snapshot replacement: the diagnostics envelope is the full set, identity
@@ -1100,6 +1231,17 @@ export const useIdentStore = create<IdentState>((set) => ({
       // "unknown" if absent — so we recompute the receiver label
       // here to resolve the race instead of leaving "unknown" stuck.
       const next: Partial<IdentState> = { capabilities };
+      const previousProducer = st.capabilities?.producer;
+      const producerChanged =
+        previousProducer != null &&
+        (previousProducer.kind !== capabilities.producer.kind ||
+          previousProducer.version !== capabilities.producer.version);
+      if (producerChanged) {
+        next.receiverStatsSeenAt = {};
+        if (st.identStatus?.stats) {
+          next.identStatus = { ...st.identStatus, stats: undefined };
+        }
+      }
       if (st.receiver) {
         next.receiver = {
           ...st.receiver,

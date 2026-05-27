@@ -1,4 +1,4 @@
-import { useMap } from "../MapEngine";
+import { useMap } from "../MapEngineContext";
 
 const ZOOM_DURATION_MS = 200;
 

@@ -131,21 +131,6 @@ export function emitFrontendDiagnostic(input: FrontendDiagnosticInput): void {
   scheduleExpiry();
 }
 
-export function clearFrontendDiagnostic(
-  channel: string,
-  code: string,
-  scope?: string,
-): void {
-  const key = identityKey(channel, code, scope ?? "");
-  useFrontendDiagnosticsStore.setState((state) => {
-    if (!state.entries.has(key)) return state;
-    const next = new Map(state.entries);
-    next.delete(key);
-    return { entries: next };
-  });
-  scheduleExpiry();
-}
-
 export function snapshotFrontendDiagnostics(
   nowMs: number = Date.now(),
 ): IdentDiagnostic[] {

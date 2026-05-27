@@ -3,7 +3,8 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { useIdentStore } from "../data/store";
-import { formatTopbarClock, Topbar } from "./Topbar";
+import { formatTopbarClock } from "./clock";
+import { Topbar } from "./Topbar";
 
 (
   globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }

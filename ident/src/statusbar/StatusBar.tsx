@@ -20,8 +20,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { match, P } from "ts-pattern";
-import { useFrontendDiagnosticsSnapshot } from "../data/frontendDiagnostics";
 import {
   diagnosticIdentity,
   isStatusStatKey,
@@ -31,14 +29,12 @@ import {
 } from "../data/preferences";
 import { relativeTimeAgo } from "../data/recency";
 import { useIdentStore } from "../data/store";
-import type {
-  IdentBuildInfo,
-  IdentDiagnostic,
-  IdentStatusValue,
-  IdentUnavailableReason,
-  ReceiverStats,
-} from "../data/types";
+import type { IdentBuildInfo, IdentDiagnostic } from "../data/types";
 import { Tooltip } from "../ui/Tooltip";
+import {
+  type DiagnosticCell,
+  useReceiverDiagnostics,
+} from "./receiverDiagnostics";
 
 type LiveTier =
   | "warming"
@@ -76,42 +72,6 @@ const PULSING_LIVE_TIERS = new Set<LiveTier>([
   "warming",
 ]);
 
-function presentStatusValue<TValue, TSource extends string>(
-  value: IdentStatusValue<TValue, TSource> | undefined,
-): TValue | null {
-  return match(value)
-    .with(P.nullish, () => null)
-    .with({ kind: "unavailable" }, () => null)
-    .with({ kind: "producer_provided" }, (v) => v.value)
-    .with({ kind: "ident_derived" }, (v) => v.value)
-    .otherwise(() => null);
-}
-
-function unavailableStatusReason<TValue, TSource extends string>(
-  value: IdentStatusValue<TValue, TSource> | undefined,
-): IdentUnavailableReason | null {
-  return match(value)
-    .with({ kind: "unavailable" }, (v) => v.reason)
-    .otherwise(() => null);
-}
-
-const UNAVAILABLE_REASON_LABEL: Record<IdentUnavailableReason, string> = {
-  awaiting_classification: "Awaiting upstream classification",
-  awaiting_second_sample: "Awaiting second counter sample",
-  clock_not_advanced: "Counter timestamp did not advance",
-  counter_reset: "Counter reset",
-  malformed_file: "Malformed upstream file",
-  not_provided_by_producer: "Not provided by upstream",
-  producer_changed: "Upstream producer changed",
-  stale_sample: "Counter sample is stale",
-};
-
-function unavailableTitle(
-  reason: IdentUnavailableReason | null,
-): string | undefined {
-  return reason == null ? undefined : UNAVAILABLE_REASON_LABEL[reason];
-}
-
 function formatFeedAge(ageMs: number): string {
   return `${Math.max(0, Math.round(ageMs / 1000))}s old`;
 }
@@ -126,169 +86,11 @@ function formatRetryDelay(
   return `retrying in ${Math.ceil(remainingMs / 1000)}s`;
 }
 
-export interface DiagnosticCell {
-  id: StatusStatKey;
-  k: string;
-  v: string;
-  title?: string;
-  warn?: boolean;
-}
-
-export interface ReceiverDiagnostics {
-  cells: DiagnosticCell[];
-  hiddenCells: DiagnosticCell[];
-  allCells: DiagnosticCell[];
-  producerLabel: string;
-  diagnostics: IdentDiagnostic[];
-}
-
-const STATUS_STAT_LABELS: Record<StatusStatKey, string> = {
-  gain: "Gain",
-  uptime: "Uptime",
-  maxRange: "Max Range",
-  signal: "Signal",
-  noise: "Noise",
-  strong: "Strong",
-  drops: "Drops",
-  cpu: "CPU",
-  ram: "RAM",
-};
-
-export function useReceiverDiagnostics(): ReceiverDiagnostics {
-  const identStatus = useIdentStore((s) => s.identStatus);
-  const capabilities = useIdentStore((s) => s.capabilities?.capabilities);
-  const statusStats = usePreferencesStore((s) => s.statusStats);
-  const backendDiagnostics = useIdentStore((s) => s.diagnostics);
-  const frontendDiagnostics = useFrontendDiagnosticsSnapshot();
-  // Merge backend + frontend diagnostics into one list sorted newest-first.
-  // Frontend codes live under a `frontend.*` channel namespace so identity
-  // collisions with backend codes are impossible — straight concat is safe.
-  const diagnostics = useMemo(
-    () =>
-      [...backendDiagnostics, ...frontendDiagnostics].sort(
-        (a, b) => b.seenAtEpochMs - a.seenAtEpochMs,
-      ),
-    [backendDiagnostics, frontendDiagnostics],
-  );
-
-  const normalizedGain = presentStatusValue(identStatus?.gain)?.db ?? null;
-  const gainLabel =
-    normalizedGain != null ? `${normalizedGain.toFixed(1)} dB` : "—";
-  const gainTitle = unavailableTitle(
-    unavailableStatusReason(identStatus?.gain),
-  );
-
-  const normalizedUptimeSec =
-    presentStatusValue(identStatus?.uptime)?.sec ?? null;
-  const uptimeLabel =
-    normalizedUptimeSec != null ? formatUptime(normalizedUptimeSec) : "—";
-  const uptimeTitle = unavailableTitle(
-    unavailableStatusReason(identStatus?.uptime),
-  );
-
-  const normalizedMaxRange = presentStatusValue(identStatus?.maxRange);
-  const rangeLabel =
-    normalizedMaxRange?.scope === "last24h" ? "24h Range" : "Max Range";
-  const rangeValue =
-    normalizedMaxRange != null ? `${normalizedMaxRange.nm.toFixed(0)} NM` : "—";
-  const rangeTitle = unavailableTitle(
-    unavailableStatusReason(identStatus?.maxRange),
-  );
-
-  const capabilitiesEnvelope = useIdentStore((s) => s.capabilities);
-  const producerKind = capabilitiesEnvelope?.producer?.kind ?? "unknown";
-  const producerVer = capabilitiesEnvelope?.producer?.version
-    ?.trim()
-    .split(/\s+/)[0];
-  const producerLabel = producerVer
-    ? `${producerKind} ${producerVer}`
-    : producerKind;
-
-  const cellsById = new Map<StatusStatKey, DiagnosticCell>();
-  if (capabilities?.gain !== "unavailable") {
-    cellsById.set("gain", {
-      id: "gain",
-      k: STATUS_STAT_LABELS.gain,
-      v: gainLabel,
-      title: gainTitle,
-    });
-  }
-  if (capabilities?.uptime !== "unavailable") {
-    cellsById.set("uptime", {
-      id: "uptime",
-      k: STATUS_STAT_LABELS.uptime,
-      v: uptimeLabel,
-      title: uptimeTitle,
-    });
-  }
-  if (capabilities?.maxRange !== "unavailable") {
-    cellsById.set("maxRange", {
-      id: "maxRange",
-      k: rangeLabel,
-      v: rangeValue,
-      title: rangeTitle,
-    });
-  }
-  addReceiverStatCells(cellsById, identStatus?.stats ?? null);
-  const ordered = statusStats.order.flatMap((key) => {
-    const cell = cellsById.get(key);
-    return cell ? [cell] : [];
-  });
-  const hidden = new Set(statusStats.hidden);
-  const cells = ordered.filter((cell) => !hidden.has(cell.id));
-  const hiddenCells = ordered.filter((cell) => hidden.has(cell.id));
-  return { cells, hiddenCells, allCells: ordered, producerLabel, diagnostics };
-}
-
-function addReceiverStatCells(
-  cellsById: Map<StatusStatKey, DiagnosticCell>,
-  stats: ReceiverStats | null,
-): void {
-  if (!stats) return;
-  const signal = presentStatusValue(stats.signalDbfs);
-  const noise = presentStatusValue(stats.noiseDbfs);
-  const strong = presentStatusValue(stats.strongPct);
-  const drops = presentStatusValue(stats.sampleDrops);
-  const cpu = presentStatusValue(stats.cpuPct);
-  const ram = presentStatusValue(stats.ramPct);
-  addStatCell(cellsById, "signal", formatDbfs(signal));
-  addStatCell(cellsById, "noise", formatDbfs(noise));
-  addStatCell(cellsById, "strong", formatPercent(strong), {
-    warn: typeof strong === "number" && strong >= 10,
-  });
-  addStatCell(
-    cellsById,
-    "drops",
-    typeof drops === "number" ? String(Math.max(0, Math.round(drops))) : null,
-    { warn: typeof drops === "number" && drops > 0 },
-  );
-  addStatCell(cellsById, "cpu", formatPercent(cpu, 0), {
-    warn: typeof cpu === "number" && cpu >= 85,
-  });
-  addStatCell(cellsById, "ram", formatPercent(ram, 0), {
-    warn: typeof ram === "number" && ram >= 90,
-  });
-}
-
-function addStatCell(
-  cellsById: Map<StatusStatKey, DiagnosticCell>,
-  id: StatusStatKey,
-  value: string | null,
-  options: Pick<DiagnosticCell, "warn" | "title"> = {},
-): void {
-  if (value == null) return;
-  cellsById.set(id, {
-    id,
-    k: STATUS_STAT_LABELS[id],
-    v: value,
-    ...options,
-  });
-}
-
 export function StatusBar() {
   const { cells, hiddenCells, allCells, producerLabel, diagnostics } =
     useReceiverDiagnostics();
   const reorderStatusStat = usePreferencesStore((s) => s.reorderStatusStat);
+  const valueWidths = useStickyStatusValueWidths(allCells);
   return (
     <footer
       data-tour="status"
@@ -296,7 +98,13 @@ export function StatusBar() {
     >
       <FeedStatusCell />
       {cells.map((c) => (
-        <Cell key={c.id} cell={c} draggable onMove={reorderStatusStat} />
+        <Cell
+          key={c.id}
+          cell={c}
+          valueCh={valueWidths[c.id]}
+          draggable
+          onMove={reorderStatusStat}
+        />
       ))}
       {allCells.length > 0 && (
         <StatusStatsMenu
@@ -313,6 +121,25 @@ export function StatusBar() {
   );
 }
 
+function useStickyStatusValueWidths(
+  cells: DiagnosticCell[],
+): Partial<Record<StatusStatKey, number>> {
+  const widthsRef = useRef<Partial<Record<StatusStatKey, number>>>({});
+  return useMemo(() => {
+    let changed = false;
+    const next = { ...widthsRef.current };
+    for (const cell of cells) {
+      const width = cell.v.length;
+      if ((next[cell.id] ?? 0) < width) {
+        next[cell.id] = width;
+        changed = true;
+      }
+    }
+    if (changed) widthsRef.current = next;
+    return widthsRef.current;
+  }, [cells]);
+}
+
 export function FeedStatusCell({
   variant = "bar",
 }: {
@@ -321,7 +148,24 @@ export function FeedStatusCell({
   const live = useLiveStatus();
   const mpsBuffer = useIdentStore((s) => s.liveState.mpsBuffer);
   const mpsCurrent = mpsBuffer.length > 0 ? mpsBuffer[mpsBuffer.length - 1] : 0;
-  return <LiveCell status={live} mps={mpsCurrent} variant={variant} />;
+  const mpsValueCh = useStickyLiveMpsWidth(live.showRate ? mpsCurrent : null);
+  return (
+    <LiveCell
+      status={live}
+      mps={mpsCurrent}
+      mpsValueCh={mpsValueCh}
+      variant={variant}
+    />
+  );
+}
+
+function useStickyLiveMpsWidth(mps: number | null): number | undefined {
+  const widthRef = useRef(0);
+  return useMemo(() => {
+    if (mps == null) return widthRef.current || undefined;
+    widthRef.current = Math.max(widthRef.current, mps.toFixed(0).length);
+    return widthRef.current || undefined;
+  }, [mps]);
 }
 
 function useLiveStatus(): LiveStatus {
@@ -391,17 +235,20 @@ function useLiveStatus(): LiveStatus {
 function LiveCell({
   status,
   mps,
+  mpsValueCh,
   variant,
 }: {
   status: LiveStatus;
   mps: number;
+  mpsValueCh?: number;
   variant: "bar" | "hud";
 }) {
   const { tier } = status;
   const tone = LIVE_TONE[tier];
   const pulses = PULSING_LIVE_TIERS.has(tier);
+  const mpsLabel = mps.toFixed(0);
   const detail = status.showRate
-    ? `${mps.toFixed(0)} msg/s`
+    ? `${mpsLabel} msg/s`
     : (status.detail ?? null);
   const title = detail ? `${status.label} · ${detail}` : status.label;
   const pulseStyle = {
@@ -421,7 +268,21 @@ function LiveCell({
       <span>{status.label}</span>
       {detail && (
         <span className="text-chrome-ink-soft font-normal normal-case tracking-normal tabular-nums">
-          · {detail}
+          ·{" "}
+          {status.showRate ? (
+            <>
+              <span
+                data-live-mps-value
+                style={mpsValueCh ? { minWidth: `${mpsValueCh}ch` } : undefined}
+                className="inline-block text-right"
+              >
+                {mpsLabel}
+              </span>{" "}
+              msg/s
+            </>
+          ) : (
+            detail
+          )}
         </span>
       )}
     </div>
@@ -435,10 +296,12 @@ function LiveCell({
 
 function Cell({
   cell,
+  valueCh,
   draggable = false,
   onMove,
 }: {
   cell: DiagnosticCell;
+  valueCh?: number;
   draggable?: boolean;
   onMove?: (source: StatusStatKey, target: StatusStatKey) => void;
 }) {
@@ -477,6 +340,8 @@ function Cell({
         {k}
       </span>
       <span
+        data-status-stat-value={id}
+        style={valueCh ? { minWidth: `${valueCh}ch` } : undefined}
         className={`tabular-nums ${warn ? "text-(--color-warn)" : "text-chrome-ink"}`}
       >
         {v}
@@ -683,17 +548,6 @@ function useStatusPopoverPosition(
     return () => window.removeEventListener("resize", place);
   }, [buttonRef, open, widthPx]);
   return style;
-}
-
-function formatDbfs(value: number | null | undefined): string | null {
-  return typeof value === "number" ? `${value.toFixed(1)} dBFS` : null;
-}
-
-function formatPercent(
-  value: number | null | undefined,
-  digits = 1,
-): string | null {
-  return typeof value === "number" ? `${value.toFixed(digits)}%` : null;
 }
 
 export function DiagnosticsCenter({
@@ -1218,12 +1072,4 @@ function diagnosticSeverityClass(
   if (severity === "error") return "text-(--color-emerg)";
   if (severity === "warning") return "text-(--color-warn)";
   return "text-chrome-ink-faint";
-}
-
-function formatUptime(totalSec: number): string {
-  if (totalSec < 60) return `${Math.floor(totalSec)}s`;
-  const h = Math.floor(totalSec / 3600);
-  const m = Math.floor((totalSec % 3600) / 60);
-  if (h > 0) return `${h}h ${m}m`;
-  return `${m}m`;
 }

@@ -1,6 +1,11 @@
 // biome-ignore-all lint/style/noNonNullAssertion: test fixture — missing elements/mocks fail the test loudly via the test runner.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  __resetFrontendDiagnosticsForTest,
+  DEFAULT_FRONTEND_DIAGNOSTIC_TTL_MS,
+  snapshotFrontendDiagnostics,
+} from "./frontendDiagnostics";
+import {
   diagnosticIdentity,
   resetPreferencesStoreForTests,
   usePreferencesStore,
@@ -14,10 +19,11 @@ import {
   trailPointFromAircraft,
   useIdentStore,
 } from "./store";
-import type { AircraftFrame } from "./types";
+import type { AircraftFrame, IdentCapabilitiesEnvelope } from "./types";
 
 function resetStore() {
   __resetTrailDisplayCachesForTests();
+  __resetFrontendDiagnosticsForTest();
   useIdentStore.setState({
     aircraft: new Map(),
     now: 0,
@@ -53,6 +59,7 @@ function resetStore() {
     },
     rangeOutline: null,
     identStatus: null,
+    receiverStatsSeenAt: {},
     capabilities: null,
     replay: useIdentStore.getInitialState().replay,
   });
@@ -74,6 +81,28 @@ function frame(
         ...(rssi != null ? { rssiDbfs: rssi } : {}),
       },
     ],
+  };
+}
+
+function capabilities(
+  kind: IdentCapabilitiesEnvelope["producer"]["kind"],
+  version: string,
+): IdentCapabilitiesEnvelope {
+  return {
+    schema: "ident.capabilities.v1",
+    producer: { kind, version },
+    capabilities: {
+      aircraft: "producer_provided",
+      receiverPosition: "producer_provided",
+      messageRate: "producer_provided",
+      gain: "producer_provided",
+      uptime: "producer_provided",
+      maxRange: "producer_provided",
+      rangeOutline: "unavailable",
+      meteorology: "unavailable",
+      replay: "ident_derived",
+      trails: "ident_derived",
+    },
   };
 }
 
@@ -2447,6 +2476,7 @@ describe("liveState msg-rate buffer", () => {
 
 describe("normalized status ingest", () => {
   beforeEach(resetStore);
+  afterEach(() => vi.useRealTimers());
 
   it("merges partial status snapshots field by field", () => {
     const store = useIdentStore.getState();
@@ -2507,6 +2537,305 @@ describe("normalized status ingest", () => {
     expect(status.observedAt.value.epochSec).toBe(101);
     expect(status?.freshness.statsAgeSec).toBe(0);
     expect(useIdentStore.getState().receiver?.lat).toBe(37.4);
+  });
+
+  it("retains missing receiver stats briefly, then marks them stale", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_700_000_000_000);
+    const store = useIdentStore.getState();
+    store.ingestStatus({
+      schema: "ident.status.v1",
+      observedAt: {
+        kind: "producer_provided",
+        source: "stats_now",
+        value: { epochSec: 100 },
+      },
+      freshness: {
+        aircraftAgeSec: null,
+        statsAgeSec: 0,
+        receiverObservedAgeSec: null,
+      },
+      stats: {
+        signalDbfs: {
+          kind: "producer_provided",
+          source: "stats_last1min_local",
+          value: -10,
+        },
+        cpuPct: {
+          kind: "ident_derived",
+          source: "ident_runtime",
+          value: 42,
+        },
+      },
+    });
+    vi.setSystemTime(1_700_000_001_000);
+    store.ingestStatus({
+      schema: "ident.status.v1",
+      observedAt: {
+        kind: "producer_provided",
+        source: "stats_now",
+        value: { epochSec: 101 },
+      },
+      freshness: {
+        aircraftAgeSec: null,
+        statsAgeSec: 0,
+        receiverObservedAgeSec: null,
+      },
+      stats: {
+        ramPct: {
+          kind: "ident_derived",
+          source: "ident_runtime",
+          value: 24,
+        },
+      },
+    });
+
+    let stats = useIdentStore.getState().identStatus?.stats;
+    expect(stats?.signalDbfs?.kind).toBe("producer_provided");
+    if (stats?.signalDbfs?.kind !== "producer_provided") {
+      throw new Error("signalDbfs was not producer-provided");
+    }
+    expect(stats.signalDbfs.value).toBe(-10);
+    expect(stats?.cpuPct?.kind).toBe("ident_derived");
+    if (stats?.cpuPct?.kind !== "ident_derived") {
+      throw new Error("cpuPct was not ident-derived");
+    }
+    expect(stats.cpuPct.value).toBe(42);
+    expect(stats?.ramPct?.kind).toBe("ident_derived");
+    if (stats?.ramPct?.kind !== "ident_derived") {
+      throw new Error("ramPct was not ident-derived");
+    }
+    expect(stats.ramPct.value).toBe(24);
+
+    vi.setSystemTime(1_700_000_006_001);
+    store.ingestStatus({
+      schema: "ident.status.v1",
+      observedAt: {
+        kind: "producer_provided",
+        source: "stats_now",
+        value: { epochSec: 106 },
+      },
+      freshness: {
+        aircraftAgeSec: null,
+        statsAgeSec: 0,
+        receiverObservedAgeSec: null,
+      },
+      stats: {
+        ramPct: {
+          kind: "ident_derived",
+          source: "ident_runtime",
+          value: 25,
+        },
+      },
+    });
+
+    stats = useIdentStore.getState().identStatus?.stats;
+    expect(stats?.signalDbfs?.kind).toBe("unavailable");
+    expect(stats?.cpuPct?.kind).toBe("unavailable");
+    expect(stats?.ramPct?.kind).toBe("ident_derived");
+    if (stats?.ramPct?.kind !== "ident_derived") {
+      throw new Error("ramPct was not ident-derived");
+    }
+    expect(stats.ramPct.value).toBe(25);
+
+    vi.setSystemTime(1_700_000_030_001);
+    store.ingestStatus({
+      schema: "ident.status.v1",
+      observedAt: {
+        kind: "producer_provided",
+        source: "stats_now",
+        value: { epochSec: 130 },
+      },
+      freshness: {
+        aircraftAgeSec: null,
+        statsAgeSec: 0,
+        receiverObservedAgeSec: null,
+      },
+      stats: {
+        ramPct: {
+          kind: "ident_derived",
+          source: "ident_runtime",
+          value: 26,
+        },
+      },
+    });
+
+    const diagnostic = snapshotFrontendDiagnostics().find(
+      (entry) =>
+        entry.code === "frontend.stats.metric_missing" &&
+        entry.scope === "cpuPct",
+    );
+    expect(diagnostic?.message).toBe("CPU stopped updating");
+  });
+
+  it("keeps receiver stats through the exact retain boundary", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_700_000_000_000);
+    const store = useIdentStore.getState();
+    store.ingestStatus({
+      schema: "ident.status.v1",
+      observedAt: {
+        kind: "producer_provided",
+        source: "stats_now",
+        value: { epochSec: 100 },
+      },
+      freshness: {
+        aircraftAgeSec: null,
+        statsAgeSec: 0,
+        receiverObservedAgeSec: null,
+      },
+      stats: {
+        cpuPct: {
+          kind: "ident_derived",
+          source: "ident_runtime",
+          value: 42,
+        },
+      },
+    });
+
+    vi.setSystemTime(1_700_000_005_000);
+    store.ingestStatus({
+      schema: "ident.status.v1",
+      observedAt: {
+        kind: "producer_provided",
+        source: "stats_now",
+        value: { epochSec: 105 },
+      },
+      freshness: {
+        aircraftAgeSec: null,
+        statsAgeSec: 0,
+        receiverObservedAgeSec: null,
+      },
+      stats: {},
+    });
+
+    const stats = useIdentStore.getState().identStatus?.stats;
+    expect(stats?.cpuPct?.kind).toBe("ident_derived");
+    if (stats?.cpuPct?.kind !== "ident_derived") {
+      throw new Error("cpuPct was not retained at the boundary");
+    }
+    expect(stats.cpuPct.value).toBe(42);
+  });
+
+  it("does not refresh a missing-stat diagnostic after the metric recovers", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_700_000_000_000);
+    const store = useIdentStore.getState();
+    store.ingestStatus({
+      schema: "ident.status.v1",
+      observedAt: {
+        kind: "producer_provided",
+        source: "stats_now",
+        value: { epochSec: 100 },
+      },
+      freshness: {
+        aircraftAgeSec: null,
+        statsAgeSec: 0,
+        receiverObservedAgeSec: null,
+      },
+      stats: {
+        cpuPct: {
+          kind: "ident_derived",
+          source: "ident_runtime",
+          value: 42,
+        },
+      },
+    });
+
+    vi.setSystemTime(1_700_000_030_000);
+    store.ingestStatus({
+      schema: "ident.status.v1",
+      observedAt: {
+        kind: "producer_provided",
+        source: "stats_now",
+        value: { epochSec: 130 },
+      },
+      freshness: {
+        aircraftAgeSec: null,
+        statsAgeSec: 0,
+        receiverObservedAgeSec: null,
+      },
+      stats: {},
+    });
+
+    const first = snapshotFrontendDiagnostics().find(
+      (entry) =>
+        entry.code === "frontend.stats.metric_missing" &&
+        entry.scope === "cpuPct",
+    );
+    expect(first?.message).toBe("CPU stopped updating");
+
+    vi.setSystemTime(1_700_000_031_000);
+    store.ingestStatus({
+      schema: "ident.status.v1",
+      observedAt: {
+        kind: "producer_provided",
+        source: "stats_now",
+        value: { epochSec: 131 },
+      },
+      freshness: {
+        aircraftAgeSec: null,
+        statsAgeSec: 0,
+        receiverObservedAgeSec: null,
+      },
+      stats: {
+        cpuPct: {
+          kind: "ident_derived",
+          source: "ident_runtime",
+          value: 43,
+        },
+      },
+    });
+
+    const afterRecovery = snapshotFrontendDiagnostics().filter(
+      (entry) =>
+        entry.code === "frontend.stats.metric_missing" &&
+        entry.scope === "cpuPct",
+    );
+    expect(afterRecovery).toHaveLength(1);
+    expect(afterRecovery[0].seenAtEpochMs).toBe(first!.seenAtEpochMs);
+    expect(
+      snapshotFrontendDiagnostics(
+        first!.seenAtEpochMs + DEFAULT_FRONTEND_DIAGNOSTIC_TTL_MS + 1,
+      ).filter(
+        (entry) =>
+          entry.code === "frontend.stats.metric_missing" &&
+          entry.scope === "cpuPct",
+      ),
+    ).toHaveLength(0);
+  });
+
+  it("resets retained receiver stats when producer identity changes", () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_700_000_000_000);
+    const store = useIdentStore.getState();
+    store.ingestCapabilities(capabilities("readsb", "readsb v3"));
+    store.ingestStatus({
+      schema: "ident.status.v1",
+      observedAt: {
+        kind: "producer_provided",
+        source: "stats_now",
+        value: { epochSec: 100 },
+      },
+      freshness: {
+        aircraftAgeSec: null,
+        statsAgeSec: 0,
+        receiverObservedAgeSec: null,
+      },
+      stats: {
+        signalDbfs: {
+          kind: "producer_provided",
+          source: "stats_last1min_local",
+          value: -10,
+        },
+      },
+    });
+
+    vi.setSystemTime(1_700_000_001_000);
+    store.ingestCapabilities(capabilities("dump1090-fa", "dump1090-fa 10.2"));
+
+    expect(useIdentStore.getState().identStatus?.stats).toBeUndefined();
+    expect(useIdentStore.getState().receiverStatsSeenAt).toEqual({});
   });
 });
 

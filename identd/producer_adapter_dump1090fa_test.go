@@ -44,7 +44,7 @@ func TestProducerStatusNormalizerNormalizesDump1090FAStatsWindows(t *testing.T) 
 }
 
 func TestProducerStatusNormalizerDoesNotClassifyMutabilityAsDump1090FA(t *testing.T) {
-	n := NewProducerStatusNormalizer()
+	n := newProducerStatusNormalizerPastStartup()
 	store := attachDiagnosticStoreForTest(n)
 
 	envs := n.IngestReceiverJSON([]byte(`{"version":"dump1090-mutability v1.15","lat":37.5,"lon":-122.2}`))

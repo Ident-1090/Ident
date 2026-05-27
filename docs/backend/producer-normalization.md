@@ -73,11 +73,12 @@ flowchart TD
   R -->|several adapters tie| M[ambiguous]
 ```
 
-Unknown and ambiguous states are surfaced as diagnostics, including the
-strongest evidence `identd` has seen so far. That keeps an unsupported or
-unusual stack visible to the operator without guessing a decoder. Once a decoder
-has already been selected, later ambiguous evidence only blocks a switch away
-from that decoder unless the operator overrides it or stronger evidence appears.
+Unknown and ambiguous states are surfaced as diagnostics once startup has had
+time to observe more than the first arriving file, including the strongest
+evidence `identd` has seen so far. That keeps an unsupported or unusual stack
+visible to the operator without guessing a decoder. Once a decoder has already
+been selected, later ambiguous evidence only blocks a switch away from that
+decoder unless the operator overrides it or stronger evidence appears.
 
 A decoder that no adapter recognizes stays unknown. Some decoders write
 aircraft JSON that Ident could in principle read but are simply not recognized
@@ -112,7 +113,8 @@ aircraft JSON that looks close to a supported shape, but publishing it before an
 adapter is selected would let raw decoder semantics leak into Ident's wire
 contract. The HTTP server still starts immediately, so the interface stays
 reachable while classification is waiting for enough evidence, and the
-diagnostic bell explains why live producer data is not flowing yet.
+diagnostic bell explains why live producer data is not flowing if
+classification remains unresolved.
 
 ## Where the decoders actually differ
 

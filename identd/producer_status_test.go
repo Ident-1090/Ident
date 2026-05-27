@@ -397,34 +397,93 @@ func TestProducerStatusNormalizerResetsObservedTimestampsOnProducerChange(t *tes
 	}
 }
 
-func TestProducerStatusNormalizerReemitReceiverConditionsKeepsActiveEntries(t *testing.T) {
-	// receiver.json may not change for hours; a stable misconfiguration
-	// must keep its diagnostic alive past a single TTL window. The
-	// heartbeat re-emit re-Notes any active receiver-derived condition
-	// so the entry refreshes even when no IngestReceiverJSON fires.
-	n := NewProducerStatusNormalizer()
+func TestProducerStatusNormalizerDelaysUnknownProducerDiagnosticDuringStartup(t *testing.T) {
+	// Files can arrive in any order during process startup. Unknown
+	// classification is only actionable after the initial observation window.
+	clock := time.Unix(1_700_000_000, 0)
+	n := NewProducerStatusNormalizerWithClock(func() time.Time { return clock })
 	store := attachDiagnosticStoreForTest(n)
+
+	n.IngestReceiverJSON([]byte(`{"version":"unknown-thing"}`))
+	if _, ok := findDiagnostic(store.Snapshot(), "producer.ident.unknown"); ok {
+		t.Fatal("startup classification attempt surfaced producer.ident.unknown")
+	}
+
+	clock = clock.Add(producerUnknownDiagnosticGrace - time.Second)
+	n.ReemitProducerSelectionConditions()
+	if _, ok := findDiagnostic(store.Snapshot(), "producer.ident.unknown"); ok {
+		t.Fatal("classification surfaced producer.ident.unknown before grace elapsed")
+	}
+
+	clock = clock.Add(time.Second)
+	n.ReemitProducerSelectionConditions()
+	if _, ok := findDiagnostic(store.Snapshot(), "producer.ident.unknown"); !ok {
+		t.Fatal("classification failure should surface producer.ident.unknown after grace")
+	}
+}
+
+func TestProducerStatusNormalizerUnknownProducerDiagnosticExpiresQuicklyAfterClassification(t *testing.T) {
+	clock := time.Unix(1_700_000_000, 0)
+	n := NewProducerStatusNormalizerWithClock(func() time.Time { return clock })
+	store := NewDiagnosticStore(DiagnosticStoreOptions{Debounce: -1, Now: func() time.Time { return clock }})
+	n.SetDiagnosticStore(store)
+
+	clock = clock.Add(producerUnknownDiagnosticGrace)
 	n.IngestReceiverJSON([]byte(`{"version":"unknown-thing"}`))
 	if _, ok := findDiagnostic(store.Snapshot(), "producer.ident.unknown"); !ok {
 		t.Fatal("classification failure should surface producer.ident.unknown")
 	}
-	n.ReemitReceiverConditions()
-	if _, ok := findDiagnostic(store.Snapshot(), "producer.ident.unknown"); !ok {
-		t.Fatal("heartbeat re-emit lost the active condition")
+
+	n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2"}`))
+	clock = clock.Add(producerUnknownDiagnosticTTL + time.Second)
+	if _, ok := findDiagnostic(store.Snapshot(), "producer.ident.unknown"); ok {
+		t.Fatal("producer.ident.unknown lingered after classification")
 	}
 }
 
-func TestProducerStatusNormalizerReemitReceiverConditionsSilentWhenClassified(t *testing.T) {
-	// Once classification succeeds, the heartbeat must NOT keep emitting
-	// a stale producer.ident.unknown — stop emitting IS the clear.
+func TestReceiverConditionHeartbeatCadenceStaysLong(t *testing.T) {
+	if reemitReceiverInterval != 5*time.Minute {
+		t.Fatalf("receiver condition heartbeat = %s, want 5m", reemitReceiverInterval)
+	}
+}
+
+func TestProducerSelectionHeartbeatKeepsUnknownDiagnosticActive(t *testing.T) {
+	clock := time.Unix(1_700_000_000, 0)
+	n := NewProducerStatusNormalizerWithClock(func() time.Time { return clock })
+	store := NewDiagnosticStore(DiagnosticStoreOptions{Debounce: -1, Now: func() time.Time { return clock }})
+	n.SetDiagnosticStore(store)
+
+	clock = clock.Add(producerUnknownDiagnosticGrace)
+	n.IngestReceiverJSON([]byte(`{"version":"unknown-thing"}`))
+	first, ok := findDiagnostic(store.Snapshot(), "producer.ident.unknown")
+	if !ok {
+		t.Fatal("classification failure should surface producer.ident.unknown")
+	}
+
+	clock = clock.Add(producerUnknownDiagnosticTTL - time.Second)
+	n.ReemitProducerSelectionConditions()
+	second, ok := findDiagnostic(store.Snapshot(), "producer.ident.unknown")
+	if !ok {
+		t.Fatal("producer.ident.unknown expired before heartbeat re-emitted it")
+	}
+	if second.SeenAtEpochMs <= first.SeenAtEpochMs {
+		t.Fatalf("heartbeat did not refresh seenAt: first=%d second=%d", first.SeenAtEpochMs, second.SeenAtEpochMs)
+	}
+
+	clock = clock.Add(producerUnknownDiagnosticTTL - time.Second)
+	if _, ok := findDiagnostic(store.Snapshot(), "producer.ident.unknown"); !ok {
+		t.Fatal("producer.ident.unknown was not kept alive after heartbeat")
+	}
+}
+
+func TestProducerStatusNormalizerReemitProducerSelectionConditionsSilentWhenClassified(t *testing.T) {
 	n := NewProducerStatusNormalizer()
 	store := attachDiagnosticStoreForTest(n)
 	n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2"}`))
-	// Sanity: classification should not have emitted the unknown condition.
 	if _, ok := findDiagnostic(store.Snapshot(), "producer.ident.unknown"); ok {
 		t.Fatal("classification succeeded but producer.ident.unknown is in the store")
 	}
-	n.ReemitReceiverConditions()
+	n.ReemitProducerSelectionConditions()
 	if _, ok := findDiagnostic(store.Snapshot(), "producer.ident.unknown"); ok {
 		t.Fatal("heartbeat re-emitted producer.ident.unknown on a classified producer")
 	}
@@ -967,6 +1026,13 @@ func attachDiagnosticStoreForTest(n *ProducerStatusNormalizer) *DiagnosticStore 
 	store := NewDiagnosticStore(DiagnosticStoreOptions{Debounce: -1})
 	n.SetDiagnosticStore(store)
 	return store
+}
+
+func newProducerStatusNormalizerPastStartup() *ProducerStatusNormalizer {
+	clock := time.Unix(1_700_000_000, 0)
+	n := NewProducerStatusNormalizerWithClock(func() time.Time { return clock })
+	clock = clock.Add(producerUnknownDiagnosticGrace)
+	return n
 }
 
 func diagnosticCodes(diagnostics []diagnostic) []string {

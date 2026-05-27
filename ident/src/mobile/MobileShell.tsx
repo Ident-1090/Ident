@@ -18,10 +18,8 @@ import { BASEMAPS, type BasemapId } from "../map/styles";
 import { FiltersPanel } from "../rails/FiltersPanel";
 import { TrafficList } from "../rails/TrafficList";
 import { MobileReplayDock, MobileReplayFab } from "../replay/ReplayControls";
-import {
-  DiagnosticsCenter,
-  useReceiverDiagnostics,
-} from "../statusbar/StatusBar";
+import { useReceiverDiagnostics } from "../statusbar/receiverDiagnostics";
+import { DiagnosticsCenter } from "../statusbar/StatusBar";
 import { SectionHead } from "../ui/SectionHead";
 import { SegButton, Segmented } from "../ui/Segmented";
 import { Tooltip } from "../ui/Tooltip";

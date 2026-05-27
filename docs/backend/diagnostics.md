@@ -71,11 +71,13 @@ themselves reflect the different cadences at which conditions are produced.
 
 ## Delivery is a separate channel from status
 
-Diagnostics travel to the browser on their own channel over the same websocket
-hub that carries the rest of the live state, distinct from the channel that
-carries producer status. The store publishes a full snapshot of the current set
-whenever its contents change, and coalesces bursts of changes into a single
+Backend diagnostics travel to the browser on their own channel over the same
+websocket hub that carries the rest of the live state, distinct from the channel
+that carries producer status. The store publishes a full snapshot of the current
+set whenever its contents change, and coalesces bursts of changes into a single
 publish so a flurry of re-emissions does not turn into a flurry of messages.
+The browser can add local diagnostics for conditions only it observes, such as a
+frontend decode failure or a metric that was present and then stops arriving.
 
 An earlier option was to attach diagnostics directly to the status message, so
 that a status update and the conditions explaining it would always arrive
@@ -106,15 +108,19 @@ or an override that disagrees with the detected setup, are raised as soon as
 there is enough information to identify the problem. Producer identification can
 use receiver, aircraft, statistics, or outline files, so a setup with generic
 receiver metadata may stay unknown until another file provides enough evidence.
-An unknown or ambiguous producer is itself a diagnostic condition rather than a
-stream of per-file warnings.
+Ident gives startup a short observation window before warning that the producer
+is unknown, because the first file to arrive is often incomplete evidence. An
+unknown or ambiguous producer is a diagnostic condition rather than a stream of
+per-file warnings.
 
 Because receiver and producer-identification conditions are event-driven and may
-not change for hours, a heartbeat re-raises active startup conditions every few
-minutes so a stable misconfiguration does not quietly expire between file
-changes. The heartbeat is deduplicated through the same condition identity rules
-as every other diagnostic, so refreshing a condition does not create a second
-notification.
+not change for hours, heartbeats re-raise active startup conditions so a stable
+misconfiguration does not quietly expire between file changes.
+Producer-identification conditions use a shorter heartbeat because startup
+classification can resolve quickly once more files arrive; receiver
+configuration conditions use a slower one. Both are deduplicated through the
+same condition identity rules as every other diagnostic, so refreshing a
+condition does not create a second notification.
 
 ## Expiry must not be mistaken for success
 

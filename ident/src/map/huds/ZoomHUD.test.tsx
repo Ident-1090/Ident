@@ -3,7 +3,7 @@ import type { Map as MlMap } from "maplibre-gl";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MapEngineContext } from "../MapEngine";
+import { MapEngineContext } from "../MapEngineContext";
 import { ZoomHUD } from "./ZoomHUD";
 
 (

@@ -11,12 +11,7 @@ import {
   selectDisplayTrailsByHex,
   useIdentStore,
 } from "../data/store";
-import type {
-  Aircraft,
-  InspectorTab,
-  RouteInfo,
-  TrailPoint,
-} from "../data/types";
+import type { Aircraft, InspectorTab, RouteInfo } from "../data/types";
 import {
   airDistanceLabelFromNm,
   airSpeedFromKnots,
@@ -28,10 +23,12 @@ import {
 import { TelCell, type TelTone } from "../ui/TelCell";
 import { Tooltip } from "../ui/Tooltip";
 import { formatAgeSecondsAgo } from "./age";
+import { type AltitudeTrace, altTraceFromTrail } from "./altitudeTrace";
 import { BADGE_PILL_CLASS, Badges } from "./Badges";
 import { padHeading } from "./heading";
 import { PhotoCard } from "./PhotoCard";
-import { AltitudeSparkline, altitudeSparklineWindow } from "./Sparkline";
+import { AltitudeSparkline } from "./Sparkline";
+import { altitudeSparklineWindow } from "./SparklineWindow";
 import { QualityTab } from "./tabs/QualityTab";
 import { RawTab } from "./tabs/RawTab";
 import { SignalTab } from "./tabs/SignalTab";
@@ -445,36 +442,6 @@ function routeViaHint(route: RouteInfo): string | undefined {
   if (parts.length < 3) return "direct";
   const via = parts.slice(1, -1);
   return via.length > 0 ? `via ${via.join(", ")}` : undefined;
-}
-
-/**
- * Altitude series for the inspector sparkline. Reads the same `trailsByHex`
- * buffer the map uses for its selected-aircraft trail line, keeping the two
- * views in lock-step. No fallback to altTrendsByHex because that ring buffer
- * has no timestamps, so it can't distinguish two sorties of the same hex.
- */
-interface AltitudeTrace {
-  samples: number[];
-  ts: number[];
-}
-
-export function altTraceFromTrail(
-  trail: TrailPoint[] | undefined,
-): AltitudeTrace {
-  if (!trail) return { samples: [], ts: [] };
-  const samples: number[] = [];
-  const ts: number[] = [];
-  for (const p of trail) {
-    if (typeof p.alt === "number") {
-      samples.push(p.alt);
-      ts.push(p.ts);
-    }
-  }
-  return { samples, ts };
-}
-
-export function altSamplesFromTrail(trail: TrailPoint[] | undefined): number[] {
-  return altTraceFromTrail(trail).samples;
 }
 
 function TrendSection({

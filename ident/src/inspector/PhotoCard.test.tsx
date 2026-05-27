@@ -28,6 +28,56 @@ describe("PhotoCard", () => {
     vi.unstubAllGlobals();
   });
 
+  it("shows a skeleton placeholder while the photo is loading", () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => new Promise<Response>(() => {})),
+    );
+
+    act(() => {
+      root.render(<PhotoCard hex="def456" reg="N12345" type="B738" />);
+    });
+
+    const skeleton = container.querySelector(".animate-pulse");
+    expect(skeleton).not.toBeNull();
+    expect(container.querySelector("img")).toBeNull();
+  });
+
+  it("renders the photo once the API resolves", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              photos: [
+                {
+                  thumbnail_large: {
+                    src: "https://example.test/photo.jpg",
+                    size: { width: 320, height: 213 },
+                  },
+                  photographer: "A. Spotter",
+                  link: "https://example.test/p",
+                },
+              ],
+            }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          ),
+      ),
+    );
+
+    act(() => {
+      root.render(<PhotoCard hex="abc123" reg="N12345" type="B738" />);
+    });
+    await act(async () => {
+      await flushMicrotasks();
+    });
+
+    const img = container.querySelector("img");
+    expect(img).not.toBeNull();
+    expect(img?.getAttribute("src")).toBe("https://example.test/photo.jpg");
+  });
+
   it("renders nothing when the API returns no photos", async () => {
     vi.stubGlobal(
       "fetch",

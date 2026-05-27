@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { TrailPoint } from "../data/types";
-import { altSamplesFromTrail } from "./Inspector";
+import { altSamplesFromTrail } from "./altitudeTrace";
 
 function pt(ts: number, alt: number | null, ground = false): TrailPoint {
   return { lat: 0, lon: 0, alt, ground, ts, segment: 0 };

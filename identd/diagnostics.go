@@ -37,8 +37,9 @@ const (
 	// is set comfortably above the heartbeat interval so a single missed
 	// tick (load spike, GC pause) doesn't drop the entry; condition truly
 	// resolving still drops the entry within ~TTL of the last re-emit.
-	receiverConditionTTL   = 15 * time.Minute
-	reemitReceiverInterval = 5 * time.Minute
+	receiverConditionTTL            = 15 * time.Minute
+	reemitReceiverInterval          = 5 * time.Minute
+	producerSelectionReemitInterval = 30 * time.Second
 
 	diagnosticSweepInterval = time.Second
 )

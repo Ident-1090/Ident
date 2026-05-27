@@ -55,7 +55,7 @@ func TestProducerDetectionUnknownKeepsIdentOwnedCapabilities(t *testing.T) {
 }
 
 func TestProducerDetectionNumericFlightAwareReceiverNeedsStatsEvidence(t *testing.T) {
-	n := NewProducerStatusNormalizer()
+	n := newProducerStatusNormalizerPastStartup()
 	store := attachDiagnosticStoreForTest(n)
 
 	envs := n.IngestReceiverJSON([]byte(`{"version":"11.0","refresh":1000,"history":16,"lat":1.25,"lon":-2.5}`))
@@ -136,7 +136,7 @@ func TestProducerDetectionMutabilityNameStaysUnknownDespiteReceiverShape(t *test
 }
 
 func TestProducerDetectionPreClassificationStatsDoesNotEmitAwaitingDiagnostics(t *testing.T) {
-	n := NewProducerStatusNormalizer()
+	n := newProducerStatusNormalizerPastStartup()
 	store := attachDiagnosticStoreForTest(n)
 
 	for range 3 {
@@ -155,7 +155,7 @@ func TestProducerDetectionPreClassificationStatsDoesNotEmitAwaitingDiagnostics(t
 }
 
 func TestProducerDetectionSubthresholdEvidenceStaysUnknownWithContext(t *testing.T) {
-	n := NewProducerStatusNormalizer()
+	n := newProducerStatusNormalizerPastStartup()
 	store := attachDiagnosticStoreForTest(n)
 
 	envs := n.IngestStatsJSON([]byte(`{"last1min":{"start":1700000000,"end":1700000060,"messages":6000}}`))
@@ -173,11 +173,11 @@ func TestProducerDetectionSubthresholdEvidenceStaysUnknownWithContext(t *testing
 }
 
 func TestProducerDetectionReemitKeepsUnknownEvidenceContext(t *testing.T) {
-	n := NewProducerStatusNormalizer()
+	n := newProducerStatusNormalizerPastStartup()
 	store := attachDiagnosticStoreForTest(n)
 
 	n.IngestReceiverJSON([]byte(`{"version":"11.0","refresh":1000,"history":16}`))
-	n.ReemitReceiverConditions()
+	n.ReemitProducerSelectionConditions()
 
 	diag, ok := findDiagnostic(store.Snapshot(), "producer.ident.unknown")
 	if !ok {
@@ -269,7 +269,7 @@ func TestProducerDetectionColdStartAmbiguousEvidenceNamesTiedCandidates(t *testi
 }
 
 func TestProducerDetectionRepeatedUnclassifiedAircraftDoesNotPublishCapabilities(t *testing.T) {
-	n := NewProducerStatusNormalizer()
+	n := newProducerStatusNormalizerPastStartup()
 	store := attachDiagnosticStoreForTest(n)
 
 	for i := 0; i < 3; i++ {
@@ -338,7 +338,7 @@ func (detectingTestAdapter) RangeOutline(producerOutlineJSON) (identRangeOutline
 }
 
 func TestProducerDetectionAircraftWithoutUATVersionStaysUnknown(t *testing.T) {
-	n := NewProducerStatusNormalizer()
+	n := newProducerStatusNormalizerPastStartup()
 	store := attachDiagnosticStoreForTest(n)
 
 	envs, frame := n.IngestAircraftJSONWithFrame([]byte(`{

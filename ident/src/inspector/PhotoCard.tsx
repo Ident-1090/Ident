@@ -29,13 +29,16 @@ export function PhotoCard({ hex, reg, type }: Props) {
   const [data, setData] = useState<PhotoData | null | undefined>(() =>
     cache.get(hex.toUpperCase()),
   );
+  const [imgLoaded, setImgLoaded] = useState(false);
 
   useEffect(() => {
     const key = hex.toUpperCase();
+    setImgLoaded(false);
     if (cache.has(key)) {
       setData(cache.get(key));
       return;
     }
+    setData(undefined);
 
     const controller = new AbortController();
     (async () => {
@@ -67,34 +70,45 @@ export function PhotoCard({ hex, reg, type }: Props) {
     return () => controller.abort();
   }, [hex, reg, type]);
 
-  if (!data) return null;
-  const { photo } = data;
+  if (data === null) return null;
+
+  const photo = data?.photo;
   return (
     <div className="relative h-[126px] bg-paper-2 border-b border-(--color-line) overflow-hidden shrink-0">
-      <img
-        src={photo.thumbnail_large.src}
-        alt=""
-        loading="lazy"
-        className="w-full h-full object-cover block"
-      />
-      <div
-        className="absolute bottom-1 right-2 font-mono text-[9px] text-[#cfd3d8] bg-black/65 px-1.25 py-px rounded-xs whitespace-nowrap overflow-hidden text-ellipsis"
-        style={{ maxWidth: "calc(100% - 16px)" }}
-      >
-        ©{" "}
-        {photo.link ? (
-          <a
-            href={photo.link}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-inherit hover:underline"
-          >
-            {photo.photographer}
-          </a>
-        ) : (
-          photo.photographer
-        )}
-      </div>
+      {!imgLoaded && (
+        <div className="absolute inset-0 z-0 bg-paper-3 animate-pulse" />
+      )}
+      {photo && (
+        <img
+          src={photo.thumbnail_large.src}
+          alt=""
+          loading="lazy"
+          onLoad={() => setImgLoaded(true)}
+          className={`relative z-10 w-full h-full object-cover block transition-opacity duration-300 ${
+            imgLoaded ? "opacity-100" : "opacity-0"
+          }`}
+        />
+      )}
+      {photo && (
+        <div
+          className="absolute z-20 bottom-1 right-2 font-mono text-[9px] text-[#cfd3d8] bg-black/65 px-1.25 py-px rounded-xs whitespace-nowrap overflow-hidden text-ellipsis"
+          style={{ maxWidth: "calc(100% - 16px)" }}
+        >
+          ©{" "}
+          {photo.link ? (
+            <a
+              href={photo.link}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-inherit hover:underline"
+            >
+              {photo.photographer}
+            </a>
+          ) : (
+            photo.photographer
+          )}
+        </div>
+      )}
     </div>
   );
 }

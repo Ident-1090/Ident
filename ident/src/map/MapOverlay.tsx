@@ -39,7 +39,7 @@ import { InViewHUD } from "./huds/InViewHUD";
 import { LayersHUD } from "./huds/LayersHUD";
 import { ScaleHUD } from "./huds/ScaleHUD";
 import { ZoomHUD } from "./huds/ZoomHUD";
-import { useMap } from "./MapEngine";
+import { useMap } from "./MapEngineContext";
 import {
   buildAircraftFeatureCollection,
   buildPredictorFeatureCollection,
