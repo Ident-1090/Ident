@@ -100,7 +100,6 @@ export interface IdentCapabilities {
     uptime: "producer_provided" | "ident_derived" | "unavailable";
     maxRange: "producer_provided" | "ident_derived" | "unavailable";
     rangeOutline: "producer_provided" | "ident_derived" | "unavailable";
-    signalDiagnostics: "producer_provided" | "ident_derived" | "unavailable";
     meteorology: "producer_provided" | "ident_derived" | "unavailable";
     replay: "producer_provided" | "ident_derived" | "unavailable";
     trails: "producer_provided" | "ident_derived" | "unavailable";
@@ -391,4 +390,144 @@ export interface IdentStatus {
           | "stale_sample"
           | "malformed_file";
       };
+  stats?: {
+    cpuPct?:
+      | {
+          kind: "producer_provided";
+          source: "ident_runtime";
+          value: number;
+        }
+      | {
+          kind: "ident_derived";
+          source: "ident_runtime";
+          value: number;
+        }
+      | {
+          kind: "unavailable";
+          reason:
+            | "not_provided_by_producer"
+            | "awaiting_classification"
+            | "awaiting_second_sample"
+            | "producer_changed"
+            | "counter_reset"
+            | "clock_not_advanced"
+            | "stale_sample"
+            | "malformed_file";
+        };
+    noiseDbfs?:
+      | {
+          kind: "producer_provided";
+          source: "stats_last1min_local";
+          value: number;
+        }
+      | {
+          kind: "ident_derived";
+          source: "stats_last1min_local";
+          value: number;
+        }
+      | {
+          kind: "unavailable";
+          reason:
+            | "not_provided_by_producer"
+            | "awaiting_classification"
+            | "awaiting_second_sample"
+            | "producer_changed"
+            | "counter_reset"
+            | "clock_not_advanced"
+            | "stale_sample"
+            | "malformed_file";
+        };
+    ramPct?:
+      | {
+          kind: "producer_provided";
+          source: "ident_runtime";
+          value: number;
+        }
+      | {
+          kind: "ident_derived";
+          source: "ident_runtime";
+          value: number;
+        }
+      | {
+          kind: "unavailable";
+          reason:
+            | "not_provided_by_producer"
+            | "awaiting_classification"
+            | "awaiting_second_sample"
+            | "producer_changed"
+            | "counter_reset"
+            | "clock_not_advanced"
+            | "stale_sample"
+            | "malformed_file";
+        };
+    sampleDrops?:
+      | {
+          kind: "producer_provided";
+          source: "stats_last1min_local";
+          value: number;
+        }
+      | {
+          kind: "ident_derived";
+          source: "stats_last1min_local";
+          value: number;
+        }
+      | {
+          kind: "unavailable";
+          reason:
+            | "not_provided_by_producer"
+            | "awaiting_classification"
+            | "awaiting_second_sample"
+            | "producer_changed"
+            | "counter_reset"
+            | "clock_not_advanced"
+            | "stale_sample"
+            | "malformed_file";
+        };
+    signalDbfs?:
+      | {
+          kind: "producer_provided";
+          source: "stats_last1min_local";
+          value: number;
+        }
+      | {
+          kind: "ident_derived";
+          source: "stats_last1min_local";
+          value: number;
+        }
+      | {
+          kind: "unavailable";
+          reason:
+            | "not_provided_by_producer"
+            | "awaiting_classification"
+            | "awaiting_second_sample"
+            | "producer_changed"
+            | "counter_reset"
+            | "clock_not_advanced"
+            | "stale_sample"
+            | "malformed_file";
+        };
+    strongPct?:
+      | {
+          kind: "producer_provided";
+          source: "stats_last1min_local";
+          value: number;
+        }
+      | {
+          kind: "ident_derived";
+          source: "stats_last1min_local";
+          value: number;
+        }
+      | {
+          kind: "unavailable";
+          reason:
+            | "not_provided_by_producer"
+            | "awaiting_classification"
+            | "awaiting_second_sample"
+            | "producer_changed"
+            | "counter_reset"
+            | "clock_not_advanced"
+            | "stale_sample"
+            | "malformed_file";
+        };
+  };
 }

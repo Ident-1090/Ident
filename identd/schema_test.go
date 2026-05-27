@@ -98,6 +98,7 @@ func identSchemaSpecs() []identSchemaSpec {
 				"scope":       stringEnumSchema("last24h", "alltime", "points", "other", "stats"),
 				"computation": stringEnumSchema("max_receiver_to_outline_vertex", "producer_reported_distance"),
 			}, []string{"nm", "scope", "computation"}), []string{"outline_last24h_vertices", "outline_alltime_vertices", "outline_points_vertices", "outline_other_vertices", "stats_max_distance_meters"})
+			schema.Properties["stats"] = receiverStatsSchema()
 			return schema
 		}},
 		{"ident.diagnostics.v1", "Ident diagnostics", func(t *testing.T) *jsonschema.Schema {
@@ -211,6 +212,17 @@ func messageRateValueSchema() *jsonschema.Schema {
 		"hz":       {Type: "number"},
 		"basisSec": {Type: "number"},
 	}, []string{"hz"})
+}
+
+func receiverStatsSchema() *jsonschema.Schema {
+	return objectSchema(map[string]*jsonschema.Schema{
+		"signalDbfs":  statusValueSchema(&jsonschema.Schema{Type: "number"}, []string{"stats_last1min_local"}),
+		"noiseDbfs":   statusValueSchema(&jsonschema.Schema{Type: "number"}, []string{"stats_last1min_local"}),
+		"strongPct":   statusValueSchema(&jsonschema.Schema{Type: "number"}, []string{"stats_last1min_local"}),
+		"sampleDrops": statusValueSchema(&jsonschema.Schema{Type: "number"}, []string{"stats_last1min_local"}),
+		"cpuPct":      statusValueSchema(&jsonschema.Schema{Type: "number"}, []string{"ident_runtime"}),
+		"ramPct":      statusValueSchema(&jsonschema.Schema{Type: "number"}, []string{"ident_runtime"}),
+	}, nil)
 }
 
 func constStringSchema(v string) *jsonschema.Schema {

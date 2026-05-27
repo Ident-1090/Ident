@@ -28,6 +28,30 @@ function expectTooltipOnPointer(target: HTMLElement, label: string) {
   expect(document.querySelector('[role="tooltip"]')).toBeNull();
 }
 
+function statusStatOrder(container: HTMLElement): string[] {
+  return Array.from(
+    container.querySelectorAll<HTMLElement>("[data-status-stat]"),
+  ).map((node) => node.dataset.statusStat ?? "");
+}
+
+function dragStat(source: HTMLElement, target: HTMLElement) {
+  const data = new Map<string, string>();
+  const dataTransfer = {
+    effectAllowed: "",
+    dropEffect: "",
+    setData: vi.fn((key: string, value: string) => data.set(key, value)),
+    getData: vi.fn((key: string) => data.get(key) ?? ""),
+  };
+  for (const type of ["dragstart", "dragover", "drop"]) {
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "dataTransfer", {
+      configurable: true,
+      value: dataTransfer,
+    });
+    (type === "dragstart" ? source : target).dispatchEvent(event);
+  }
+}
+
 describe("StatusBar", () => {
   let container: HTMLDivElement;
   let root: Root;
@@ -55,7 +79,6 @@ describe("StatusBar", () => {
           uptime: "producer_provided",
           maxRange: "producer_provided",
           rangeOutline: "producer_provided",
-          signalDiagnostics: "producer_provided",
           meteorology: "unavailable",
           replay: "unavailable",
           trails: "ident_derived",
@@ -144,6 +167,274 @@ describe("StatusBar", () => {
     expect(container.textContent).toContain("120 NM");
     expect(container.textContent).toContain("DIAGNOSTICS");
     expect(container.textContent).not.toContain("MHz ES");
+  });
+
+  it("shows optional receiver stats in the folded stats list", () => {
+    useIdentStore.setState((state) => ({
+      identStatus: {
+        ...state.identStatus!,
+        stats: {
+          signalDbfs: {
+            kind: "producer_provided",
+            source: "stats_last1min_local",
+            value: -17.8,
+          },
+          noiseDbfs: {
+            kind: "producer_provided",
+            source: "stats_last1min_local",
+            value: -34.2,
+          },
+          strongPct: {
+            kind: "producer_provided",
+            source: "stats_last1min_local",
+            value: 3.2,
+          },
+          sampleDrops: {
+            kind: "producer_provided",
+            source: "stats_last1min_local",
+            value: 0,
+          },
+        },
+      },
+    }));
+
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    const button = container.querySelector<HTMLButtonElement>(
+      '[data-testid="status-stats-menu-button"]',
+    );
+    expect(button).toBeTruthy();
+    expect(button!.textContent).toContain("+4");
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+
+    act(() => button!.click());
+
+    const panel = document.querySelector<HTMLElement>(
+      '[data-testid="status-stats-panel"]',
+    );
+    expect(panel).toBeTruthy();
+    expect(panel!.textContent).toContain("Signal");
+    expect(panel!.textContent).toContain("-17.8 dBFS");
+    expect(panel!.textContent).toContain("Noise");
+    expect(panel!.textContent).toContain("-34.2 dBFS");
+    expect(panel!.textContent).toContain("Strong");
+    expect(panel!.textContent).toContain("3.2%");
+    expect(panel!.textContent).toContain("Drops");
+    expect(panel!.textContent).toContain("0");
+    expect(panel!.textContent).not.toContain("CPU");
+    expect(panel!.textContent).not.toContain("RAM");
+    expect(container.querySelector('[data-status-cell="Signal"]')).toBeNull();
+  });
+
+  it("omits stats that are unavailable instead of rendering empty rows", () => {
+    useIdentStore.setState((state) => ({
+      identStatus: {
+        ...state.identStatus!,
+        stats: {
+          signalDbfs: {
+            kind: "unavailable",
+            reason: "not_provided_by_producer",
+          },
+          noiseDbfs: {
+            kind: "producer_provided",
+            source: "stats_last1min_local",
+            value: -34.2,
+          },
+        },
+      },
+    }));
+
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    const button = container.querySelector<HTMLButtonElement>(
+      '[data-testid="status-stats-menu-button"]',
+    );
+    expect(button).toBeTruthy();
+    expect(button!.textContent).toContain("+1");
+
+    act(() => button!.click());
+
+    const panel = document.querySelector<HTMLElement>(
+      '[data-testid="status-stats-panel"]',
+    );
+    expect(panel).toBeTruthy();
+    expect(panel!.textContent).not.toContain("Signal");
+    expect(panel!.textContent).toContain("Noise");
+    expect(panel!.textContent).toContain("-34.2 dBFS");
+  });
+
+  it("respects the saved status stat order", () => {
+    usePreferencesStore.setState((state) => ({
+      statusStats: {
+        ...state.statusStats,
+        order: ["maxRange", "gain", "uptime"],
+      },
+    }));
+
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    expect(statusStatOrder(container)).toEqual(["maxRange", "gain", "uptime"]);
+  });
+
+  it("reorders status stats by dragging a stat cell", () => {
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    act(() =>
+      dragStat(
+        container.querySelector<HTMLElement>('[data-status-stat="maxRange"]')!,
+        container.querySelector<HTMLElement>('[data-status-stat="gain"]')!,
+      ),
+    );
+
+    expect(
+      usePreferencesStore.getState().statusStats.order.slice(0, 3),
+    ).toEqual(["maxRange", "gain", "uptime"]);
+    expect(statusStatOrder(container)).toEqual(["maxRange", "gain", "uptime"]);
+  });
+
+  it("ignores unknown status value kinds from mismatched deployments", () => {
+    useIdentStore.setState((state) => ({
+      identStatus: {
+        ...state.identStatus!,
+        stats: {
+          signalDbfs: {
+            kind: "future_kind",
+            source: "stats_last1min_local",
+            value: -17.8,
+          } as never,
+        },
+      },
+    }));
+
+    expect(() =>
+      act(() => {
+        root.render(<StatusBar />);
+      }),
+    ).not.toThrow();
+    expect(container.querySelector('[data-status-cell="Signal"]')).toBeNull();
+  });
+
+  it("hides and restores folded status stats", () => {
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    const menu = container.querySelector<HTMLButtonElement>(
+      '[data-testid="status-stats-menu-button"]',
+    )!;
+    act(() => menu.click());
+    const hideGain = Array.from(
+      document.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.getAttribute("aria-label") === "Hide Gain");
+    expect(hideGain).toBeTruthy();
+
+    act(() => hideGain!.click());
+
+    expect(container.querySelector('[data-status-cell="Gain"]')).toBeNull();
+    expect(
+      container.querySelector<HTMLButtonElement>(
+        '[data-testid="status-stats-menu-button"]',
+      )?.textContent,
+    ).toContain("+1");
+    expect(usePreferencesStore.getState().statusStats.hidden).toEqual([
+      "signal",
+      "noise",
+      "strong",
+      "drops",
+      "cpu",
+      "ram",
+      "gain",
+    ]);
+
+    const showGain = Array.from(
+      document.querySelectorAll<HTMLButtonElement>("button"),
+    ).find((button) => button.getAttribute("aria-label") === "Show Gain");
+    expect(showGain).toBeTruthy();
+
+    act(() => showGain!.click());
+
+    expect(container.querySelector('[data-status-cell="Gain"]')).toBeTruthy();
+    expect(usePreferencesStore.getState().statusStats.hidden).toEqual([
+      "signal",
+      "noise",
+      "strong",
+      "drops",
+      "cpu",
+      "ram",
+    ]);
+  });
+
+  it("anchors the folded stats panel above the stats button", () => {
+    useIdentStore.setState((state) => ({
+      identStatus: {
+        ...state.identStatus!,
+        stats: {
+          signalDbfs: {
+            kind: "producer_provided",
+            source: "stats_last1min_local",
+            value: -17.8,
+          },
+          noiseDbfs: {
+            kind: "producer_provided",
+            source: "stats_last1min_local",
+            value: -34.2,
+          },
+        },
+      },
+    }));
+
+    act(() => {
+      root.render(<StatusBar />);
+    });
+
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function () {
+      if (
+        this instanceof HTMLElement &&
+        this.dataset.testid === "status-stats-menu-button"
+      ) {
+        return {
+          left: 420,
+          right: 452,
+          top: 700,
+          bottom: 732,
+          width: 32,
+          height: 32,
+          x: 420,
+          y: 700,
+          toJSON: () => ({}),
+        } as DOMRect;
+      }
+      return originalRect.call(this);
+    };
+    const menu = container.querySelector<HTMLButtonElement>(
+      '[data-testid="status-stats-menu-button"]',
+    )!;
+    Object.defineProperty(window, "innerWidth", {
+      configurable: true,
+      value: 1024,
+    });
+    try {
+      act(() => menu.click());
+
+      const panel = document.querySelector<HTMLElement>(
+        '[data-testid="status-stats-panel"]',
+      )!;
+      expect(panel.style.left).toBe("420px");
+      expect(panel.style.top).toBe("686px");
+      expect(panel.style.transform).toBe("translateY(-100%)");
+      expect(panel.style.bottom).toBe("");
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalRect;
+    }
   });
 
   it("uses custom tooltips for unavailable status reasons", () => {

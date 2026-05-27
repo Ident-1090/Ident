@@ -52,6 +52,22 @@ export interface LayoutPreferences {
   railCollapsed: boolean;
 }
 
+export type StatusStatKey =
+  | "gain"
+  | "uptime"
+  | "maxRange"
+  | "signal"
+  | "noise"
+  | "strong"
+  | "drops"
+  | "cpu"
+  | "ram";
+
+export interface StatusStatsPreferences {
+  order: StatusStatKey[];
+  hidden: StatusStatKey[];
+}
+
 export interface ReplayWindowPreferences {
   rangeId: string;
   rangeMs: number;
@@ -76,6 +92,7 @@ interface PreferencesState {
   map: MapPreferences;
   settings: SettingsPreferences;
   layout: LayoutPreferences;
+  statusStats: StatusStatsPreferences;
   replayWindow: ReplayWindowPreferences;
   replayRangeRecents: ReplayRangeRecent[];
   inspectorTab: InspectorTab;
@@ -83,6 +100,8 @@ interface PreferencesState {
   setMapPreferences: (next: Partial<MapPreferences>) => void;
   setSettingsPreferences: (next: SettingsPreferences) => void;
   setLayoutPreferences: (next: Partial<LayoutPreferences>) => void;
+  reorderStatusStat: (source: StatusStatKey, target: StatusStatKey) => void;
+  setStatusStatHidden: (key: StatusStatKey, hidden: boolean) => void;
   setReplayWindow: (next: ReplayWindowPreferences) => void;
   setReplayRangeRecents: (next: ReplayRangeRecent[]) => void;
   setInspectorTab: (tab: InspectorTab) => void;
@@ -127,6 +146,23 @@ export const DEFAULT_SETTINGS_PREFERENCES: SettingsPreferences = {
 
 export const DEFAULT_LAYOUT_PREFERENCES: LayoutPreferences = {
   railCollapsed: false,
+};
+
+export const STATUS_STAT_KEYS: StatusStatKey[] = [
+  "gain",
+  "uptime",
+  "maxRange",
+  "signal",
+  "noise",
+  "strong",
+  "drops",
+  "cpu",
+  "ram",
+];
+
+export const DEFAULT_STATUS_STATS_PREFERENCES: StatusStatsPreferences = {
+  order: [...STATUS_STAT_KEYS],
+  hidden: ["signal", "noise", "strong", "drops", "cpu", "ram"],
 };
 
 export const DEFAULT_REPLAY_WINDOW_PREFERENCES: ReplayWindowPreferences = {
@@ -210,6 +246,7 @@ export const usePreferencesStore = create<PreferencesState>()(
       map: DEFAULT_MAP_PREFERENCES,
       settings: DEFAULT_SETTINGS_PREFERENCES,
       layout: DEFAULT_LAYOUT_PREFERENCES,
+      statusStats: DEFAULT_STATUS_STATS_PREFERENCES,
       replayWindow: DEFAULT_REPLAY_WINDOW_PREFERENCES,
       replayRangeRecents: DEFAULT_REPLAY_RANGE_RECENTS,
       inspectorTab: "telemetry",
@@ -219,6 +256,14 @@ export const usePreferencesStore = create<PreferencesState>()(
       setSettingsPreferences: (next) => set({ settings: next }),
       setLayoutPreferences: (next) =>
         set((st) => ({ layout: normalizeLayoutPreferences(next, st.layout) })),
+      reorderStatusStat: (source, target) =>
+        set((st) => ({
+          statusStats: reorderStatusStats(st.statusStats, source, target),
+        })),
+      setStatusStatHidden: (key, hidden) =>
+        set((st) => ({
+          statusStats: setStatusStatsHidden(st.statusStats, key, hidden),
+        })),
       setReplayWindow: (next) => set({ replayWindow: next }),
       setReplayRangeRecents: (next) =>
         set({ replayRangeRecents: normalizeReplayRangeRecents(next) }),
@@ -278,6 +323,7 @@ export const usePreferencesStore = create<PreferencesState>()(
         map: state.map,
         settings: state.settings,
         layout: state.layout,
+        statusStats: state.statusStats,
         replayWindow: state.replayWindow,
         replayRangeRecents: state.replayRangeRecents,
         inspectorTab: state.inspectorTab,
@@ -290,6 +336,7 @@ export const usePreferencesStore = create<PreferencesState>()(
             | "map"
             | "settings"
             | "layout"
+            | "statusStats"
             | "replayWindow"
             | "replayRangeRecents"
             | "inspectorTab"
@@ -304,6 +351,10 @@ export const usePreferencesStore = create<PreferencesState>()(
             current.settings,
           ),
           layout: normalizeLayoutPreferences(saved.layout, current.layout),
+          statusStats: normalizeStatusStatsPreferences(
+            saved.statusStats,
+            current.statusStats,
+          ),
           replayWindow: normalizeReplayWindowPreferences(
             saved.replayWindow,
             current.replayWindow,
@@ -329,6 +380,7 @@ export function resetPreferencesStoreForTests(): void {
     map: DEFAULT_MAP_PREFERENCES,
     settings: DEFAULT_SETTINGS_PREFERENCES,
     layout: DEFAULT_LAYOUT_PREFERENCES,
+    statusStats: DEFAULT_STATUS_STATS_PREFERENCES,
     replayWindow: DEFAULT_REPLAY_WINDOW_PREFERENCES,
     replayRangeRecents: DEFAULT_REPLAY_RANGE_RECENTS,
     inspectorTab: "telemetry",
@@ -404,6 +456,65 @@ function normalizeLayoutPreferences(
         ? raw.railCollapsed
         : defaults.railCollapsed,
   };
+}
+
+function normalizeStatusStatsPreferences(
+  raw: Partial<StatusStatsPreferences> | undefined,
+  defaults: StatusStatsPreferences,
+): StatusStatsPreferences {
+  const order: StatusStatKey[] = [];
+  if (Array.isArray(raw?.order)) {
+    for (const key of raw.order) {
+      if (!isStatusStatKey(key) || order.includes(key)) continue;
+      order.push(key);
+    }
+  }
+  for (const key of defaults.order) {
+    if (!order.includes(key)) order.push(key);
+  }
+  for (const key of STATUS_STAT_KEYS) {
+    if (!order.includes(key)) order.push(key);
+  }
+
+  const hidden: StatusStatKey[] = [];
+  if (Array.isArray(raw?.hidden)) {
+    for (const key of raw.hidden) {
+      if (!isStatusStatKey(key) || hidden.includes(key)) continue;
+      hidden.push(key);
+    }
+  }
+  return { order, hidden };
+}
+
+function reorderStatusStats(
+  current: StatusStatsPreferences,
+  source: StatusStatKey,
+  target: StatusStatKey,
+): StatusStatsPreferences {
+  if (source === target) return current;
+  const normalized = normalizeStatusStatsPreferences(
+    current,
+    DEFAULT_STATUS_STATS_PREFERENCES,
+  );
+  const order = normalized.order.filter((key) => key !== source);
+  const targetIndex = order.indexOf(target);
+  if (targetIndex === -1) return normalized;
+  order.splice(targetIndex, 0, source);
+  return { ...normalized, order };
+}
+
+function setStatusStatsHidden(
+  current: StatusStatsPreferences,
+  key: StatusStatKey,
+  hidden: boolean,
+): StatusStatsPreferences {
+  const normalized = normalizeStatusStatsPreferences(
+    current,
+    DEFAULT_STATUS_STATS_PREFERENCES,
+  );
+  const nextHidden = normalized.hidden.filter((item) => item !== key);
+  if (hidden) nextHidden.push(key);
+  return { ...normalized, hidden: nextHidden };
 }
 
 function normalizeReplayWindowPreferences(
@@ -494,6 +605,12 @@ function isClockMode(v: unknown): v is ClockMode {
 
 function isThemeMode(v: unknown): v is ThemeMode {
   return v === "system" || v === "light" || v === "dark";
+}
+
+export function isStatusStatKey(v: unknown): v is StatusStatKey {
+  return (
+    typeof v === "string" && (STATUS_STAT_KEYS as readonly string[]).includes(v)
+  );
 }
 
 function isAltitudeUnit(v: unknown): v is AltitudeUnit {

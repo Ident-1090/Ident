@@ -1068,6 +1068,7 @@ export const useIdentStore = create<IdentState>((set) => ({
         gain: status.gain ?? previous?.gain,
         uptime: status.uptime ?? previous?.uptime,
         maxRange: status.maxRange ?? previous?.maxRange,
+        stats: status.stats ?? previous?.stats,
       };
       const pos =
         merged.receiverPosition?.kind !== "unavailable"

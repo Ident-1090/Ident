@@ -14,24 +14,37 @@ const (
 	identAircraftLostAfterSec = 30
 )
 
+func commonProducerCapabilitiesFromEvidence(evidence producerEvidence) identCapabilities {
+	if evidence.Receiver == nil {
+		return commonProducerCapabilities(producerReceiverJSON{})
+	}
+	return commonProducerCapabilities(*evidence.Receiver)
+}
+
 func commonProducerCapabilities(receiver producerReceiverJSON) identCapabilities {
 	receiverPosition := capabilityUnavailable
 	if receiver.Lat != nil && receiver.Lon != nil {
 		receiverPosition = capabilityProducerProvided
 	}
 	return identCapabilities{
-		Aircraft:          capabilityProducerProvided,
-		ReceiverPosition:  receiverPosition,
-		MessageRate:       capabilityUnavailable,
-		Gain:              capabilityUnavailable,
-		Uptime:            capabilityUnavailable,
-		MaxRange:          capabilityUnavailable,
-		RangeOutline:      capabilityUnavailable,
-		SignalDiagnostics: capabilityUnavailable,
-		Meteorology:       capabilityUnavailable,
-		Replay:            capabilityUnavailable,
-		Trails:            capabilityIdentDerived,
+		Aircraft:         capabilityProducerProvided,
+		ReceiverPosition: receiverPosition,
+		MessageRate:      capabilityUnavailable,
+		Gain:             capabilityUnavailable,
+		Uptime:           capabilityUnavailable,
+		MaxRange:         capabilityUnavailable,
+		RangeOutline:     capabilityUnavailable,
+		Meteorology:      capabilityUnavailable,
+		Replay:           capabilityUnavailable,
+		Trails:           capabilityIdentDerived,
 	}
+}
+
+func producerVersionFromEvidence(evidence producerEvidence) string {
+	if evidence.Receiver == nil {
+		return ""
+	}
+	return evidence.Receiver.Version
 }
 
 func topLevelAircraftCounter(frame producerAircraftJSON) (aircraftCounterSample, bool) {
@@ -389,5 +402,75 @@ func statsWindowSeconds(window producerStatsWindow) (float64, bool) {
 	if window.Start == nil || window.End == nil {
 		return 0, false
 	}
-	return *window.End - *window.Start, true
+	seconds := *window.End - *window.Start
+	if seconds <= 0 || !numberIsFinite(seconds) {
+		return 0, false
+	}
+	return seconds, true
+}
+
+func receiverStatsFromStats(stats producerStatsJSON) (receiverStatsStatus, []diagnostic, bool) {
+	local := stats.Last1Min.Local
+	value := receiverStatsStatus{}
+	if signal := finitePointer(local.Signal); signal != nil {
+		value.SignalDBFS = receiverMetricProvided("stats_last1min_local", *signal)
+	}
+	if noise := finitePointer(local.Noise); noise != nil {
+		value.NoiseDBFS = receiverMetricProvided("stats_last1min_local", *noise)
+	}
+	if local.StrongSignals != nil {
+		denominator := firstFinite(stats.Last1Min.MessagesValid, stats.Last1Min.Messages)
+		if denominator != nil && *denominator > 0 {
+			strongPct := (*local.StrongSignals / *denominator) * 100
+			if strong := finitePointer(&strongPct); strong != nil {
+				value.StrongPct = receiverMetricProvided("stats_last1min_local", *strong)
+			}
+		}
+	}
+	if sampleDrops := sumFinite(local.SamplesDropped, local.SamplesLost); sampleDrops != nil {
+		value.SampleDrops = receiverMetricProvided("stats_last1min_local", *sampleDrops)
+	}
+	ok := value.SignalDBFS != nil ||
+		value.NoiseDBFS != nil ||
+		value.StrongPct != nil ||
+		value.SampleDrops != nil
+	if !ok && receiverStatsInputPresent(local) {
+		slog.Warn("producer stats: malformed signal stats", "channel", "stats", "code", "stats.adapter.malformed_signal_stats")
+		return value, []diagnostic{warningDiagnostic("stats", "stats.adapter.malformed_signal_stats", "stats local signal fields could not be normalized")}, false
+	}
+	return value, nil, ok
+}
+
+func receiverStatsInputPresent(local producerStatsLocalJSON) bool {
+	return local.Signal != nil ||
+		local.Noise != nil ||
+		local.StrongSignals != nil ||
+		local.SamplesDropped != nil ||
+		local.SamplesLost != nil
+}
+
+func firstFinite(values ...*float64) *float64 {
+	for _, value := range values {
+		if finite := finitePointer(value); finite != nil {
+			return finite
+		}
+	}
+	return nil
+}
+
+func sumFinite(values ...*float64) *float64 {
+	var sum float64
+	ok := false
+	for _, value := range values {
+		finite := finitePointer(value)
+		if finite == nil {
+			continue
+		}
+		sum += *finite
+		ok = true
+	}
+	if !ok {
+		return nil
+	}
+	return &sum
 }

@@ -63,7 +63,6 @@ describe("TrafficList", () => {
           uptime: "producer_provided",
           maxRange: "producer_provided",
           rangeOutline: "producer_provided",
-          signalDiagnostics: "producer_provided",
           meteorology: "unavailable",
           replay: "ident_derived",
           trails: "ident_derived",

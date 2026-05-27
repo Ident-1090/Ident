@@ -32,9 +32,14 @@ when it is not one of the paths Ident already checks.
 
 ## Upstream type
 
-Ident usually detects the upstream type from `receiver.json`. If a receiver
-setup needs an explicit selection, set `IDENT_UPSTREAM_TYPE` or pass
-`--upstream-type`.
+Ident usually detects the upstream type from the contents of the receiver data
+directory. Explicit receiver metadata is used when present, and aircraft or
+statistics files can also provide enough evidence for stacks whose receiver file
+is generic. If automatic detection is insufficient or ambiguous, the UI shows a
+diagnostic notification instead of guessing.
+
+If a receiver setup needs an explicit selection, set `IDENT_UPSTREAM_TYPE` or
+pass `--upstream-type`.
 
 ```sh
 IDENT_UPSTREAM_TYPE=dump1090-fa
@@ -43,7 +48,9 @@ IDENT_UPSTREAM_TYPE=dump1090-fa
 Supported values are `readsb`, `dump1090-fa`, and `skyaware978`. The aliases
 `piaware`, `dump978-fa`, and `dump978` are also accepted. An invalid value is
 ignored and surfaced as a diagnostic notification while Ident falls back to
-automatic detection.
+automatic detection. A valid override wins over automatic detection, but a
+diagnostic is still raised when the observed files appear to describe a
+different supported upstream.
 
 ## Station identity and overlays
 

@@ -4,12 +4,33 @@ import "encoding/json"
 
 type producerAdapter interface {
 	Kind() identProducerKind
-	Detect(receiver producerReceiverJSON) (identProducer, bool)
-	Capabilities(receiver producerReceiverJSON) identCapabilities
+	Detect(evidence producerEvidence) producerCandidate
+	Capabilities(evidence producerEvidence) identCapabilities
 	StatusFromStats(producer identProducer, stats producerStatsJSON) (identStatus, []diagnostic, bool)
 	AircraftFrame(frame producerAircraftJSON) (identAircraftFrame, []diagnostic, bool)
 	AircraftCounter(frame producerAircraftJSON) (aircraftCounterSample, bool)
 	RangeOutline(outline producerOutlineJSON) (identRangeOutline, []diagnostic, bool)
+}
+
+type producerEvidence struct {
+	Receiver *producerReceiverJSON
+	Stats    *producerStatsJSON
+	Aircraft *producerAircraftJSON
+	Outline  *producerOutlineJSON
+}
+
+type producerCandidate struct {
+	Producer     identProducer
+	Score        int
+	Capabilities identCapabilities
+	Evidence     []string
+}
+
+func (c producerCandidate) Kind() identProducerKind {
+	if c.Producer.Kind != "" {
+		return c.Producer.Kind
+	}
+	return producerUnknown
 }
 
 type identProducer struct {
@@ -27,17 +48,16 @@ const (
 )
 
 type identCapabilities struct {
-	Aircraft          capabilitySource `json:"aircraft"`
-	ReceiverPosition  capabilitySource `json:"receiverPosition"`
-	MessageRate       capabilitySource `json:"messageRate"`
-	Gain              capabilitySource `json:"gain"`
-	Uptime            capabilitySource `json:"uptime"`
-	MaxRange          capabilitySource `json:"maxRange"`
-	RangeOutline      capabilitySource `json:"rangeOutline"`
-	SignalDiagnostics capabilitySource `json:"signalDiagnostics"`
-	Meteorology       capabilitySource `json:"meteorology"`
-	Replay            capabilitySource `json:"replay"`
-	Trails            capabilitySource `json:"trails"`
+	Aircraft         capabilitySource `json:"aircraft"`
+	ReceiverPosition capabilitySource `json:"receiverPosition"`
+	MessageRate      capabilitySource `json:"messageRate"`
+	Gain             capabilitySource `json:"gain"`
+	Uptime           capabilitySource `json:"uptime"`
+	MaxRange         capabilitySource `json:"maxRange"`
+	RangeOutline     capabilitySource `json:"rangeOutline"`
+	Meteorology      capabilitySource `json:"meteorology"`
+	Replay           capabilitySource `json:"replay"`
+	Trails           capabilitySource `json:"trails"`
 }
 
 type capabilitySource string
@@ -63,6 +83,7 @@ type identStatus struct {
 	Gain             *gainValue             `json:"gain,omitempty"`
 	Uptime           *uptimeValue           `json:"uptime,omitempty"`
 	MaxRange         *maxRangeValue         `json:"maxRange,omitempty"`
+	Stats            *receiverStatsStatus   `json:"stats,omitempty"`
 }
 
 func newIdentStatus() identStatus {
@@ -183,6 +204,18 @@ func maxRangeProvided(source string, value maxRangeStatusValue) *maxRangeValue {
 	return &maxRangeValue{inner: producerProvided(source, value)}
 }
 
+type receiverMetricValue struct{ inner statusValue }
+
+func (v *receiverMetricValue) MarshalJSON() ([]byte, error) { return json.Marshal(v.inner) }
+
+func receiverMetricProvided(source string, value float64) *receiverMetricValue {
+	return &receiverMetricValue{inner: producerProvided(source, value)}
+}
+
+func receiverMetricDerived(source string, value float64) *receiverMetricValue {
+	return &receiverMetricValue{inner: identDerived(source, value)}
+}
+
 type observedAtStatusValue struct {
 	EpochSec float64 `json:"epochSec"`
 }
@@ -210,6 +243,15 @@ type maxRangeStatusValue struct {
 	NM          float64 `json:"nm"`
 	Scope       string  `json:"scope"`
 	Computation string  `json:"computation"`
+}
+
+type receiverStatsStatus struct {
+	SignalDBFS  *receiverMetricValue `json:"signalDbfs,omitempty"`
+	NoiseDBFS   *receiverMetricValue `json:"noiseDbfs,omitempty"`
+	StrongPct   *receiverMetricValue `json:"strongPct,omitempty"`
+	SampleDrops *receiverMetricValue `json:"sampleDrops,omitempty"`
+	CPUPct      *receiverMetricValue `json:"cpuPct,omitempty"`
+	RAMPct      *receiverMetricValue `json:"ramPct,omitempty"`
 }
 
 type unavailableValue struct {
@@ -241,6 +283,8 @@ type freshness struct {
 type producerReceiverJSON struct {
 	Version string   `json:"version"`
 	Readsb  bool     `json:"readsb"`
+	Refresh *float64 `json:"refresh"`
+	History *int     `json:"history"`
 	Lat     *float64 `json:"lat"`
 	Lon     *float64 `json:"lon"`
 }
@@ -249,7 +293,10 @@ type producerStatsJSON struct {
 	Now         *float64            `json:"now"`
 	GainDB      *float64            `json:"gain_db"`
 	MaxDistance *float64            `json:"max_distance"`
+	Latest      producerStatsWindow `json:"latest"`
 	Last1Min    producerStatsWindow `json:"last1min"`
+	Last5Min    producerStatsWindow `json:"last5min"`
+	Last15Min   producerStatsWindow `json:"last15min"`
 	Total       producerStatsWindow `json:"total"`
 }
 
@@ -263,7 +310,12 @@ type producerStatsWindow struct {
 }
 
 type producerStatsLocalJSON struct {
-	GainDB *float64 `json:"gain_db"`
+	GainDB         *float64 `json:"gain_db"`
+	Signal         *float64 `json:"signal"`
+	Noise          *float64 `json:"noise"`
+	StrongSignals  *float64 `json:"strong_signals"`
+	SamplesDropped *float64 `json:"samples_dropped"`
+	SamplesLost    *float64 `json:"samples_lost"`
 }
 
 type producerOutlineJSON struct {

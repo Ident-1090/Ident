@@ -99,6 +99,26 @@ func TestProducerStatusNormalizerLogsDiagnosticsWithStableCode(t *testing.T) {
 	}
 }
 
+func TestProducerStatusNormalizerPublishesIdentRuntimeStats(t *testing.T) {
+	cpu := 42.4
+	ram := 67.7
+	n := NewProducerStatusNormalizerWithOptions(ProducerStatusNormalizerOptions{
+		RuntimeStats: func() RuntimeStatsSample {
+			return RuntimeStatsSample{CPUPct: &cpu, RAMPct: &ram}
+		},
+	})
+
+	envs := n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2"}`))
+
+	status := findEnvelope(t, envs, "status")
+	stats, ok := status["stats"].(map[string]any)
+	if !ok {
+		t.Fatalf("status stats missing: %#v", status)
+	}
+	assertReceiverMetricKind(t, stats["cpuPct"], "ident_derived", "ident_runtime", 42.4)
+	assertReceiverMetricKind(t, stats["ramPct"], "ident_derived", "ident_runtime", 67.7)
+}
+
 func TestAppendEnvelopeReportsMarshalFailures(t *testing.T) {
 	envs := appendEnvelope(nil, "aircraft", func() {})
 
@@ -205,12 +225,12 @@ func TestProducerStatusNormalizerCapabilityResetsOnProducerKindChange(t *testing
 	// the new one.
 	n := NewProducerStatusNormalizer()
 	n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2"}`))
-	_ = n.IngestStatsJSON([]byte(`{"last1min":{"start":1700000000,"end":1700000060,"messages":600,"local":{"gain_db":18.6}}}`))
+	_ = n.IngestStatsJSON([]byte(`{"last1min":{"start":1700000000,"end":1700000060,"messages":600,"local":{"gain_db":18.6,"signal":-10.5}}}`))
 
 	envs := n.IngestReceiverJSON([]byte(`{"version":"dump978-fa 8.2"}`))
 	caps := findEnvelope(t, envs, "capabilities")["capabilities"].(map[string]any)
 	if caps["gain"] != "unavailable" {
-		t.Fatalf("gain leaked across producer kind change: %#v", caps["gain"])
+		t.Fatalf("capabilities leaked across producer kind change: %#v", caps)
 	}
 }
 
@@ -294,6 +314,28 @@ func TestProducerStatusNormalizerStaleStatsRateSuppressedEvenWhenAircraftFresh(t
 	status := findEnvelope(t, envs, "status")
 	if status["messageRate"] != nil {
 		t.Fatalf("stale stats-derived messageRate kept alive by aircraft freshness: %#v", status["messageRate"])
+	}
+}
+
+func TestProducerStatusNormalizerSuppressesStaleReceiverStats(t *testing.T) {
+	clock := time.Unix(1_700_000_100, 0)
+	n := NewProducerStatusNormalizerWithClock(func() time.Time { return clock })
+	store := attachDiagnosticStoreForTest(n)
+	n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2"}`))
+	_ = n.IngestStatsJSON([]byte(`{
+		"last1min":{"start":1700000040,"end":1700000100,"messages":6000,"local":{"signal":-10.5}},
+		"total":{"start":1699990000}
+	}`))
+
+	clock = time.Unix(1_700_000_400, 0)
+	envs := n.IngestReceiverJSON([]byte(`{"version":"dump1090-fa 10.2"}`))
+
+	status := findEnvelope(t, envs, "status")
+	if status["stats"] != nil {
+		t.Fatalf("stale receiver stats stayed visible: %#v", status["stats"])
+	}
+	if _, ok := findDiagnostic(store.Snapshot(), "stats.source.stale"); !ok {
+		t.Fatalf("diagnostic codes = %#v", diagnosticCodes(store.Snapshot()))
 	}
 }
 
@@ -967,6 +1009,25 @@ func assertStatusValue(t *testing.T, raw any, kind, source, valueKey string, wan
 	value := status["value"].(map[string]any)
 	if value[valueKey] != want {
 		t.Fatalf("%s = %#v, want %v in %#v", valueKey, value[valueKey], want, value)
+	}
+}
+
+func assertReceiverMetric(t *testing.T, raw any, source string, want float64) {
+	t.Helper()
+	assertReceiverMetricKind(t, raw, "producer_provided", source, want)
+}
+
+func assertReceiverMetricKind(t *testing.T, raw any, kind, source string, want float64) {
+	t.Helper()
+	metric, ok := raw.(map[string]any)
+	if !ok {
+		t.Fatalf("metric = %#v", raw)
+	}
+	if metric["kind"] != kind || metric["source"] != source {
+		t.Fatalf("metric = %#v", metric)
+	}
+	if metric["value"] != want {
+		t.Fatalf("metric value = %#v, want %v", metric["value"], want)
 	}
 }
 

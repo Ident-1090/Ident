@@ -696,6 +696,468 @@
           "additionalProperties": false
         }
       ]
+    },
+    "stats": {
+      "type": "object",
+      "properties": {
+        "cpuPct": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "producer_provided"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "ident_runtime"
+                  ]
+                },
+                "value": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "source",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "ident_derived"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "ident_runtime"
+                  ]
+                },
+                "value": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "source",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "unavailable"
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "not_provided_by_producer",
+                    "awaiting_classification",
+                    "awaiting_second_sample",
+                    "producer_changed",
+                    "counter_reset",
+                    "clock_not_advanced",
+                    "stale_sample",
+                    "malformed_file"
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "noiseDbfs": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "producer_provided"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "stats_last1min_local"
+                  ]
+                },
+                "value": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "source",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "ident_derived"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "stats_last1min_local"
+                  ]
+                },
+                "value": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "source",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "unavailable"
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "not_provided_by_producer",
+                    "awaiting_classification",
+                    "awaiting_second_sample",
+                    "producer_changed",
+                    "counter_reset",
+                    "clock_not_advanced",
+                    "stale_sample",
+                    "malformed_file"
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "ramPct": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "producer_provided"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "ident_runtime"
+                  ]
+                },
+                "value": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "source",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "ident_derived"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "ident_runtime"
+                  ]
+                },
+                "value": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "source",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "unavailable"
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "not_provided_by_producer",
+                    "awaiting_classification",
+                    "awaiting_second_sample",
+                    "producer_changed",
+                    "counter_reset",
+                    "clock_not_advanced",
+                    "stale_sample",
+                    "malformed_file"
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "sampleDrops": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "producer_provided"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "stats_last1min_local"
+                  ]
+                },
+                "value": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "source",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "ident_derived"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "stats_last1min_local"
+                  ]
+                },
+                "value": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "source",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "unavailable"
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "not_provided_by_producer",
+                    "awaiting_classification",
+                    "awaiting_second_sample",
+                    "producer_changed",
+                    "counter_reset",
+                    "clock_not_advanced",
+                    "stale_sample",
+                    "malformed_file"
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "signalDbfs": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "producer_provided"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "stats_last1min_local"
+                  ]
+                },
+                "value": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "source",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "ident_derived"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "stats_last1min_local"
+                  ]
+                },
+                "value": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "source",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "unavailable"
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "not_provided_by_producer",
+                    "awaiting_classification",
+                    "awaiting_second_sample",
+                    "producer_changed",
+                    "counter_reset",
+                    "clock_not_advanced",
+                    "stale_sample",
+                    "malformed_file"
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "strongPct": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "producer_provided"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "stats_last1min_local"
+                  ]
+                },
+                "value": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "source",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "ident_derived"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "stats_last1min_local"
+                  ]
+                },
+                "value": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "kind",
+                "source",
+                "value"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "const": "unavailable"
+                },
+                "reason": {
+                  "type": "string",
+                  "enum": [
+                    "not_provided_by_producer",
+                    "awaiting_classification",
+                    "awaiting_second_sample",
+                    "producer_changed",
+                    "counter_reset",
+                    "clock_not_advanced",
+                    "stale_sample",
+                    "malformed_file"
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
     }
   },
   "$id": "https://github.com/Ident-1090/Ident/schemas/ident/ident.status.v1.schema.json",

@@ -11,7 +11,7 @@ func TestProducerStatusNormalizerNormalizesDump1090FAStatsWindows(t *testing.T) 
 	}
 
 	envs := n.IngestStatsJSON([]byte(`{
-		"last1min":{"start":1700000000,"end":1700000060,"messages":6000,"local":{"gain_db":43.9}},
+		"last1min":{"start":1700000000,"end":1700000060,"messages":6000,"local":{"gain_db":43.9,"signal":-10.5,"noise":-28.6,"strong_signals":300,"samples_dropped":4}},
 		"total":{"start":1699990000,"end":1700000060}
 	}`))
 
@@ -28,6 +28,11 @@ func TestProducerStatusNormalizerNormalizesDump1090FAStatsWindows(t *testing.T) 
 	}
 	assertStatusValue(t, status["messageRate"], "producer_provided", "stats_last1min_messages", "hz", 100)
 	assertStatusValue(t, status["gain"], "producer_provided", "last1min_local", "db", 43.9)
+	stats := status["stats"].(map[string]any)
+	assertReceiverMetric(t, stats["signalDbfs"], "stats_last1min_local", -10.5)
+	assertReceiverMetric(t, stats["noiseDbfs"], "stats_last1min_local", -28.6)
+	assertReceiverMetric(t, stats["strongPct"], "stats_last1min_local", 5)
+	assertReceiverMetric(t, stats["sampleDrops"], "stats_last1min_local", 4)
 	uptime := status["uptime"].(map[string]any)
 	if uptime["kind"] != "producer_provided" || uptime["source"] != "window_end_minus_total_start" {
 		t.Fatalf("uptime = %#v", uptime)

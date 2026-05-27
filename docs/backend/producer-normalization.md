@@ -23,11 +23,11 @@ to be kept honest against each decoder's actual output.
 ## The adapter shape
 
 Each decoder is represented by an adapter that knows how to do a few things:
-recognize its own decoder from the receiver file, describe which pieces of
-operational data that decoder actually provides, and translate each of the four
-files into Ident types. An adapter that cannot supply a given file says so
-rather than guessing; the UAT decoder, for instance, emits no statistics file
-and no range outline, and its adapter reports both as absent.
+recognize its own decoder from the files that have arrived, describe which
+pieces of operational data that decoder actually provides, and translate each
+of the four files into Ident types. An adapter that cannot supply a given file
+says so rather than guessing; the UAT decoder, for instance, emits no
+statistics file and no range outline, and its adapter reports both as absent.
 
 The receiver file translates into a small record holding the decoder name, a
 version string, and the receiver's coordinates when present. The statistics
@@ -38,40 +38,48 @@ file becomes a polygon.
 
 ## How a decoder is identified
 
-Identification runs when the receiver file changes, not on every aircraft frame.
-Aircraft data arrives at roughly one update per second; re-deciding the decoder
-identity that often would be wasted work, and the identity rarely changes once a
-deployment is running. The decision is made from the content of the receiver
-file rather than from file paths, because an operator can mount a decoder's
-output wherever they like.
+Identification is content-based, not path-based. Operators can mount a decoder's
+output wherever they like, and some stacks write receiver metadata that is too
+generic to identify the stack by itself. `identd` therefore considers the
+receiver, aircraft, statistics, and outline files together as evidence for the
+adapter selection.
 
-There is no scoring. Adapters are tried in a fixed order and the first one that
-recognizes the receiver file wins; nothing weighs how well several adapters
-match. readsb is tried first and is identified by an explicit flag it sets in
-its receiver file. The UAT decoder is tried next and is identified by a version
-string that begins with its name. dump1090-fa is tried last and is identified by
-its version string containing a known marker. A version string that is merely
-present, or non-empty, does not identify dump1090-fa; the marker has to be there.
+Receiver metadata still carries the strongest signals when it includes an
+explicit decoder marker. When it does not, the shape of the statistics and
+aircraft files can still be enough to identify a supported decoder. This is
+deliberately a "what can this adapter safely normalize?" decision rather than a
+"what product name is this directory?" decision. The result is one of four
+states:
+
+- An operator override names a supported decoder, so that adapter is selected.
+- Exactly one adapter has enough evidence, so that adapter is selected.
+- No adapter has enough evidence, so the producer remains unknown.
+- More than one adapter has equally strong evidence, so `identd` reports an
+  ambiguous producer. If no adapter has been selected yet, producer data waits
+  until more evidence arrives or an override is set. If the currently selected
+  adapter is still one of the tied candidates, `identd` keeps that adapter for
+  normalization and treats the tie as a diagnostic rather than a reason to
+  demote the stream.
 
 ```mermaid
 flowchart TD
-  C[receiver file changes] --> R{readsb flag set?}
-  R -->|yes| RB[readsb]
-  R -->|no| U{version begins with the UAT decoder name?}
-  U -->|yes| UAT[dump978 / skyaware978]
-  U -->|no| D{version contains the dump1090-fa marker?}
-  D -->|yes| DF[dump1090-fa]
-  D -->|no| UN[unclassified]
+  F[receiver, aircraft, stats, or outline file changes] --> E[update observed evidence]
+  E --> O{operator override set?}
+  O -->|yes| S[select named supported adapter]
+  O -->|no| A[adapters evaluate evidence]
+  A --> R{classification result}
+  R -->|one supported adapter| S
+  R -->|not enough evidence| N[unknown]
+  R -->|several adapters tie| M[ambiguous]
 ```
 
-Order is the only tie-breaker, and that has a consequence worth stating: a feed
-whose version string begins with the UAT decoder's name is claimed by that
-adapter before the dump1090-fa check ever runs. Keeping order as the sole
-priority mechanism avoids a configuration table that most deployments would
-never touch, but it does mean the order itself is load-bearing, including in
-tests, where reordering the adapters changes which one claims an ambiguous fixture.
+Unknown and ambiguous states are surfaced as diagnostics, including the
+strongest evidence `identd` has seen so far. That keeps an unsupported or
+unusual stack visible to the operator without guessing a decoder. Once a decoder
+has already been selected, later ambiguous evidence only blocks a switch away
+from that decoder unless the operator overrides it or stronger evidence appears.
 
-A decoder that no adapter recognizes stays unclassified. Some decoders write
+A decoder that no adapter recognizes stays unknown. Some decoders write
 aircraft JSON that Ident could in principle read but are simply not recognized
 by any adapter and so never get classified. Others are structurally
 incompatible: a decoder whose aircraft file is a bare array, without the
@@ -85,20 +93,26 @@ published.
 An operator can override automatic identification and name the decoder
 explicitly through an environment variable or its matching command-line flag,
 with a few accepted spellings per decoder. The override selects the adapter, but
-automatic identification still runs on every receiver-file change. When the two
-disagree, `identd` emits a diagnostic rather than quietly trusting the override,
-so a misconfiguration is visible instead of hidden. If the named decoder is one
-this build does not support, that is reported too.
+automatic identification still evaluates the observed files. When the observed
+evidence points at a different decoder, `identd` emits a diagnostic rather than
+quietly trusting the override, so a misconfiguration is visible instead of
+hidden. If the named decoder is one this build does not support, that is
+reported too.
 
-## Nothing is published before classification
+## Nothing is published before selection
 
-`identd` starts the receiver-file watcher right away but holds off on the
-aircraft, statistics, and outline watchers until a decoder has been identified.
-Until then there is no adapter to translate those files, and starting their
-watchers early would produce a steady stream of "waiting for classification"
-diagnostics, one per file update. The HTTP server starts before this gate so the
-interface stays reachable while the wait plays out. No decoder-shaped data
-reaches the hub until classification succeeds.
+`identd` starts all producer-file watchers during startup so each file can add
+evidence as soon as it appears. When no adapter has been selected yet, unknown
+or ambiguous producer files are parsed only far enough to help identify a
+supported adapter. They are not published as normalized aircraft, status, or
+range data until one adapter can safely handle them.
+
+That distinction matters for compatibility. An unknown decoder may write
+aircraft JSON that looks close to a supported shape, but publishing it before an
+adapter is selected would let raw decoder semantics leak into Ident's wire
+contract. The HTTP server still starts immediately, so the interface stays
+reachable while classification is waiting for enough evidence, and the
+diagnostic bell explains why live producer data is not flowing yet.
 
 ## Where the decoders actually differ
 
@@ -155,11 +169,11 @@ This single on-ground value is what trail segmentation reads (see
 
 Alongside the status and aircraft data, `identd` publishes a description of which
 features a decoder supports. Each feature is marked as provided by the decoder,
-derived by Ident, or unavailable. The adapter sets a conservative baseline for
-its decoder when the receiver file is read, and live data can promote a feature
-as statistics or aircraft frames confirm it is actually present. Promotion is
-one-directional within a single decoder: a later receiver-file update does not
-demote a feature that earlier live data already established, so the interface
-does not flicker a capability off and on as files arrive in different orders.
-A demotion happens only on a real change of circumstance, such as the decoder
-itself changing.
+derived by Ident, or unavailable. The selected adapter sets a conservative
+baseline from the evidence it has seen, and live data can promote a feature as
+statistics, aircraft frames, or outline files confirm it is actually present.
+Promotion is one-directional within a single selected decoder: a later file
+update does not demote a feature that earlier live data already established, so
+the interface does not flicker a capability off and on as files arrive in
+different orders. A demotion happens only on a real change of circumstance, such
+as the decoder itself changing or the producer becoming ambiguous again.

@@ -69,16 +69,19 @@ sequenceDiagram
 
 ## Startup order
 
-`identd` does not assume it knows which decoder it is reading. It watches the
-receiver metadata file first and waits to classify the producer from it before
-starting the aircraft, stats, and outline watchers. Running those watchers
-before classification would emit a warning on every file change while the type
-is still unknown, so they are held back until there is an answer.
+`identd` does not assume it knows which decoder it is reading. It starts the
+HTTP server and the producer-file watchers during startup, then lets each file
+add evidence toward selecting a supported adapter. Receiver metadata is still
+the strongest signal when it names the decoder clearly, but aircraft,
+statistics, and outline files can help classify setups whose receiver metadata
+is generic.
 
-The HTTP server starts before that gate, so the web app is reachable while the
-receiver file is still missing or malformed. A waiting receiver shows the UI and
-a diagnostic rather than a dead page, and the service log notes that it is still
-waiting at a steady interval so a long wait stays visible.
+Until one adapter is selected, producer files are not published as normalized
+aircraft, status, or range data. The web app is reachable while that wait plays
+out, and the diagnostic bell explains whether the producer is still unknown or
+whether several adapters match equally well. This keeps unsupported or unusual
+stacks visible without guessing a schema and leaking raw decoder semantics into
+the Ident wire contract.
 
 ## Why this shape
 

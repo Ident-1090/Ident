@@ -1,4 +1,4 @@
-import { Monitor, Moon, Plane, Settings2, Sun } from "lucide-react";
+import { Moon, Plane, Settings2, Sun, SunMoon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { formatSiteTag } from "../data/siteTag";
 import type { LabelFields } from "../data/store";
@@ -79,7 +79,7 @@ export function Topbar({ onOpenSettings }: { onOpenSettings: () => void }) {
     const i = THEME_CYCLE.indexOf(theme);
     setSettings({ theme: THEME_CYCLE[(i + 1) % THEME_CYCLE.length] });
   }
-  const ThemeIcon = theme === "dark" ? Moon : theme === "light" ? Sun : Monitor;
+  const ThemeIcon = theme === "dark" ? Moon : theme === "light" ? Sun : SunMoon;
 
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
@@ -163,7 +163,7 @@ export function Topbar({ onOpenSettings }: { onOpenSettings: () => void }) {
     >
       <TopbarBrand site={site} />
 
-      {/* Health — clock + map-display controls. Hidden on phone; the drawer
+      {/* Clock and map-display controls. Hidden on phone; the drawer
           reprises the receiver/filters/theme controls. */}
       <div className="flex-1 hidden md:flex items-center gap-2 xl:gap-5.5 px-2.5 xl:px-4.5 min-w-0 overflow-hidden">
         <div className="flex shrink-0 flex-col items-start leading-[1.1] tabular-nums mr-1 xl:mr-1.5">

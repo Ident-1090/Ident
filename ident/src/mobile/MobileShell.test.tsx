@@ -145,6 +145,11 @@ describe("MobileShell", () => {
       expect(button).toBeTruthy();
       expect(button!.textContent).toBe("");
     }
+    expect(
+      container
+        .querySelector<HTMLButtonElement>('button[aria-label="System"]')!
+        .querySelector("svg.lucide-sun-moon"),
+    ).toBeTruthy();
   });
 
   it("uses custom tooltips for mobile domain controls", () => {

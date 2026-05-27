@@ -84,14 +84,6 @@
             "unavailable"
           ]
         },
-        "signalDiagnostics": {
-          "type": "string",
-          "enum": [
-            "producer_provided",
-            "ident_derived",
-            "unavailable"
-          ]
-        },
         "meteorology": {
           "type": "string",
           "enum": [
@@ -125,7 +117,6 @@
         "uptime",
         "maxRange",
         "rangeOutline",
-        "signalDiagnostics",
         "meteorology",
         "replay",
         "trails"

@@ -17,10 +17,12 @@ type TooltipSide = "top" | "top-end" | "right" | "bottom" | "left";
 export function Tooltip({
   label,
   side = "top",
+  className = "relative inline-grid",
   children,
 }: {
   label: string;
   side?: TooltipSide;
+  className?: string;
   children: ReactElement<TooltipChildProps>;
 }) {
   const id = useId();
@@ -61,7 +63,7 @@ export function Tooltip({
   }, [open, side]);
 
   return (
-    <span ref={anchorRef} className="relative inline-grid">
+    <span ref={anchorRef} className={className}>
       {child}
       {open &&
         style &&

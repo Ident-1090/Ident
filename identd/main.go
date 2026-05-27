@@ -112,6 +112,7 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 	statusNormalizer := NewProducerStatusNormalizerWithOptions(ProducerStatusNormalizerOptions{
 		UpstreamType:  cfg.UpstreamType,
 		ReplayEnabled: cfg.ReplayEnable,
+		RuntimeStats:  newRuntimeStatsProvider(),
 	})
 	statusNormalizer.SetDiagnosticStore(diagnostics)
 
@@ -258,47 +259,7 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 		go runUpdateDiagnostics(ctx, diagnostics, NewUpdateChecker(updateCheckerOptions(cfg)), cfg.UpdateInterval)
 	}
 
-	// Start the receiver watcher and block on classification before
-	// kicking off the data watchers. Aircraft / stats / outline ingest
-	// would otherwise emit one awaiting_classification warning per
-	// tick — refuse to run those channels until we know what we're
-	// reading. A periodic re-log keeps long waits visible without
-	// auto-fallback complexity (operators can see the system is alive).
-	var dataChannels []channelSpec
 	for _, c := range producerFiles {
-		if c.name == "receiver" {
-			startWatcher(c)
-		} else {
-			dataChannels = append(dataChannels, c)
-		}
-	}
-	receiverPath := filepath.Join(cfg.DataDir, cfg.ReceiverFile)
-	slog.Info("awaiting producer classification", "file", receiverPath)
-	classifyDone := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(30 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-classifyDone:
-				return
-			case <-ctx.Done():
-				return
-			case <-ticker.C:
-				slog.Info("still awaiting producer classification", "file", receiverPath)
-			}
-		}
-	}()
-	select {
-	case <-statusNormalizer.Classified():
-		close(classifyDone)
-		slog.Info("producer classified, starting data watchers")
-	case <-ctx.Done():
-		close(classifyDone)
-		wg.Wait()
-		return nil
-	}
-	for _, c := range dataChannels {
 		startWatcher(c)
 	}
 
@@ -308,15 +269,7 @@ func run(parent context.Context, cfg Config, sigs chan os.Signal) error {
 	// store within receiverConditionTTL; the heartbeat re-Notes any active
 	// condition so it stays surfaced until the underlying state changes.
 	//
-	// Wait for classification first — pre-classification the awaiting-loop
-	// above already surfaces "still awaiting producer classification" every
-	// 30s, so running the heartbeat too would double-emit producer.ident.unknown.
 	go func() {
-		select {
-		case <-statusNormalizer.Classified():
-		case <-ctx.Done():
-			return
-		}
 		ticker := time.NewTicker(reemitReceiverInterval)
 		defer ticker.Stop()
 		for {

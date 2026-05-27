@@ -180,6 +180,15 @@ export interface IdentRangeOutline {
   coordinates: Array<[number, number]>;
 }
 
+export interface ReceiverStats {
+  signalDbfs?: IdentStatusValue<number, "stats_last1min_local">;
+  noiseDbfs?: IdentStatusValue<number, "stats_last1min_local">;
+  strongPct?: IdentStatusValue<number, "stats_last1min_local">;
+  sampleDrops?: IdentStatusValue<number, "stats_last1min_local">;
+  cpuPct?: IdentStatusValue<number, "ident_runtime">;
+  ramPct?: IdentStatusValue<number, "ident_runtime">;
+}
+
 // Semantic aircraft category key used by the rail's FiltersCard.
 // The mapping from aircraft.cat (ADS-B A0..C7 letter codes) to these keys
 // lives in predicates.ts.
@@ -294,7 +303,6 @@ export interface IdentCapabilities {
   uptime: IdentCapabilitySource;
   maxRange: IdentCapabilitySource;
   rangeOutline: IdentCapabilitySource;
-  signalDiagnostics: IdentCapabilitySource;
   meteorology: IdentCapabilitySource;
   replay: IdentCapabilitySource;
   trails: IdentCapabilitySource;
@@ -452,6 +460,7 @@ export interface IdentStatus {
     | "outline_other_vertices"
     | "stats_max_distance_meters"
   >;
+  stats?: ReceiverStats;
 }
 
 export interface ReplayBlockFile {

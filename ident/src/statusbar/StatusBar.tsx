@@ -1,7 +1,20 @@
-import { Bell, BellOff, Check, Copy, ExternalLink, X } from "lucide-react";
+import {
+  Bell,
+  BellOff,
+  Check,
+  Copy,
+  ExternalLink,
+  Eye,
+  EyeOff,
+  GripVertical,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
 import {
   type CSSProperties,
+  type DragEvent,
   type KeyboardEvent,
+  type RefObject,
   useEffect,
   useMemo,
   useRef,
@@ -11,7 +24,9 @@ import { match, P } from "ts-pattern";
 import { useFrontendDiagnosticsSnapshot } from "../data/frontendDiagnostics";
 import {
   diagnosticIdentity,
+  isStatusStatKey,
   type NotificationSuppression,
+  type StatusStatKey,
   usePreferencesStore,
 } from "../data/preferences";
 import { relativeTimeAgo } from "../data/recency";
@@ -21,6 +36,7 @@ import type {
   IdentDiagnostic,
   IdentStatusValue,
   IdentUnavailableReason,
+  ReceiverStats,
 } from "../data/types";
 import { Tooltip } from "../ui/Tooltip";
 
@@ -68,7 +84,7 @@ function presentStatusValue<TValue, TSource extends string>(
     .with({ kind: "unavailable" }, () => null)
     .with({ kind: "producer_provided" }, (v) => v.value)
     .with({ kind: "ident_derived" }, (v) => v.value)
-    .exhaustive();
+    .otherwise(() => null);
 }
 
 function unavailableStatusReason<TValue, TSource extends string>(
@@ -111,6 +127,7 @@ function formatRetryDelay(
 }
 
 export interface DiagnosticCell {
+  id: StatusStatKey;
   k: string;
   v: string;
   title?: string;
@@ -119,13 +136,28 @@ export interface DiagnosticCell {
 
 export interface ReceiverDiagnostics {
   cells: DiagnosticCell[];
+  hiddenCells: DiagnosticCell[];
+  allCells: DiagnosticCell[];
   producerLabel: string;
   diagnostics: IdentDiagnostic[];
 }
 
+const STATUS_STAT_LABELS: Record<StatusStatKey, string> = {
+  gain: "Gain",
+  uptime: "Uptime",
+  maxRange: "Max Range",
+  signal: "Signal",
+  noise: "Noise",
+  strong: "Strong",
+  drops: "Drops",
+  cpu: "CPU",
+  ram: "RAM",
+};
+
 export function useReceiverDiagnostics(): ReceiverDiagnostics {
   const identStatus = useIdentStore((s) => s.identStatus);
   const capabilities = useIdentStore((s) => s.capabilities?.capabilities);
+  const statusStats = usePreferencesStore((s) => s.statusStats);
   const backendDiagnostics = useIdentStore((s) => s.diagnostics);
   const frontendDiagnostics = useFrontendDiagnosticsSnapshot();
   // Merge backend + frontend diagnostics into one list sorted newest-first.
@@ -172,21 +204,91 @@ export function useReceiverDiagnostics(): ReceiverDiagnostics {
     ? `${producerKind} ${producerVer}`
     : producerKind;
 
-  const cells: DiagnosticCell[] = [];
+  const cellsById = new Map<StatusStatKey, DiagnosticCell>();
   if (capabilities?.gain !== "unavailable") {
-    cells.push({ k: "Gain", v: gainLabel, title: gainTitle });
+    cellsById.set("gain", {
+      id: "gain",
+      k: STATUS_STAT_LABELS.gain,
+      v: gainLabel,
+      title: gainTitle,
+    });
   }
   if (capabilities?.uptime !== "unavailable") {
-    cells.push({ k: "Uptime", v: uptimeLabel, title: uptimeTitle });
+    cellsById.set("uptime", {
+      id: "uptime",
+      k: STATUS_STAT_LABELS.uptime,
+      v: uptimeLabel,
+      title: uptimeTitle,
+    });
   }
   if (capabilities?.maxRange !== "unavailable") {
-    cells.push({ k: rangeLabel, v: rangeValue, title: rangeTitle });
+    cellsById.set("maxRange", {
+      id: "maxRange",
+      k: rangeLabel,
+      v: rangeValue,
+      title: rangeTitle,
+    });
   }
-  return { cells, producerLabel, diagnostics };
+  addReceiverStatCells(cellsById, identStatus?.stats ?? null);
+  const ordered = statusStats.order.flatMap((key) => {
+    const cell = cellsById.get(key);
+    return cell ? [cell] : [];
+  });
+  const hidden = new Set(statusStats.hidden);
+  const cells = ordered.filter((cell) => !hidden.has(cell.id));
+  const hiddenCells = ordered.filter((cell) => hidden.has(cell.id));
+  return { cells, hiddenCells, allCells: ordered, producerLabel, diagnostics };
+}
+
+function addReceiverStatCells(
+  cellsById: Map<StatusStatKey, DiagnosticCell>,
+  stats: ReceiverStats | null,
+): void {
+  if (!stats) return;
+  const signal = presentStatusValue(stats.signalDbfs);
+  const noise = presentStatusValue(stats.noiseDbfs);
+  const strong = presentStatusValue(stats.strongPct);
+  const drops = presentStatusValue(stats.sampleDrops);
+  const cpu = presentStatusValue(stats.cpuPct);
+  const ram = presentStatusValue(stats.ramPct);
+  addStatCell(cellsById, "signal", formatDbfs(signal));
+  addStatCell(cellsById, "noise", formatDbfs(noise));
+  addStatCell(cellsById, "strong", formatPercent(strong), {
+    warn: typeof strong === "number" && strong >= 10,
+  });
+  addStatCell(
+    cellsById,
+    "drops",
+    typeof drops === "number" ? String(Math.max(0, Math.round(drops))) : null,
+    { warn: typeof drops === "number" && drops > 0 },
+  );
+  addStatCell(cellsById, "cpu", formatPercent(cpu, 0), {
+    warn: typeof cpu === "number" && cpu >= 85,
+  });
+  addStatCell(cellsById, "ram", formatPercent(ram, 0), {
+    warn: typeof ram === "number" && ram >= 90,
+  });
+}
+
+function addStatCell(
+  cellsById: Map<StatusStatKey, DiagnosticCell>,
+  id: StatusStatKey,
+  value: string | null,
+  options: Pick<DiagnosticCell, "warn" | "title"> = {},
+): void {
+  if (value == null) return;
+  cellsById.set(id, {
+    id,
+    k: STATUS_STAT_LABELS[id],
+    v: value,
+    ...options,
+  });
 }
 
 export function StatusBar() {
-  const { cells, producerLabel, diagnostics } = useReceiverDiagnostics();
+  const { cells, hiddenCells, allCells, producerLabel, diagnostics } =
+    useReceiverDiagnostics();
+  const reorderStatusStat = usePreferencesStore((s) => s.reorderStatusStat);
   return (
     <footer
       data-tour="status"
@@ -194,8 +296,15 @@ export function StatusBar() {
     >
       <FeedStatusCell />
       {cells.map((c) => (
-        <Cell key={c.k} k={c.k} title={c.title} v={c.v} warn={c.warn} />
+        <Cell key={c.id} cell={c} draggable onMove={reorderStatusStat} />
       ))}
+      {allCells.length > 0 && (
+        <StatusStatsMenu
+          cells={allCells}
+          visibleCells={cells}
+          hiddenCells={hiddenCells}
+        />
+      )}
       <DiagnosticsCenter
         producerLabel={producerLabel}
         diagnostics={diagnostics}
@@ -325,20 +434,44 @@ function LiveCell({
 }
 
 function Cell({
-  k,
-  v,
-  title,
-  warn,
+  cell,
+  draggable = false,
+  onMove,
 }: {
-  k: string;
-  v: string;
-  title?: string;
-  warn?: boolean;
+  cell: DiagnosticCell;
+  draggable?: boolean;
+  onMove?: (source: StatusStatKey, target: StatusStatKey) => void;
 }) {
+  const { id, k, v, title, warn } = cell;
+  function onDragStart(event: DragEvent<HTMLElement>) {
+    if (!draggable) return;
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", id);
+  }
+  function onDragOver(event: DragEvent<HTMLElement>) {
+    if (!draggable) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  }
+  function onDrop(event: DragEvent<HTMLElement>) {
+    if (!draggable) return;
+    event.preventDefault();
+    const source = event.dataTransfer.getData("text/plain");
+    if (isStatusStatKey(source)) onMove?.(source, id);
+  }
   const node = (
-    <div
+    <button
+      type="button"
       data-status-cell={k}
-      className="px-3.5 flex items-center gap-1.5 h-full border-r border-chrome-line"
+      data-status-stat={id}
+      draggable={draggable}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      aria-label={draggable ? `Move ${k}` : undefined}
+      className={`px-3.5 flex items-center gap-1.5 h-full border-r border-chrome-line bg-transparent ${
+        draggable ? "cursor-grab active:cursor-grabbing" : ""
+      }`}
     >
       <span className="uppercase tracking-[0.08em] text-[9.5px] text-chrome-ink-faint">
         {k}
@@ -348,7 +481,7 @@ function Cell({
       >
         {v}
       </span>
-    </div>
+    </button>
   );
   if (!title) return node;
   return (
@@ -356,6 +489,211 @@ function Cell({
       {node}
     </Tooltip>
   );
+}
+
+function StatusStatsMenu({
+  cells,
+  visibleCells,
+  hiddenCells,
+}: {
+  cells: DiagnosticCell[];
+  visibleCells: DiagnosticCell[];
+  hiddenCells: DiagnosticCell[];
+}) {
+  const [open, setOpen] = useState(false);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const panelStyle = useStatusPopoverPosition(open, buttonRef, 280);
+  const reorderStatusStat = usePreferencesStore((s) => s.reorderStatusStat);
+  const setStatusStatHidden = usePreferencesStore((s) => s.setStatusStatHidden);
+  const hiddenCount = hiddenCells.length;
+
+  useEffect(() => {
+    if (!open) return;
+    function onPointerDown(event: PointerEvent) {
+      const target = event.target as Node;
+      if (
+        buttonRef.current?.contains(target) ||
+        panelRef.current?.contains(target)
+      ) {
+        return;
+      }
+      setOpen(false);
+    }
+    function onKeyDown(event: globalThis.KeyboardEvent) {
+      if (event.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open]);
+
+  const button = (
+    <button
+      ref={buttonRef}
+      type="button"
+      data-testid="status-stats-menu-button"
+      aria-haspopup="dialog"
+      aria-expanded={open}
+      aria-label="Stats"
+      onClick={() => setOpen((value) => !value)}
+      className="flex h-full items-center gap-1.5 px-2.5 text-chrome-ink-soft hover:bg-paper-2 hover:text-(--color-ink) focus-visible:outline focus-visible:outline-1 focus-visible:outline-(--color-accent)"
+    >
+      <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
+      {hiddenCount > 0 && (
+        <span className="tabular-nums text-[9.5px] text-current">
+          +{hiddenCount}
+        </span>
+      )}
+    </button>
+  );
+
+  return (
+    <div className="relative h-full border-r border-chrome-line">
+      {open ? (
+        button
+      ) : (
+        <Tooltip
+          label="Stats"
+          side="top"
+          className="relative inline-grid h-full"
+        >
+          {button}
+        </Tooltip>
+      )}
+      {open && (
+        <div
+          ref={panelRef}
+          role="dialog"
+          aria-label="Stats"
+          data-testid="status-stats-panel"
+          style={panelStyle}
+          className="fixed z-[62] w-[min(280px,calc(100vw-24px))] border border-(--color-line-strong) bg-paper shadow-2 font-mono text-[11px] text-(--color-ink)"
+        >
+          <div className="border-b border-(--color-line) px-3 py-2 uppercase tracking-[0.08em]">
+            Stats
+          </div>
+          <ul className="max-h-[260px] overflow-y-auto">
+            {cells.map((cell) => (
+              <StatusStatsMenuRow
+                key={cell.id}
+                cell={cell}
+                hidden={hiddenCells.some((hidden) => hidden.id === cell.id)}
+                canHide={visibleCells.length > 1}
+                onMove={reorderStatusStat}
+                onHiddenChange={setStatusStatHidden}
+              />
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatusStatsMenuRow({
+  cell,
+  hidden,
+  canHide,
+  onMove,
+  onHiddenChange,
+}: {
+  cell: DiagnosticCell;
+  hidden: boolean;
+  canHide: boolean;
+  onMove: (source: StatusStatKey, target: StatusStatKey) => void;
+  onHiddenChange: (key: StatusStatKey, hidden: boolean) => void;
+}) {
+  function onDragStart(event: DragEvent<HTMLElement>) {
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", cell.id);
+  }
+  function onDragOver(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+  }
+  function onDrop(event: DragEvent<HTMLElement>) {
+    event.preventDefault();
+    const source = event.dataTransfer.getData("text/plain");
+    if (isStatusStatKey(source)) onMove(source, cell.id);
+  }
+  return (
+    <li
+      draggable
+      data-status-stat-row={cell.id}
+      onDragStart={onDragStart}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      className={`flex h-9 items-center gap-2 border-b border-(--color-line) px-2 last:border-b-0 ${
+        hidden ? "text-ink-faint" : "text-(--color-ink)"
+      }`}
+    >
+      <GripVertical className="h-3.5 w-3.5 shrink-0 text-ink-faint" />
+      <div className="min-w-0 flex-1">
+        <div className="truncate uppercase tracking-[0.08em]">{cell.k}</div>
+        <div className="truncate text-ink-faint">{cell.v}</div>
+      </div>
+      <Tooltip label={hidden ? "Show stat" : "Hide stat"} side="top">
+        <button
+          type="button"
+          aria-label={hidden ? `Show ${cell.k}` : `Hide ${cell.k}`}
+          disabled={!hidden && !canHide}
+          onClick={() => onHiddenChange(cell.id, !hidden)}
+          className="grid h-7 w-7 place-items-center text-ink-faint hover:bg-paper-2 hover:text-(--color-ink) disabled:cursor-not-allowed disabled:opacity-35 disabled:hover:bg-transparent disabled:hover:text-ink-faint"
+        >
+          {hidden ? (
+            <Eye className="h-3.5 w-3.5" aria-hidden="true" />
+          ) : (
+            <EyeOff className="h-3.5 w-3.5" aria-hidden="true" />
+          )}
+        </button>
+      </Tooltip>
+    </li>
+  );
+}
+
+function useStatusPopoverPosition(
+  open: boolean,
+  buttonRef: RefObject<HTMLButtonElement | null>,
+  widthPx: number,
+): CSSProperties | undefined {
+  const [style, setStyle] = useState<CSSProperties>();
+  useEffect(() => {
+    if (!open) return;
+    function place() {
+      const rect = buttonRef.current?.getBoundingClientRect();
+      if (!rect) return;
+      const margin = 8;
+      const gap = 14;
+      const left = Math.min(
+        Math.max(margin, rect.left),
+        Math.max(margin, window.innerWidth - widthPx - margin),
+      );
+      setStyle({
+        left,
+        top: rect.top - gap,
+        transform: "translateY(-100%)",
+      });
+    }
+    place();
+    window.addEventListener("resize", place);
+    return () => window.removeEventListener("resize", place);
+  }, [buttonRef, open, widthPx]);
+  return style;
+}
+
+function formatDbfs(value: number | null | undefined): string | null {
+  return typeof value === "number" ? `${value.toFixed(1)} dBFS` : null;
+}
+
+function formatPercent(
+  value: number | null | undefined,
+  digits = 1,
+): string | null {
+  return typeof value === "number" ? `${value.toFixed(digits)}%` : null;
 }
 
 export function DiagnosticsCenter({

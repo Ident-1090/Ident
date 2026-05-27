@@ -41,6 +41,12 @@ func TestStatusPerSlotWrappersPreserveWireShape(t *testing.T) {
 			Scope:       "stats",
 			Computation: "producer_reported_distance",
 		}),
+		Stats: &receiverStatsStatus{
+			SignalDBFS:  receiverMetricProvided("stats_last1min_local", -17.8),
+			NoiseDBFS:   receiverMetricProvided("stats_last1min_local", -34.2),
+			StrongPct:   receiverMetricProvided("stats_last1min_local", 1.5),
+			SampleDrops: receiverMetricProvided("stats_last1min_local", 2),
+		},
 	}
 
 	got := mustMarshalJSON(t, status)
@@ -73,6 +79,11 @@ func TestStatusPerSlotWrappersPreserveWireShape(t *testing.T) {
 		"scope":       "stats",
 		"computation": "producer_reported_distance",
 	})
+	stats := decoded["stats"].(map[string]any)
+	assertProvidedScalarShape(t, stats["signalDbfs"], "stats_last1min_local", -17.8)
+	assertProvidedScalarShape(t, stats["noiseDbfs"], "stats_last1min_local", -34.2)
+	assertProvidedScalarShape(t, stats["strongPct"], "stats_last1min_local", 1.5)
+	assertProvidedScalarShape(t, stats["sampleDrops"], "stats_last1min_local", 2)
 }
 
 // Constructors for ident-derived values must round-trip with the
@@ -126,7 +137,7 @@ func TestStatusPerSlotWrappersOmitWhenNil(t *testing.T) {
 	}
 
 	decoded := mustDecodeJSON(t, mustMarshalJSON(t, status))
-	for _, key := range []string{"receiverPosition", "messageRate", "gain", "uptime", "maxRange"} {
+	for _, key := range []string{"receiverPosition", "messageRate", "gain", "uptime", "maxRange", "stats"} {
 		if _, present := decoded[key]; present {
 			t.Fatalf("expected %q to be omitted when wrapper is nil, decoded = %#v", key, decoded)
 		}
@@ -153,6 +164,23 @@ func assertProvidedShape(t *testing.T, raw any, source string, value map[string]
 		if gotValue[k] != want {
 			t.Fatalf("value[%q] = %#v, want %#v (full value=%#v)", k, gotValue[k], want, gotValue)
 		}
+	}
+}
+
+func assertProvidedScalarShape(t *testing.T, raw any, source string, value float64) {
+	t.Helper()
+	obj, ok := raw.(map[string]any)
+	if !ok {
+		t.Fatalf("expected object, got %#v", raw)
+	}
+	if obj["kind"] != "producer_provided" {
+		t.Fatalf("kind = %#v, want producer_provided", obj["kind"])
+	}
+	if obj["source"] != source {
+		t.Fatalf("source = %#v, want %q", obj["source"], source)
+	}
+	if obj["value"] != value {
+		t.Fatalf("value = %#v, want %v", obj["value"], value)
 	}
 }
 

@@ -3,21 +3,47 @@ package main
 import (
 	"encoding/json"
 	"log/slog"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
 
 const maxCounterElapsedSec = 120
+const minProducerDetectionScore = 50
+
+type producerSelectionState int
+
+const (
+	producerSelectionInsufficient producerSelectionState = iota
+	producerSelectionSelected
+	producerSelectionAmbiguous
+)
+
+type producerSelection struct {
+	State      producerSelectionState
+	Adapter    producerAdapter
+	Candidate  producerCandidate
+	Best       producerCandidate
+	Candidates []producerCandidate
+}
+
+type producerSelectionEffect struct {
+	CapabilitiesChanged bool
+	CanNormalize        bool
+}
 
 type ProducerStatusNormalizer struct {
 	mu                 sync.Mutex
 	adapters           []producerAdapter
 	adapter            producerAdapter
 	producer           identProducer
+	evidence           producerEvidence
 	counter            *aircraftCounterSample
 	counterResetReason unavailableReason
 	now                func() time.Time
+	runtimeStats       func() RuntimeStatsSample
 	receiver           *producerReceiverJSON
 
 	upstreamTypeRaw      string
@@ -25,6 +51,7 @@ type ProducerStatusNormalizer struct {
 	upstreamTypeOverride bool
 	replayEnabled        bool
 	diagnostics          *DiagnosticStore
+	ambiguousLogKey      string
 
 	lastAircraftObservedAt *float64
 	lastStatsObservedAt    *float64
@@ -49,12 +76,13 @@ type ProducerStatusNormalizer struct {
 	lastGain                *gainValue
 	lastUptime              *uptimeValue
 	lastMaxRange            *maxRangeValue
+	lastReceiverStats       *receiverStatsStatus
 	observedCapabilities    identCapabilities
 
 	// Closed on the first successful classification (any known producer
-	// kind). Callers gate startup work on this signal so the aircraft /
-	// stats / outline pollers only begin once we know what we're reading,
-	// instead of emitting per-ingest awaiting_classification warnings.
+	// kind). It is a readiness signal for callers that care whether an
+	// adapter has been selected; producer file watchers may still run before
+	// it closes so their files can contribute classification evidence.
 	classified     chan struct{}
 	classifiedOnce sync.Once
 }
@@ -62,6 +90,7 @@ type ProducerStatusNormalizer struct {
 type ProducerStatusNormalizerOptions struct {
 	UpstreamType  string
 	ReplayEnabled bool
+	RuntimeStats  func() RuntimeStatsSample
 }
 
 func NewProducerStatusNormalizer() *ProducerStatusNormalizer {
@@ -88,11 +117,16 @@ func newProducerStatusNormalizer(adapters []producerAdapter, now func() time.Tim
 	if now == nil {
 		now = time.Now
 	}
+	runtimeStats := options.RuntimeStats
+	if runtimeStats == nil {
+		runtimeStats = func() RuntimeStatsSample { return RuntimeStatsSample{} }
+	}
 	kind, ok := parseUpstreamType(options.UpstreamType)
 	return &ProducerStatusNormalizer{
 		adapters:             append([]producerAdapter(nil), adapters...),
 		producer:             identProducer{Kind: producerUnknown},
 		now:                  now,
+		runtimeStats:         runtimeStats,
 		upstreamTypeRaw:      strings.TrimSpace(options.UpstreamType),
 		upstreamType:         kind,
 		upstreamTypeOverride: ok,
@@ -102,27 +136,12 @@ func newProducerStatusNormalizer(adapters []producerAdapter, now func() time.Tim
 		// "unavailable" — never the zero value (""), which would marshal
 		// as an out-of-enum string and surprise consumers if anything
 		// reads it before the first IngestReceiverJSON.
-		observedCapabilities: identCapabilities{
-			Aircraft:          capabilityUnavailable,
-			ReceiverPosition:  capabilityUnavailable,
-			MessageRate:       capabilityUnavailable,
-			Gain:              capabilityUnavailable,
-			Uptime:            capabilityUnavailable,
-			MaxRange:          capabilityUnavailable,
-			RangeOutline:      capabilityUnavailable,
-			SignalDiagnostics: capabilityUnavailable,
-			Meteorology:       capabilityUnavailable,
-			Replay:            capabilityUnavailable,
-			Trails:            capabilityUnavailable,
-		},
+		observedCapabilities: identServiceCapabilities(unavailableProducerCapabilities(), options.ReplayEnabled),
 	}
 }
 
 // Classified returns a channel that is closed on the first successful
-// producer classification. Callers gate the start of aircraft / stats /
-// outline pollers on this signal so those pollers never run against an
-// unclassified normalizer (which would emit one awaiting_classification
-// warning per tick).
+// producer classification.
 func (n *ProducerStatusNormalizer) Classified() <-chan struct{} {
 	return n.classified
 }
@@ -183,75 +202,13 @@ func (n *ProducerStatusNormalizer) IngestReceiverJSON(b []byte) [][]byte {
 	nowEpoch := n.clockEpochSec()
 	n.lastReceiverObservedAt = float64Ptr(nowEpoch)
 	n.receiver = &receiver
+	n.evidence.Receiver = &receiver
 	previousKind := n.producer.Kind
-	var nextAdapter producerAdapter
-	nextProducer := identProducer{Kind: producerUnknown}
-	detectedAdapter, detectedProducer := n.detectAdapter(receiver)
-	if n.upstreamTypeRaw != "" {
-		if n.upstreamTypeOverride {
-			if adapter := n.adapterForKind(n.upstreamType); adapter != nil {
-				nextAdapter = adapter
-				nextProducer = identProducer{Kind: n.upstreamType, Version: receiver.Version}
-				if detectedAdapter != nil && detectedProducer.Kind != n.upstreamType {
-					n.noteWarning("config", "config.adapter.override_mismatch", "upstream type override "+n.upstreamTypeRaw+" differs from detected "+string(detectedProducer.Kind), WithTTL(receiverConditionTTL))
-				}
-			} else {
-				n.noteWarning("config", "config.adapter.unsupported_upstream_type", "upstream type override "+n.upstreamTypeRaw+" is not supported by this build", WithTTL(receiverConditionTTL))
-			}
-		} else {
-			n.noteWarning("config", "config.adapter.invalid_upstream_type", "upstream type override "+n.upstreamTypeRaw+" is not recognized", WithTTL(receiverConditionTTL))
-		}
-	}
-	if nextAdapter == nil && detectedAdapter != nil {
-		nextAdapter = detectedAdapter
-		nextProducer = detectedProducer
-	}
-	if nextAdapter == nil {
-		n.noteWarning("producer", "producer.ident.unknown", "producer could not be classified", WithTTL(receiverConditionTTL))
-	}
-	n.adapter = nextAdapter
-	n.producer = nextProducer
-	if nextAdapter != nil {
-		n.classifiedOnce.Do(func() { close(n.classified) })
-	}
-	// Counter is producer-scoped: keep the baseline when the producer kind is
-	// unchanged so a touch of receiver.json doesn't restart the delta series.
-	if nextProducer.Kind != previousKind {
-		n.counter = nil
-		if previousKind != producerUnknown && nextAdapter != nil {
-			n.counterResetReason = reasonProducerChanged
-		} else {
-			n.counterResetReason = ""
-		}
-	}
-	nextBase := n.baseCapabilities(receiver)
-	if nextProducer.Kind != previousKind {
-		// Producer kind transition: drop prior observations entirely
-		// (they belonged to a different producer) and seed from the
-		// conservative baseline for the new kind. The observed-at
-		// timestamps reset too — gating the new producer's first
-		// ingest against the prior producer's clock would either
-		// suppress fresh data or claim freshness we don't have.
-		n.observedCapabilities = nextBase
-		n.lastStatsMessageRate = nil
-		n.lastAircraftMessageRate = nil
-		n.lastGain = nil
-		n.lastUptime = nil
-		n.lastMaxRange = nil
-		n.lastStatsObservedAt = nil
-		n.lastAircraftObservedAt = nil
-	} else {
-		// Same producer reingest: merge — keep the stronger source per
-		// field so a touch of receiver.json doesn't demote a capability
-		// previously promoted by live data observation. Demotion is
-		// reserved for producer change / file disappearance / sustained
-		// malformed data, per the UI-stability contract.
-		n.observedCapabilities = mergeStrongerCapabilities(n.observedCapabilities, nextBase)
-	}
-	if receiver.Lat != nil && receiver.Lon != nil && n.adapter != nil {
+	selection := n.applyProducerSelectionLocked()
+	if receiver.Lat != nil && receiver.Lon != nil && selection.CanNormalize && n.adapter != nil {
 		n.lastReceiverPosition = receiverPositionProvided("receiver_json", receiverPositionStatusValue{Lat: *receiver.Lat, Lon: *receiver.Lon})
 		n.promoteObservedCapability("receiverPosition", capabilityProducerProvided)
-	} else if previousKind != producerUnknown && nextProducer.Kind != producerUnknown && previousKind != nextProducer.Kind {
+	} else if selection.CapabilitiesChanged && previousKind != producerUnknown && n.producer.Kind != producerUnknown && previousKind != n.producer.Kind {
 		// Only clear the persisted position on an actual transition between
 		// two known producers. Transient receiver.json that fails detection
 		// (publisher hiccup, partial file) must NOT nuke a previously-good
@@ -269,39 +226,213 @@ func (n *ProducerStatusNormalizer) IngestReceiverJSON(b []byte) [][]byte {
 	return envs
 }
 
-func (n *ProducerStatusNormalizer) detectAdapter(receiver producerReceiverJSON) (producerAdapter, identProducer) {
-	for _, adapter := range n.adapters {
-		if producer, ok := adapter.Detect(receiver); ok {
-			return adapter, producer
+func (n *ProducerStatusNormalizer) applyProducerSelectionLocked() producerSelectionEffect {
+	previousKind := n.producer.Kind
+	previousVersion := n.producer.Version
+	selection := n.selectProducerLocked()
+	switch selection.State {
+	case producerSelectionAmbiguous:
+		n.noteAmbiguousProducerSelectionCandidates(selection.Candidates)
+		if n.adapter != nil && candidatesIncludeKind(selection.Candidates, n.adapter.Kind()) {
+			return producerSelectionEffect{CanNormalize: true}
+		}
+		return producerSelectionEffect{}
+	case producerSelectionInsufficient:
+		n.noteUnknownProducerSelection(selection.Best)
+		if n.adapter == nil {
+			n.producer = identProducer{Kind: producerUnknown}
+			return producerSelectionEffect{}
+		}
+		return producerSelectionEffect{CanNormalize: true}
+	}
+
+	nextAdapter := selection.Adapter
+	nextCandidate := selection.Candidate
+	nextProducer := nextCandidate.Producer
+	if nextProducer.Kind == "" {
+		nextProducer.Kind = nextAdapter.Kind()
+	}
+	n.adapter = nextAdapter
+	n.producer = nextProducer
+	n.classifiedOnce.Do(func() { close(n.classified) })
+
+	if nextProducer.Kind != previousKind {
+		// Counter samples are scoped to one producer kind. A kind transition
+		// invalidates the baseline; the next aircraft sample must bootstrap.
+		n.counter = nil
+		if previousKind != producerUnknown {
+			n.counterResetReason = reasonProducerChanged
+		} else {
+			n.counterResetReason = ""
+		}
+		n.observedCapabilities = n.applyIdentServiceCapabilities(nextCandidate.Capabilities)
+		n.lastStatsMessageRate = nil
+		n.lastAircraftMessageRate = nil
+		n.lastGain = nil
+		n.lastUptime = nil
+		n.lastMaxRange = nil
+		n.lastReceiverStats = nil
+		n.lastStatsObservedAt = nil
+		n.lastAircraftObservedAt = nil
+		return producerSelectionEffect{CapabilitiesChanged: true, CanNormalize: true}
+	}
+
+	nextCapabilities := mergeStrongerCapabilities(n.observedCapabilities, n.applyIdentServiceCapabilities(nextCandidate.Capabilities))
+	capabilitiesChanged := nextCapabilities != n.observedCapabilities
+	n.observedCapabilities = nextCapabilities
+	return producerSelectionEffect{CapabilitiesChanged: previousVersion != nextProducer.Version || capabilitiesChanged, CanNormalize: true}
+}
+
+func (n *ProducerStatusNormalizer) selectProducerLocked() producerSelection {
+	if n.upstreamTypeRaw != "" {
+		return n.selectOverrideProducerLocked()
+	}
+	return n.selectDetectedProducerLocked()
+}
+
+func (n *ProducerStatusNormalizer) selectOverrideProducerLocked() producerSelection {
+	detected := n.selectDetectedProducerLocked()
+	if n.upstreamTypeOverride {
+		adapter := n.adapterForKind(n.upstreamType)
+		if adapter == nil {
+			n.noteWarning("config", "config.adapter.unsupported_upstream_type", "upstream type override "+n.upstreamTypeRaw+" is not supported by this build", WithTTL(receiverConditionTTL))
+			return detected
+		}
+		if detected.State == producerSelectionSelected && detected.Candidate.Producer.Kind != n.upstreamType {
+			n.noteWarning("config", "config.adapter.override_mismatch", "upstream type override "+n.upstreamTypeRaw+" differs from detected "+string(detected.Candidate.Producer.Kind), WithTTL(receiverConditionTTL))
+		}
+		return producerSelection{
+			State:   producerSelectionSelected,
+			Adapter: adapter,
+			Candidate: producerCandidate{
+				Producer:     identProducer{Kind: n.upstreamType, Version: producerVersionFromEvidence(n.evidence)},
+				Score:        100,
+				Capabilities: adapter.Capabilities(n.evidence),
+				Evidence:     []string{"config.IDENT_UPSTREAM_TYPE"},
+			},
 		}
 	}
-	return nil, identProducer{Kind: producerUnknown}
+	n.noteWarning("config", "config.adapter.invalid_upstream_type", "upstream type override "+n.upstreamTypeRaw+" is not recognized", WithTTL(receiverConditionTTL))
+	return detected
+}
+
+func (n *ProducerStatusNormalizer) selectDetectedProducerLocked() producerSelection {
+	var strongest producerCandidate
+	var bestAdapter producerAdapter
+	var best producerCandidate
+	var candidates []producerCandidate
+	for _, adapter := range n.adapters {
+		candidate := adapter.Detect(n.evidence)
+		if candidate.Score > strongest.Score {
+			strongest = candidate
+		}
+		if candidate.Score < minProducerDetectionScore {
+			continue
+		}
+		if bestAdapter == nil || candidate.Score > best.Score {
+			bestAdapter = adapter
+			best = candidate
+			candidates = []producerCandidate{candidate}
+			continue
+		}
+		if candidate.Score == best.Score {
+			candidates = append(candidates, candidate)
+		}
+	}
+	if len(candidates) > 1 {
+		return producerSelection{State: producerSelectionAmbiguous, Best: best, Candidates: candidates}
+	}
+	if bestAdapter == nil {
+		return producerSelection{State: producerSelectionInsufficient, Best: strongest}
+	}
+	return producerSelection{State: producerSelectionSelected, Adapter: bestAdapter, Candidate: best}
+}
+
+func candidatesIncludeKind(candidates []producerCandidate, kind identProducerKind) bool {
+	for _, candidate := range candidates {
+		if candidate.Kind() == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func (n *ProducerStatusNormalizer) noteUnknownProducerSelection(best producerCandidate) {
+	message := "producer could not be classified from observed files"
+	if best.Score > 0 {
+		message = message + "; strongest evidence score " + strconv.Itoa(best.Score)
+	}
+	if len(best.Evidence) > 0 {
+		message = message + " from " + strings.Join(best.Evidence, ", ")
+	}
+	n.noteWarning("producer", "producer.ident.unknown", message, WithTTL(receiverConditionTTL))
+}
+
+func (n *ProducerStatusNormalizer) noteAmbiguousProducerSelectionCandidates(candidates []producerCandidate) {
+	summary := producerCandidateSummaries(candidates)
+	message := "producer evidence matched multiple adapters; set IDENT_UPSTREAM_TYPE to choose one"
+	if len(summary) > 0 {
+		message = message + ": " + strings.Join(summary, "; ")
+	}
+	key := strings.Join(summary, "|")
+	if n.ambiguousLogKey != key {
+		n.ambiguousLogKey = key
+		slog.Warn("ambiguous producer identification", "candidates", strings.Join(summary, "; "))
+	}
+	n.noteWarning("producer", "producer.ident.ambiguous", message, WithTTL(receiverConditionTTL))
+}
+
+func producerCandidateSummaries(candidates []producerCandidate) []string {
+	summaries := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		kind := candidate.Kind()
+		if kind == producerUnknown {
+			continue
+		}
+		summary := string(kind) + " score=" + strconv.Itoa(candidate.Score)
+		if len(candidate.Evidence) > 0 {
+			summary = summary + " evidence=" + strings.Join(candidate.Evidence, ",")
+		}
+		summaries = append(summaries, summary)
+	}
+	sort.Strings(summaries)
+	return summaries
 }
 
 func (n *ProducerStatusNormalizer) IngestStatsJSON(b []byte) [][]byte {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	if n.adapter == nil {
-		n.noteWarning("stats", "stats.adapter.awaiting_classification", "stats ignored until producer classification is available")
-		return nil
-	}
 	var stats producerStatsJSON
 	if err := json.Unmarshal(b, &stats); err != nil {
 		slog.Warn("producer stats: malformed JSON", "err", err, "channel", "stats", "code", "stats.adapter.malformed_file")
 		n.noteError("stats", "stats.adapter.malformed_file", "stats.json could not be parsed", WithTTL(defaultDiagnosticEventTTL))
 		return nil
 	}
+	n.evidence.Stats = &stats
+	var envs [][]byte
+	selection := n.applyProducerSelectionLocked()
+	if !selection.CanNormalize || n.adapter == nil {
+		if selection.CapabilitiesChanged {
+			envs = n.capabilitiesEnvelope(envs)
+		}
+		return envs
+	}
 	status, diagnostics, ok := n.adapter.StatusFromStats(n.producer, stats)
 	n.noteFrameDiagnostics(diagnostics)
 	if !ok {
-		return nil
+		if selection.CapabilitiesChanged {
+			envs = n.capabilitiesEnvelope(envs)
+		}
+		return envs
 	}
 	observedAt := n.observedAtFromStats(stats)
 	n.persistLiveValues(status, messageRateSourceStats)
 	status = n.buildWireStatus(status)
 	n.stampStatus(&status, observedAt)
-	envs := n.promoteCapabilitiesFromStatus(nil, status)
+	if n.promoteObservedCapabilitiesFromStatus(status) || selection.CapabilitiesChanged {
+		envs = n.capabilitiesEnvelope(envs)
+	}
 	return appendEnvelope(envs, "status", status)
 }
 
@@ -309,15 +440,20 @@ func (n *ProducerStatusNormalizer) IngestAircraftJSONWithFrame(b []byte) ([][]by
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	if n.adapter == nil {
-		n.noteWarning("aircraft", "aircraft.adapter.awaiting_classification", "aircraft counters ignored until producer classification is available")
-		return nil, nil
-	}
 	var frame producerAircraftJSON
 	if err := json.Unmarshal(b, &frame); err != nil {
 		slog.Warn("producer aircraft: malformed JSON", "err", err, "channel", "aircraft", "code", "aircraft.adapter.malformed_file")
 		n.noteError("aircraft", "aircraft.adapter.malformed_file", "aircraft.json could not be parsed", WithTTL(defaultDiagnosticEventTTL))
 		return nil, nil
+	}
+	n.evidence.Aircraft = &frame
+	var envs [][]byte
+	selection := n.applyProducerSelectionLocked()
+	if selection.CapabilitiesChanged {
+		envs = n.capabilitiesEnvelope(envs)
+	}
+	if !selection.CanNormalize || n.adapter == nil {
+		return envs, nil
 	}
 	aircraftFrame, diagnostics, ok := n.adapter.AircraftFrame(frame)
 	if !ok {
@@ -327,7 +463,7 @@ func (n *ProducerStatusNormalizer) IngestAircraftJSONWithFrame(b []byte) ([][]by
 	}
 	n.noteFrameDiagnostics(diagnostics)
 	observedAt := n.observedAtFromAircraft(frame)
-	envs := singleEnvelope("aircraft", aircraftFrame)
+	envs = appendEnvelope(envs, "aircraft", aircraftFrame)
 	sample, ok := n.adapter.AircraftCounter(frame)
 	if !ok {
 		return envs, &aircraftFrame
@@ -385,24 +521,29 @@ func (n *ProducerStatusNormalizer) IngestOutlineJSON(b []byte) [][]byte {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 
-	if n.adapter == nil {
-		n.noteWarning("outline", "outline.adapter.awaiting_classification", "outline ignored until producer classification is available")
-		return nil
-	}
 	var producerOutline producerOutlineJSON
 	if err := json.Unmarshal(b, &producerOutline); err != nil {
 		slog.Warn("producer outline: malformed JSON", "err", err, "channel", "outline", "code", "outline.adapter.malformed_file")
 		n.noteError("outline", "outline.adapter.malformed_file", "outline.json could not be parsed", WithTTL(defaultDiagnosticEventTTL))
 		return nil
 	}
+	n.evidence.Outline = &producerOutline
+	var envs [][]byte
+	selection := n.applyProducerSelectionLocked()
+	if selection.CapabilitiesChanged {
+		envs = n.capabilitiesEnvelope(envs)
+	}
+	if !selection.CanNormalize || n.adapter == nil {
+		return envs
+	}
 	outline, diagnostics, ok := n.adapter.RangeOutline(producerOutline)
 	if !ok {
 		n.noteFrameDiagnostics(diagnostics)
-		return nil
+		return envs
 	}
 	observedAt := n.clockEpochSec()
 	outline.ObservedAtEpochSec = observedAt
-	envs := singleEnvelope("rangeOutline", outline)
+	envs = appendEnvelope(envs, "rangeOutline", outline)
 	if n.receiver == nil {
 		return envs
 	}
@@ -452,7 +593,9 @@ func (n *ProducerStatusNormalizer) currentStatus() identStatus {
 	if !statsStale {
 		status.Gain = n.lastGain
 		status.Uptime = n.lastUptime
+		status.Stats = n.lastReceiverStats
 	}
+	status.Stats = mergeReceiverStats(status.Stats, receiverStatsFromRuntime(n.runtimeStats()))
 	// MessageRate is dual-source. Prefer the stats-derived value when its
 	// source is fresh (it's typically averaged over a longer window than
 	// the aircraft counter delta and more numerically stable). Fall back
@@ -477,7 +620,7 @@ func (n *ProducerStatusNormalizer) currentStatus() identStatus {
 	// post-recovery aircraft tick sees statsStale=false and stops
 	// re-emitting). A longer TTL would leave the warning visible long
 	// after the underlying condition resolved.
-	if statsStale && (n.lastGain != nil || n.lastUptime != nil) {
+	if statsStale && (n.lastGain != nil || n.lastUptime != nil || n.lastReceiverStats != nil) {
 		n.noteWarning("stats", "stats.source.stale",
 			"stats.json source has not updated; cached values suppressed in status snapshot")
 	}
@@ -513,6 +656,9 @@ func (n *ProducerStatusNormalizer) buildWireStatus(local identStatus) identStatu
 	}
 	if local.MaxRange != nil {
 		full.MaxRange = local.MaxRange
+	}
+	if local.Stats != nil {
+		full.Stats = mergeReceiverStats(full.Stats, local.Stats)
 	}
 	return full
 }
@@ -558,6 +704,9 @@ func (n *ProducerStatusNormalizer) persistLiveValues(status identStatus, mrSourc
 	if status.MaxRange != nil {
 		n.lastMaxRange = status.MaxRange
 	}
+	if status.Stats != nil {
+		n.lastReceiverStats = status.Stats
+	}
 }
 
 // ReemitReceiverConditions re-Notes the currently-active receiver-derived
@@ -575,10 +724,10 @@ func (n *ProducerStatusNormalizer) ReemitReceiverConditions() {
 				n.noteWarning("config", "config.adapter.unsupported_upstream_type",
 					"upstream type override "+n.upstreamTypeRaw+" is not supported by this build",
 					WithTTL(receiverConditionTTL))
-			} else if n.receiver != nil {
-				if detectedAdapter, detectedProducer := n.detectAdapter(*n.receiver); detectedAdapter != nil && detectedProducer.Kind != n.upstreamType {
+			} else {
+				if detected := n.selectDetectedProducerLocked(); detected.State == producerSelectionSelected && detected.Candidate.Producer.Kind != n.upstreamType {
 					n.noteWarning("config", "config.adapter.override_mismatch",
-						"upstream type override "+n.upstreamTypeRaw+" differs from detected "+string(detectedProducer.Kind),
+						"upstream type override "+n.upstreamTypeRaw+" differs from detected "+string(detected.Candidate.Producer.Kind),
 						WithTTL(receiverConditionTTL))
 				}
 			}
@@ -589,9 +738,12 @@ func (n *ProducerStatusNormalizer) ReemitReceiverConditions() {
 		}
 	}
 	if n.adapter == nil {
-		n.noteWarning("producer", "producer.ident.unknown",
-			"producer could not be classified",
-			WithTTL(receiverConditionTTL))
+		switch detected := n.selectDetectedProducerLocked(); detected.State {
+		case producerSelectionAmbiguous:
+			n.noteAmbiguousProducerSelectionCandidates(detected.Candidates)
+		case producerSelectionInsufficient:
+			n.noteUnknownProducerSelection(detected.Best)
+		}
 	}
 }
 
@@ -630,33 +782,33 @@ func (n *ProducerStatusNormalizer) appendUnavailableMessageRate(envs [][]byte, s
 	return appendEnvelope(envs, "status", status)
 }
 
-func (n *ProducerStatusNormalizer) baseCapabilities(receiver producerReceiverJSON) identCapabilities {
-	if n.adapter == nil {
-		return n.applyIdentServiceCapabilities(identCapabilities{
-			Aircraft:          capabilityUnavailable,
-			ReceiverPosition:  capabilityUnavailable,
-			MessageRate:       capabilityUnavailable,
-			Gain:              capabilityUnavailable,
-			Uptime:            capabilityUnavailable,
-			MaxRange:          capabilityUnavailable,
-			RangeOutline:      capabilityUnavailable,
-			SignalDiagnostics: capabilityUnavailable,
-			Meteorology:       capabilityUnavailable,
-			Replay:            capabilityUnavailable,
-			Trails:            capabilityIdentDerived,
-		})
-	}
-	return n.applyIdentServiceCapabilities(n.adapter.Capabilities(receiver))
+func (n *ProducerStatusNormalizer) applyIdentServiceCapabilities(caps identCapabilities) identCapabilities {
+	return identServiceCapabilities(caps, n.replayEnabled)
 }
 
-func (n *ProducerStatusNormalizer) applyIdentServiceCapabilities(caps identCapabilities) identCapabilities {
-	if n.replayEnabled {
+func identServiceCapabilities(caps identCapabilities, replayEnabled bool) identCapabilities {
+	if replayEnabled {
 		caps.Replay = capabilityIdentDerived
 	} else {
 		caps.Replay = capabilityUnavailable
 	}
 	caps.Trails = capabilityIdentDerived
 	return caps
+}
+
+func unavailableProducerCapabilities() identCapabilities {
+	return identCapabilities{
+		Aircraft:         capabilityUnavailable,
+		ReceiverPosition: capabilityUnavailable,
+		MessageRate:      capabilityUnavailable,
+		Gain:             capabilityUnavailable,
+		Uptime:           capabilityUnavailable,
+		MaxRange:         capabilityUnavailable,
+		RangeOutline:     capabilityUnavailable,
+		Meteorology:      capabilityUnavailable,
+		Replay:           capabilityUnavailable,
+		Trails:           capabilityUnavailable,
+	}
 }
 
 func (n *ProducerStatusNormalizer) capabilitiesEnvelope(envs [][]byte) [][]byte {
@@ -668,6 +820,13 @@ func (n *ProducerStatusNormalizer) capabilitiesEnvelope(envs [][]byte) [][]byte 
 }
 
 func (n *ProducerStatusNormalizer) promoteCapabilitiesFromStatus(envs [][]byte, status identStatus) [][]byte {
+	if !n.promoteObservedCapabilitiesFromStatus(status) {
+		return envs
+	}
+	return n.capabilitiesEnvelope(envs)
+}
+
+func (n *ProducerStatusNormalizer) promoteObservedCapabilitiesFromStatus(status identStatus) bool {
 	changed := false
 	if status.ReceiverPosition != nil {
 		changed = n.promoteObservedCapability("receiverPosition", capabilityProducerProvided) || changed
@@ -684,10 +843,50 @@ func (n *ProducerStatusNormalizer) promoteCapabilitiesFromStatus(envs [][]byte, 
 	if status.MaxRange != nil {
 		changed = n.promoteObservedCapability("maxRange", maxRangeCapabilitySource(status.MaxRange)) || changed
 	}
-	if !changed {
-		return envs
+	return changed
+}
+
+func receiverStatsFromRuntime(sample RuntimeStatsSample) *receiverStatsStatus {
+	status := receiverStatsStatus{}
+	if cpu := finitePointer(sample.CPUPct); cpu != nil {
+		status.CPUPct = receiverMetricDerived("ident_runtime", *cpu)
 	}
-	return n.capabilitiesEnvelope(envs)
+	if ram := finitePointer(sample.RAMPct); ram != nil {
+		status.RAMPct = receiverMetricDerived("ident_runtime", *ram)
+	}
+	if status.CPUPct == nil && status.RAMPct == nil {
+		return nil
+	}
+	return &status
+}
+
+func mergeReceiverStats(base, overlay *receiverStatsStatus) *receiverStatsStatus {
+	if base == nil {
+		return overlay
+	}
+	if overlay == nil {
+		return base
+	}
+	merged := *base
+	if overlay.SignalDBFS != nil {
+		merged.SignalDBFS = overlay.SignalDBFS
+	}
+	if overlay.NoiseDBFS != nil {
+		merged.NoiseDBFS = overlay.NoiseDBFS
+	}
+	if overlay.StrongPct != nil {
+		merged.StrongPct = overlay.StrongPct
+	}
+	if overlay.SampleDrops != nil {
+		merged.SampleDrops = overlay.SampleDrops
+	}
+	if overlay.CPUPct != nil {
+		merged.CPUPct = overlay.CPUPct
+	}
+	if overlay.RAMPct != nil {
+		merged.RAMPct = overlay.RAMPct
+	}
+	return &merged
 }
 
 func messageRateCapabilitySource(value *messageRateValue) capabilitySource {
@@ -718,17 +917,16 @@ func maxRangeCapabilitySource(value *maxRangeValue) capabilitySource {
 // receiver.json doesn't demote a capability previously promoted by live data.
 func mergeStrongerCapabilities(prior, next identCapabilities) identCapabilities {
 	return identCapabilities{
-		Aircraft:          strongerCapabilitySource(prior.Aircraft, next.Aircraft),
-		ReceiverPosition:  strongerCapabilitySource(prior.ReceiverPosition, next.ReceiverPosition),
-		MessageRate:       strongerCapabilitySource(prior.MessageRate, next.MessageRate),
-		Gain:              strongerCapabilitySource(prior.Gain, next.Gain),
-		Uptime:            strongerCapabilitySource(prior.Uptime, next.Uptime),
-		MaxRange:          strongerCapabilitySource(prior.MaxRange, next.MaxRange),
-		RangeOutline:      strongerCapabilitySource(prior.RangeOutline, next.RangeOutline),
-		SignalDiagnostics: strongerCapabilitySource(prior.SignalDiagnostics, next.SignalDiagnostics),
-		Meteorology:       strongerCapabilitySource(prior.Meteorology, next.Meteorology),
-		Replay:            strongerCapabilitySource(prior.Replay, next.Replay),
-		Trails:            strongerCapabilitySource(prior.Trails, next.Trails),
+		Aircraft:         strongerCapabilitySource(prior.Aircraft, next.Aircraft),
+		ReceiverPosition: strongerCapabilitySource(prior.ReceiverPosition, next.ReceiverPosition),
+		MessageRate:      strongerCapabilitySource(prior.MessageRate, next.MessageRate),
+		Gain:             strongerCapabilitySource(prior.Gain, next.Gain),
+		Uptime:           strongerCapabilitySource(prior.Uptime, next.Uptime),
+		MaxRange:         strongerCapabilitySource(prior.MaxRange, next.MaxRange),
+		RangeOutline:     strongerCapabilitySource(prior.RangeOutline, next.RangeOutline),
+		Meteorology:      strongerCapabilitySource(prior.Meteorology, next.Meteorology),
+		Replay:           strongerCapabilitySource(prior.Replay, next.Replay),
+		Trails:           strongerCapabilitySource(prior.Trails, next.Trails),
 	}
 }
 

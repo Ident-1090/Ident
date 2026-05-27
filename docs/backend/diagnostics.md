@@ -102,14 +102,19 @@ responsible piece is more actionable than a generic one.
 ## Startup conditions
 
 Configuration problems, such as an upstream type the backend does not recognize
-or an override that disagrees with the detected setup, are caught the first time the
-receiver configuration is read at startup and raised with the longer
-receiver-tier TTL. Because that configuration is event-driven and may not change
-for hours, a heartbeat re-raises any active receiver-derived condition every few
+or an override that disagrees with the detected setup, are raised as soon as
+there is enough information to identify the problem. Producer identification can
+use receiver, aircraft, statistics, or outline files, so a setup with generic
+receiver metadata may stay unknown until another file provides enough evidence.
+An unknown or ambiguous producer is itself a diagnostic condition rather than a
+stream of per-file warnings.
+
+Because receiver and producer-identification conditions are event-driven and may
+not change for hours, a heartbeat re-raises active startup conditions every few
 minutes so a stable misconfiguration does not quietly expire between file
-changes. The heartbeat starts only after the initial producer classification
-finishes, so it does not double-emit during the window when classification is
-already raising and clearing conditions of its own.
+changes. The heartbeat is deduplicated through the same condition identity rules
+as every other diagnostic, so refreshing a condition does not create a second
+notification.
 
 ## Expiry must not be mistaken for success
 

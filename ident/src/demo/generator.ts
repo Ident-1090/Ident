@@ -328,7 +328,6 @@ export function buildCapabilities(): IdentCapabilitiesEnvelope {
       uptime: d,
       maxRange: d,
       rangeOutline: p,
-      signalDiagnostics: p,
       meteorology: "unavailable",
       replay: p,
       trails: d,
@@ -338,6 +337,7 @@ export function buildCapabilities(): IdentCapabilitiesEnvelope {
 
 export function buildStatus(planes: PlaneState[], nowMs: number): IdentStatus {
   const epochSec = nowMs / 1000;
+  const wave = Math.sin(nowMs / 9000);
   // A believable message rate: scales with traffic plus a little jitter.
   const hz = planes.length * 22 + Math.round((Math.sin(nowMs / 7000) + 1) * 40);
   return {
@@ -379,6 +379,28 @@ export function buildStatus(planes: PlaneState[], nowMs: number): IdentStatus {
         nm: 211,
         scope: "last24h",
         computation: "max_receiver_to_outline_vertex",
+      },
+    },
+    stats: {
+      signalDbfs: {
+        kind: "producer_provided",
+        source: "stats_last1min_local",
+        value: -17.8 + wave * 0.8,
+      },
+      noiseDbfs: {
+        kind: "producer_provided",
+        source: "stats_last1min_local",
+        value: -34.2 + Math.cos(nowMs / 11000) * 0.5,
+      },
+      strongPct: {
+        kind: "producer_provided",
+        source: "stats_last1min_local",
+        value: 3.2 + Math.max(0, wave) * 1.1,
+      },
+      sampleDrops: {
+        kind: "producer_provided",
+        source: "stats_last1min_local",
+        value: 0,
       },
     },
   };

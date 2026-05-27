@@ -6,21 +6,25 @@ func (readsbAdapter) Kind() identProducerKind {
 	return producerReadsb
 }
 
-func (readsbAdapter) Detect(receiver producerReceiverJSON) (identProducer, bool) {
-	if !receiver.Readsb {
-		return identProducer{}, false
+func (a readsbAdapter) Detect(evidence producerEvidence) producerCandidate {
+	if evidence.Receiver == nil || !evidence.Receiver.Readsb {
+		return producerCandidate{}
 	}
-	return identProducer{Kind: producerReadsb, Version: receiver.Version}, true
+	return producerCandidate{
+		Producer:     identProducer{Kind: producerReadsb, Version: evidence.Receiver.Version},
+		Score:        100,
+		Capabilities: a.Capabilities(evidence),
+		Evidence:     []string{"receiver.readsb"},
+	}
 }
 
-func (readsbAdapter) Capabilities(receiver producerReceiverJSON) identCapabilities {
-	caps := commonProducerCapabilities(receiver)
+func (readsbAdapter) Capabilities(evidence producerEvidence) identCapabilities {
+	caps := commonProducerCapabilitiesFromEvidence(evidence)
 	caps.MessageRate = capabilityProducerProvided
 	caps.Gain = capabilityProducerProvided
 	caps.Uptime = capabilityProducerProvided
 	caps.MaxRange = capabilityProducerProvided
 	caps.RangeOutline = capabilityProducerProvided
-	caps.SignalDiagnostics = capabilityProducerProvided
 	return caps
 }
 
@@ -48,7 +52,12 @@ func (readsbAdapter) StatusFromStats(_ identProducer, stats producerStatsJSON) (
 			Computation: "producer_reported_distance",
 		})
 	}
-	return status, diagnostics, status.MessageRate != nil || status.Gain != nil || status.Uptime != nil || status.MaxRange != nil
+	if receiverStats, statsDiagnostics, ok := receiverStatsFromStats(stats); ok {
+		status.Stats = &receiverStats
+	} else {
+		diagnostics = append(diagnostics, statsDiagnostics...)
+	}
+	return status, diagnostics, status.MessageRate != nil || status.Gain != nil || status.Uptime != nil || status.MaxRange != nil || status.Stats != nil
 }
 
 func (readsbAdapter) AircraftFrame(frame producerAircraftJSON) (identAircraftFrame, []diagnostic, bool) {

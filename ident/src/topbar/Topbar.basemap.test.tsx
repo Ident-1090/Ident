@@ -148,6 +148,14 @@ describe("Topbar basemap picker", () => {
     expect(document.querySelector('[role="tooltip"]')).toBeNull();
   });
 
+  it("uses the combined sun-moon icon for the system theme button", () => {
+    expect(
+      findButton(container, "Theme · follow system")!.querySelector(
+        "svg.lucide-sun-moon",
+      ),
+    ).toBeTruthy();
+  });
+
   it("does not expose an unwired share action", () => {
     expect(findButton(container, "Copy share link")).toBeNull();
   });

@@ -1,11 +1,11 @@
 import {
   Menu,
-  Monitor,
   Moon,
   Plane,
   Search,
   SlidersHorizontal,
   Sun,
+  SunMoon,
   X,
 } from "lucide-react";
 import { useLayoutEffect, useMemo, useState } from "react";
@@ -486,9 +486,9 @@ function BasemapControl() {
 const THEME_OPTIONS: Array<{
   key: ThemeMode;
   label: string;
-  Icon: typeof Monitor;
+  Icon: typeof SunMoon;
 }> = [
-  { key: "system", label: "System", Icon: Monitor },
+  { key: "system", label: "System", Icon: SunMoon },
   { key: "light", label: "Light", Icon: Sun },
   { key: "dark", label: "Dark", Icon: Moon },
 ];
