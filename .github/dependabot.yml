@@ -1,7 +1,7 @@
 version: 2
 
 multi-ecosystem-groups:
-  release-infrastructure:
+  infra:
     schedule:
       interval: "weekly"
       day: "tuesday"
@@ -24,24 +24,7 @@ updates:
       - "dependencies"
       - "frontend"
     groups:
-      frontend-security:
-        applies-to: "security-updates"
-        patterns:
-          - "*"
-      frontend-runtime:
-        applies-to: "version-updates"
-        dependency-type: "production"
-        update-types:
-          - "minor"
-          - "patch"
-        patterns:
-          - "*"
-      frontend-tooling:
-        applies-to: "version-updates"
-        dependency-type: "development"
-        update-types:
-          - "minor"
-          - "patch"
+      frontend:
         patterns:
           - "*"
 
@@ -57,15 +40,7 @@ updates:
       - "dependencies"
       - "backend"
     groups:
-      go-security:
-        applies-to: "security-updates"
-        patterns:
-          - "*"
-      go-runtime:
-        applies-to: "version-updates"
-        update-types:
-          - "minor"
-          - "patch"
+      backend:
         patterns:
           - "*"
 
@@ -73,16 +48,16 @@ updates:
     directory: "/"
     patterns:
       - "*"
-    multi-ecosystem-group: "release-infrastructure"
+    multi-ecosystem-group: "infra"
 
   - package-ecosystem: "docker"
     directory: "/"
     patterns:
       - "*"
-    multi-ecosystem-group: "release-infrastructure"
+    multi-ecosystem-group: "infra"
 
   - package-ecosystem: "docker-compose"
     directory: "/packaging"
     patterns:
       - "*"
-    multi-ecosystem-group: "release-infrastructure"
+    multi-ecosystem-group: "infra"
