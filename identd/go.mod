@@ -9,10 +9,10 @@ require (
 	github.com/google/jsonschema-go v0.4.3
 	github.com/gorilla/websocket v1.5.3
 	github.com/klauspost/compress v1.18.6
-	golang.org/x/image v0.41.0
+	golang.org/x/image v0.42.0
 )
 
 require (
 	golang.org/x/sys v0.13.0 // indirect
-	golang.org/x/text v0.37.0 // indirect
+	golang.org/x/text v0.38.0 // indirect
 )
