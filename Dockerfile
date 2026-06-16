@@ -31,7 +31,7 @@ RUN case "${TARGETARCH}/${TARGETVARIANT}" in \
     -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildDate=${BUILD_DATE}" \
     -o /out/identd .
 
-FROM alpine:3.23
+FROM alpine:3.24
 RUN apk add --no-cache ca-certificates su-exec \
   && addgroup -S ident \
   && adduser -S -G ident ident \
