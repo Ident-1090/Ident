@@ -208,7 +208,8 @@ jobs:
           cache-dependency-path: identd/go.sum
       - name: Install nFPM
         if: matrix.package == 'deb'
-        run: go install github.com/goreleaser/nfpm/v2/cmd/nfpm@latest
+        working-directory: identd
+        run: GOBIN="$GITHUB_WORKSPACE/dist/tools" go install tool
       - name: Build binary
         env:
           CREATED: ${{ needs.metadata.outputs.created }}
@@ -238,7 +239,7 @@ jobs:
         run: |
           mkdir -p dist/packages
           cp "dist/out/identd-${{ matrix.id }}" dist/identd
-          nfpm package --packager deb --config packaging/nfpm.yaml --target dist/packages/
+          dist/tools/nfpm package --packager deb --config packaging/nfpm.yaml --target dist/packages/
           cp dist/packages/* dist/out/
           cp dist/packages/*.deb "dist/out/identd-${{ matrix.id }}.deb"
       - name: Calculate checksums
