@@ -48,7 +48,7 @@
     "@vitejs/plugin-react": "^6.0.4",
     "ajv": "^8.20.0",
     "husky": "9.1.7",
-    "jsdom": "^30.0.0",
+    "jsdom": "^30.0.1",
     "json-schema-to-typescript": "^15.0.4",
     "lint-staged": "17.2.0",
     "tailwindcss": "^4.3.3",
