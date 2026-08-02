@@ -788,27 +788,25 @@ describe("replay controls", () => {
     );
   });
 
-  it.each([
-    "Infinity",
-    "-Infinity",
-    "abc",
-    "",
-  ])("ignores invalid scrubber value %s", (value) => {
-    useIdentStore.getState().enterReplay(150_000);
-    act(() => root.render(<ReplayScrubber />));
+  it.each(["Infinity", "-Infinity", "abc", ""])(
+    "ignores invalid scrubber value %s",
+    (value) => {
+      useIdentStore.getState().enterReplay(150_000);
+      act(() => root.render(<ReplayScrubber />));
 
-    const input = host.querySelector(
-      '[aria-label="Replay time"]',
-    ) as HTMLInputElement;
+      const input = host.querySelector(
+        '[aria-label="Replay time"]',
+      ) as HTMLInputElement;
 
-    act(() => {
-      setInputValue(input, value);
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-    });
+      act(() => {
+        setInputValue(input, value);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+      });
 
-    expect(useIdentStore.getState().replay.mode).toBe("replay");
-    expect(useIdentStore.getState().replay.playheadMs).toBe(150_000);
-  });
+      expect(useIdentStore.getState().replay.mode).toBe("replay");
+      expect(useIdentStore.getState().replay.playheadMs).toBe(150_000);
+    },
+  );
 
   it("does not reset an in-progress desktop scrub when replay loading changes", () => {
     useIdentStore.getState().enterReplay(150_000);

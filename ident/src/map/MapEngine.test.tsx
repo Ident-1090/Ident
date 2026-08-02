@@ -8,6 +8,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useIdentStore } from "../data/store";
 import { MapEngine } from "./MapEngine";
+import { getMaplibre } from "./maplibre";
 import type { BasemapId } from "./styles";
 
 interface FakeMap {
@@ -276,18 +277,11 @@ describe("MapEngine", () => {
     );
   });
 
-  it("renders a fallback and does not call map methods when maplibregl is missing", () => {
+  it("uses the application map runtime when no test runtime is installed", () => {
     delete (window as unknown as { maplibregl?: unknown }).maplibregl;
-    act(() => {
-      root.render(<MapEngine />);
-    });
-    expect(ctor).not.toHaveBeenCalled();
-    expect(container.textContent).toContain("Chart took a detour");
-    expect(
-      container
-        .querySelector('[data-testid="map-init-error"]')
-        ?.getAttribute("title"),
-    ).toContain("maplibregl");
+
+    expect(getMaplibre().Map).toBeTypeOf("function");
+    expect(getMaplibre().getWorkerUrl()).toContain("maplibre-gl-worker");
   });
 
   it("calls setStyle when basemapId changes", () => {
