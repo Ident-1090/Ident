@@ -346,27 +346,27 @@ function applyAircraftDisplayControls(
     LYR_AIRCRAFT_SELECTED_ICON,
     args.labelMode === "icon",
   );
-  setPaintProperty(map, LYR_AIRCRAFT_ARROW, "icon-color", aircraftColor);
-  setPaintProperty(
+  setSymbolPaintProperty(map, LYR_AIRCRAFT_ARROW, "icon-color", aircraftColor);
+  setSymbolPaintProperty(
     map,
     LYR_AIRCRAFT_ARROW,
     "icon-halo-color",
     args.palette.labelHalo,
   );
-  setPaintProperty(map, LYR_AIRCRAFT_ICON, "icon-color", aircraftColor);
-  setPaintProperty(
+  setSymbolPaintProperty(map, LYR_AIRCRAFT_ICON, "icon-color", aircraftColor);
+  setSymbolPaintProperty(
     map,
     LYR_AIRCRAFT_ICON,
     "icon-halo-color",
     args.palette.labelHalo,
   );
-  setPaintProperty(
+  setSymbolPaintProperty(
     map,
     LYR_AIRCRAFT_SELECTED_ICON,
     "icon-color",
     aircraftColor,
   );
-  setPaintProperty(
+  setSymbolPaintProperty(
     map,
     LYR_AIRCRAFT_SELECTED_ICON,
     "icon-halo-color",
@@ -428,11 +428,11 @@ function setTextField(
   map.setLayoutProperty(layerId, "text-field", textField);
 }
 
-function setPaintProperty(
+function setSymbolPaintProperty<K extends keyof SymbolPaint>(
   map: MlMap,
   layerId: string,
-  property: string,
-  value: ExpressionSpecification | string | number,
+  property: K,
+  value: SymbolPaint[K],
 ): void {
   if (!map.getLayer(layerId)) return;
   map.setPaintProperty(layerId, property, value);
@@ -505,7 +505,7 @@ function syncSelectedPulse(map: MlMap, active: boolean): void {
 
 function aircraftGlyphColorExpression(
   palette: OverlayPalette,
-): ExpressionSpecification {
+): SymbolPaint["icon-color"] {
   return [
     "match",
     ["get", "color"],

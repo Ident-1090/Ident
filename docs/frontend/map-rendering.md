@@ -1,9 +1,10 @@
 # Map and rendering
 
 Ident draws aircraft, trails, and range overlays on a vector map. The map
-library is loaded at runtime rather than bundled into the application, so the
-initial download stays small on low-end hardware. The rest of the frontend talks
-to it through a single boundary that exposes the library's types at build time.
+library and its worker are bundled with the application, so the runtime and the
+types used at build time always have the same version and loading the map does
+not depend on a separate library CDN. The renderer requires WebGL2; browsers or
+devices without it can still load the rest of the page, but cannot draw the map.
 
 The work is split in two. One piece owns the map instance: it creates the map
 once, swaps the basemap style when the basemap or theme changes, and publishes

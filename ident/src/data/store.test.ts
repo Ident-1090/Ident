@@ -1204,35 +1204,35 @@ describe("replay display selectors", () => {
     { fixedEndMs: null, requestedEndMs: -1 },
     { fixedEndMs: null, requestedEndMs: 30_000 },
     { fixedEndMs: Number.NEGATIVE_INFINITY, requestedEndMs: null },
-  ])("strips invalid resolved replay window bounds at the store boundary %#", ({
-    fixedEndMs,
-    requestedEndMs,
-  }) => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  ])(
+    "strips invalid resolved replay window bounds at the store boundary %#",
+    ({ fixedEndMs, requestedEndMs }) => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    useIdentStore.getState().setReplayViewWindow({
-      rangeId: "custom",
-      rangeMs: 60_000,
-      fromExpr: "now-1m",
-      toExpr: "now",
-      fixedEndMs,
-      requestedEndMs,
-    });
-
-    expect(warn).toHaveBeenCalledWith(
-      "[ident replay] invalid replay view window",
-      expect.objectContaining({
-        fixedEndMs,
+      useIdentStore.getState().setReplayViewWindow({
+        rangeId: "custom",
         rangeMs: 60_000,
+        fromExpr: "now-1m",
+        toExpr: "now",
+        fixedEndMs,
         requestedEndMs,
-      }),
-    );
-    expect(useIdentStore.getState().replay.viewWindow?.fixedEndMs).toBeNull();
-    expect(
-      useIdentStore.getState().replay.viewWindow?.requestedEndMs,
-    ).toBeNull();
-    warn.mockRestore();
-  });
+      });
+
+      expect(warn).toHaveBeenCalledWith(
+        "[ident replay] invalid replay view window",
+        expect.objectContaining({
+          fixedEndMs,
+          rangeMs: 60_000,
+          requestedEndMs,
+        }),
+      );
+      expect(useIdentStore.getState().replay.viewWindow?.fixedEndMs).toBeNull();
+      expect(
+        useIdentStore.getState().replay.viewWindow?.requestedEndMs,
+      ).toBeNull();
+      warn.mockRestore();
+    },
+  );
 
   it("keeps fixed replay windows when the store playhead is moved past global availability", () => {
     useIdentStore.setState((st) => ({

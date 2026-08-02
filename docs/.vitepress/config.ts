@@ -21,6 +21,9 @@ export default withMermaid({
     },
   },
   vite: {
+    build: {
+      chunkSizeWarningLimit: 650,
+    },
     // Root-level llms.txt / llms-full.txt are not generated: serving them from
     // the site root does not follow RFC 8615 (well-known URIs). Per-page Markdown
     // is still emitted so the copy/download buttons work.
