@@ -67,7 +67,7 @@ jobs:
       - name: Check out
         uses: actions/checkout@v7
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
       - name: Enable Corepack
@@ -93,7 +93,7 @@ jobs:
       - name: Check out
         uses: actions/checkout@v7
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: identd/go.mod
           cache-dependency-path: identd/go.sum
@@ -116,7 +116,7 @@ jobs:
       - name: Check out
         uses: actions/checkout@v7
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
       - name: Test
@@ -185,7 +185,7 @@ jobs:
       - name: Check out
         uses: actions/checkout@v7
       - name: Set up Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@v7
         with:
           node-version: "24"
       - name: Enable Corepack
@@ -202,7 +202,7 @@ jobs:
           rsync -a --delete --exclude .keep ident/dist/ identd/web/
           touch identd/web/.keep
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@v7
         with:
           go-version-file: identd/go.mod
           cache-dependency-path: identd/go.sum
