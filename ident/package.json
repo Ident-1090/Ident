@@ -30,15 +30,15 @@
     "cmdk": "^1.1.1",
     "country-flag-icons": "^1.6.20",
     "fzstd": "^0.1.1",
-    "lucide-react": "^1.30.0",
-    "maplibre-gl": "^6.2.0",
+    "lucide-react": "^1.31.0",
+    "maplibre-gl": "^6.3.0",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "ts-pattern": "^5.9.0",
-    "zustand": "^5.0.14"
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.7",
+    "@biomejs/biome": "2.5.8",
     "@tailwindcss/vite": "^4.3.3",
     "@types/geojson": "^7946.0.16",
     "@types/node": "^26.2.0",
