@@ -31,7 +31,7 @@
     "country-flag-icons": "^1.6.20",
     "fzstd": "^0.1.1",
     "lucide-react": "^1.30.0",
-    "maplibre-gl": "^6.2.0",
+    "maplibre-gl": "^6.4.1",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
     "ts-pattern": "^5.9.0",
