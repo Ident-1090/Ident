@@ -316,15 +316,26 @@ describe("replay controls", () => {
       requests.get("/api/replay/blocks/60000-120000.json.zst")?.signal.aborted,
     ).toBe(false);
 
-    requests.get("/api/replay/blocks/60000-120000.json.zst")?.resolve(
-      responseJson({
-        version: 2,
-        start: 60_000,
-        end: 120_000,
-        step_ms: 1000,
-        frames: [],
-      }),
-    );
+    const block = {
+      version: 2,
+      start: 60_000,
+      end: 120_000,
+      step_ms: 1000,
+      frames: [{ ts: 60_000, aircraft: [] }],
+    };
+    await act(async () => {
+      requests
+        .get("/api/replay/blocks/60000-120000.json.zst")
+        ?.resolve(responseJson(block));
+      await vi.waitFor(() => {
+        expect(
+          useIdentStore.getState().replay.cache[
+            "/api/replay/blocks/60000-120000.json.zst"
+          ],
+        ).toEqual(block);
+      });
+    });
+    expect(useIdentStore.getState().replay.playing).toBe(true);
   });
 
   it("does not load replay blocks at the live edge", async () => {
@@ -1814,11 +1825,9 @@ function setInputValue(input: HTMLInputElement, value: string): void {
 }
 
 function responseJson(body: unknown): Response {
-  return {
-    ok: true,
-    status: 200,
-    json: async () => body,
-  } as Response;
+  return new Response(JSON.stringify(body), {
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 function abortError(): DOMException {
